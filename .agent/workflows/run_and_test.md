@@ -1,6 +1,7 @@
 ---
 description: How to run the application and test the recent fixes
 ---
+// turbo-all
 
 # Prerequisites
 - Node.js & npm installed (Try `node -v` and `npm -v` to verify)
