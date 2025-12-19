@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, BookOpen, Store, Search } from "lucide-react";
+import { FileText, BookOpen, Store, Search, ArrowLeft } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
 
@@ -57,6 +57,16 @@ const Marketplace = () => {
             <Navbar />
 
             <main className="container mx-auto max-w-7xl px-6 py-8">
+                {/* Back Button */}
+                <Button
+                    variant="ghost"
+                    onClick={() => navigate("/")}
+                    className="mb-4 text-muted-foreground hover:text-foreground"
+                >
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Back to Home
+                </Button>
+
                 <div className="flex items-center justify-between mb-8">
                     <div>
                         <div className="flex items-center gap-3 mb-2">

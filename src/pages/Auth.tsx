@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { FileText } from "lucide-react";
+import { FileText, ArrowLeft } from "lucide-react";
 
 const Auth = () => {
   const [email, setEmail] = useState("");
@@ -74,7 +74,17 @@ const Auth = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-hero p-6">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-hero p-6 relative">
+      {/* Back Button */}
+      <Button
+        variant="ghost"
+        onClick={() => navigate("/")}
+        className="absolute top-6 left-6 text-foreground hover:bg-white/20"
+      >
+        <ArrowLeft className="h-5 w-5 mr-2" />
+        Back to Home
+      </Button>
+
       <div className="w-full max-w-md">
         <div className="flex items-center justify-center mb-8 space-x-2">
           <FileText className="h-8 w-8 text-primary" />
