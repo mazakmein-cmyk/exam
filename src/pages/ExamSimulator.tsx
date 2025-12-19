@@ -289,7 +289,15 @@ const ExamSimulator = () => {
   };
 
   const submitExam = async () => {
-    if (!attemptId) return;
+    // For anonymous users (no attemptId), just show completion dialog
+    if (!attemptId) {
+      toast({
+        title: "Section Completed",
+        description: "You've completed this section!",
+      });
+      setShowSectionCompleteDialog(true);
+      return;
+    }
 
     const totalTimeSpent = (section?.time_minutes || 0) * 60 - timeRemaining;
 
@@ -337,7 +345,12 @@ const ExamSimulator = () => {
   };
 
   const handleFinishExam = () => {
-    navigate(`/exam/review/${attemptId}`);
+    if (attemptId) {
+      navigate(`/exam/review/${attemptId}`);
+    } else {
+      // Anonymous users - redirect to marketplace
+      navigate("/marketplace");
+    }
   };
 
   const formatTime = (seconds: number) => {
