@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 220 25% 98%;
+    --foreground: 234 20% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 234 20% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 234 20% 12%;
+
+    --primary: 239 70% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 15% 95%;
+    --secondary-foreground: 234 20% 12%;
+
+    --muted: 220 15% 95%;
+    --muted-foreground: 234 12% 45%;
+
+    --accent: 239 70% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 239 70% 58%;
+
+    --radius: 0.75rem;
+
+    /* Exam status colors */
+    --status-unattempted: 220 15% 95%;
+    --status-unattempted-fg: 234 12% 45%;
+    --status-answered: 142 70% 45%;
+    --status-answered-fg: 0 0% 100%;
+    --status-review: 38 92% 50%;
+    --status-review-fg: 0 0% 100%;
+    --status-visited: 271 70% 60%;
+    --status-visited-fg: 0 0% 100%;
+
+    /* Gradients */
+    --gradient-hero: linear-gradient(135deg, hsl(239 70% 58%), hsl(271 70% 60%));
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(220 25% 98%));
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(234 20% 12% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(234 20% 12% / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(234 20% 12% / 0.1);
+    --shadow-glow: 0 0 30px hsl(239 70% 58% / 0.2);
+
+    /* Transitions */
+    --transition-base: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .dark {
+    --background: 234 25% 8%;
+    --foreground: 220 15% 95%;
+
+    --card: 234 20% 12%;
+    --card-foreground: 220 15% 95%;
+
+    --popover: 234 20% 12%;
+    --popover-foreground: 220 15% 95%;
+
+    --primary: 239 70% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 234 20% 18%;
+    --secondary-foreground: 220 15% 95%;
+
+    --muted: 234 20% 18%;
+    --muted-foreground: 220 10% 60%;
+
+    --accent: 239 70% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 234 20% 18%;
+    --input: 234 20% 18%;
+    --ring: 239 70% 58%;
+
+    --status-unattempted: 234 20% 18%;
+    --status-unattempted-fg: 220 10% 60%;
+    --status-answered: 142 70% 45%;
+    --status-answered-fg: 0 0% 100%;
+    --status-review: 38 92% 50%;
+    --status-review-fg: 0 0% 100%;
+    --status-visited: 271 70% 60%;
+    --status-visited-fg: 0 0% 100%;
+
+    --gradient-hero: linear-gradient(135deg, hsl(239 70% 58%), hsl(271 70% 60%));
+    --gradient-card: linear-gradient(180deg, hsl(234 20% 12%), hsl(234 25% 8%));
+
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.4);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.5);
+    --shadow-glow: 0 0 30px hsl(239 70% 58% / 0.3);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
