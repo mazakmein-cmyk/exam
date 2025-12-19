@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { LogIn, Clock, CheckCircle2, TrendingUp } from "lucide-react";
+import { LogIn, Clock, CheckCircle2, TrendingUp, Store } from "lucide-react";
 import heroImage from "@/assets/hero-exam.jpg";
 import { useRef, useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -104,6 +104,15 @@ const Hero = () => {
                 <Button size="lg" variant="secondary" className="shadow-lg" onClick={() => navigate('/auth')}>
                   <LogIn className="mr-2 h-5 w-5" />
                   Sign In
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="shadow-lg bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white"
+                  onClick={() => navigate('/marketplace')}
+                >
+                  <Store className="mr-2 h-5 w-5" />
+                  Marketplace
                 </Button>
               </div>
 
