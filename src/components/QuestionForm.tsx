@@ -7,7 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Upload, Check, X, Plus, Link, Pilcrow, List, MoreHorizontal, Bold, Italic, Underline, Strikethrough, Code, Table, AlignLeft, Type, Sigma, Undo, Redo, Keyboard, Baseline, ALargeSmall } from "lucide-react";
+import { Upload, Check, X, Plus, Link, Pilcrow, List, MoreHorizontal, Bold, Italic, Underline, Strikethrough, Code, Table, AlignLeft, Type, Sigma, Undo, Redo, Keyboard, Baseline, ALargeSmall, ChevronDown, Heading1, Heading2, Heading3, Heading4, Quote, ListOrdered, CheckSquare } from "lucide-react";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+    DropdownMenuSeparator
+} from "@/components/ui/dropdown-menu";
 
 interface QuestionFormProps {
     text: string;
@@ -38,6 +45,26 @@ const ToolbarIcon = ({ icon: Icon, label, onClick }: { icon: any, label: string,
     </Tooltip>
 );
 
+
+const TextDirectionIcon = ({ className }: { className?: string }) => (
+    <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
+        <path d="M12 3v12" />
+        <path d="M16 3v12" />
+        <path d="M16 3H9.5a3.5 3.5 0 0 0 0 7h2.5" />
+        <path d="M6 19h12" />
+        <path d="M15 16l3 3-3 3" />
+    </svg>
+);
+
 export function QuestionForm({
     text, setText,
     type, setType,
@@ -55,6 +82,7 @@ export function QuestionForm({
     const [linkUrl, setLinkUrl] = useState("");
     const [linkText, setLinkText] = useState("");
     const [openInNewTab, setOpenInNewTab] = useState(false);
+    const [isFormatMenuOpen, setIsFormatMenuOpen] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     // Capture selection when opening popover
@@ -105,20 +133,21 @@ export function QuestionForm({
         }
     };
 
-    const handleFormat = (marker: string) => {
+    const handleFormat = (startMarker: string, endMarker?: string) => {
         const textarea = textareaRef.current;
         if (textarea) {
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
             const selection = text.substring(start, end);
-            const textToInsert = `${marker}${selection}${marker}`;
+            const actualEndMarker = endMarker || startMarker;
+            const textToInsert = `${startMarker}${selection}${actualEndMarker}`;
             const newText = text.substring(0, start) + textToInsert + text.substring(end);
             setText(newText);
 
             // Restore focus next tick and select the wrapped text (excluding markers)
             setTimeout(() => {
                 textarea.focus();
-                textarea.setSelectionRange(start + marker.length, end + marker.length);
+                textarea.setSelectionRange(start + startMarker.length, end + startMarker.length);
             }, 0);
         }
     };
@@ -157,7 +186,7 @@ export function QuestionForm({
             <div className="space-y-2">
                 <Label>Question Text (Optional)</Label>
                 <div
-                    className={`border rounded-md transition-colors ${isQuestionFocused || isLinkPopoverOpen ? 'border-primary ring-1 ring-primary' : 'border-input'}`}
+                    className={`border rounded-md transition-colors ${isQuestionFocused || isLinkPopoverOpen || isFormatMenuOpen ? 'border-primary ring-1 ring-primary' : 'border-input'}`}
                     onBlur={(e) => {
                         // Check if the new focus is still within this container (e.g. clicking toolbar buttons)
                         if (!e.currentTarget.contains(e.relatedTarget)) {
@@ -165,7 +194,7 @@ export function QuestionForm({
                         }
                     }}
                 >
-                    {(isQuestionFocused || isLinkPopoverOpen) && (
+                    {(isQuestionFocused || isLinkPopoverOpen || isFormatMenuOpen) && (
                         <div className="flex items-center gap-1 p-1 border-b bg-muted/20 overflow-x-auto">
                             <TooltipProvider>
                                 {/* Group 1: Insert/Structure */}
@@ -230,7 +259,55 @@ export function QuestionForm({
                                             </div>
                                         </PopoverContent>
                                     </Popover>
-                                    <ToolbarIcon icon={Pilcrow} label="Format" />
+                                    <DropdownMenu open={isFormatMenuOpen} onOpenChange={setIsFormatMenuOpen}>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="ghost" size="sm" className="h-7 gap-0.5 px-1 bg-muted/50" onMouseDown={(e) => e.preventDefault()}>
+                                                <Pilcrow className="h-4 w-4" />
+                                                <ChevronDown className="h-3 w-3 opacity-50" />
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="start" className="w-48" onCloseAutoFocus={(e) => e.preventDefault()}>
+                                            <DropdownMenuItem>
+                                                <Type className="h-4 w-4 mr-2" />
+                                                <span>Text</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem>
+                                                <Heading1 className="h-4 w-4 mr-2" />
+                                                <span>Heading 1</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem>
+                                                <Heading2 className="h-4 w-4 mr-2" />
+                                                <span>Heading 2</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem>
+                                                <Heading3 className="h-4 w-4 mr-2" />
+                                                <span>Heading 3</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem>
+                                                <Heading4 className="h-4 w-4 mr-2" />
+                                                <span>Heading 4</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem>
+                                                <Quote className="h-4 w-4 mr-2" />
+                                                <span>Quote</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem>
+                                                <List className="h-4 w-4 mr-2" />
+                                                <span>Bullet list</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem>
+                                                <ListOrdered className="h-4 w-4 mr-2" />
+                                                <span>Numbered list</span>
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem>
+                                                <CheckSquare className="h-4 w-4 mr-2" />
+                                                <span>Todo</span>
+                                            </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
                                     <ToolbarIcon icon={List} label="Bullet List" />
                                     <ToolbarIcon icon={MoreHorizontal} label="More Options" />
                                 </div>
@@ -239,15 +316,15 @@ export function QuestionForm({
                                 <div className="flex items-center gap-0.5 border-r pr-1 mr-1">
                                     <ToolbarIcon icon={Bold} label="Bold" onClick={() => handleFormat('**')} />
                                     <ToolbarIcon icon={Italic} label="Italic" onClick={() => handleFormat('*')} />
-                                    <ToolbarIcon icon={Underline} label="Underline" />
-                                    <ToolbarIcon icon={Strikethrough} label="Strikethrough" />
+                                    <ToolbarIcon icon={Underline} label="Underline" onClick={() => handleFormat('<u>', '</u>')} />
+                                    <ToolbarIcon icon={Strikethrough} label="Strikethrough" onClick={() => handleFormat('~~')} />
                                     <ToolbarIcon icon={Code} label="Code Block" />
                                 </div>
 
                                 {/* Group 3: Layout */}
                                 <div className="flex items-center gap-0.5 border-r pr-1 mr-1">
                                     <ToolbarIcon icon={Table} label="Insert Table" />
-                                    <ToolbarIcon icon={Pilcrow} label="Text Direction" />
+                                    <ToolbarIcon icon={TextDirectionIcon} label="Text Direction" />
                                     <ToolbarIcon icon={AlignLeft} label="Align Left" />
                                 </div>
 
@@ -288,6 +365,7 @@ export function QuestionForm({
                                     )
                                     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                                     .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                                    .replace(/~~(.*?)~~/g, '<del>$1</del>')
                             }}
                         />
                     ) : (

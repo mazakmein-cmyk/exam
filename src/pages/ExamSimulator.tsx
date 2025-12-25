@@ -576,6 +576,8 @@ const ExamSimulator = () => {
                         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                         // Italic: *text* -> <em>text</em>
                         .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                        // Strikethrough: ~~text~~ -> <del>text</del>
+                        .replace(/~~(.*?)~~/g, '<del>$1</del>')
                     }}
                   />
                 )}
