@@ -572,6 +572,10 @@ const ExamSimulator = () => {
                           /<a href/g,
                           '<a class="text-primary underline hover:text-primary/80" href'
                         )
+                        // Bold: **text** -> <strong>text</strong>
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        // Italic: *text* -> <em>text</em>
+                        .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
                     }}
                   />
                 )}

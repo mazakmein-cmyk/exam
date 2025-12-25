@@ -105,6 +105,24 @@ export function QuestionForm({
         }
     };
 
+    const handleFormat = (marker: string) => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const selection = text.substring(start, end);
+            const textToInsert = `${marker}${selection}${marker}`;
+            const newText = text.substring(0, start) + textToInsert + text.substring(end);
+            setText(newText);
+
+            // Restore focus next tick and select the wrapped text (excluding markers)
+            setTimeout(() => {
+                textarea.focus();
+                textarea.setSelectionRange(start + marker.length, end + marker.length);
+            }, 0);
+        }
+    };
+
     return (
         <div className="space-y-6">
             <div className="space-y-2">
@@ -219,8 +237,8 @@ export function QuestionForm({
 
                                 {/* Group 2: Formatting */}
                                 <div className="flex items-center gap-0.5 border-r pr-1 mr-1">
-                                    <ToolbarIcon icon={Bold} label="Bold" />
-                                    <ToolbarIcon icon={Italic} label="Italic" />
+                                    <ToolbarIcon icon={Bold} label="Bold" onClick={() => handleFormat('**')} />
+                                    <ToolbarIcon icon={Italic} label="Italic" onClick={() => handleFormat('*')} />
                                     <ToolbarIcon icon={Underline} label="Underline" />
                                     <ToolbarIcon icon={Strikethrough} label="Strikethrough" />
                                     <ToolbarIcon icon={Code} label="Code Block" />
@@ -268,6 +286,8 @@ export function QuestionForm({
                                         /<a href/g,
                                         '<a class="text-primary underline hover:text-primary/80" href'
                                     )
+                                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
                             }}
                         />
                     ) : (
