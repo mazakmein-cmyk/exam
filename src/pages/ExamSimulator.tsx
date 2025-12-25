@@ -558,9 +558,22 @@ const ExamSimulator = () => {
                   </div>
                 )}
                 {currentQuestion?.text && (
-                  <div className="text-foreground whitespace-pre-wrap">
-                    {currentQuestion.text}
-                  </div>
+                  <div
+                    className="text-foreground whitespace-pre-wrap"
+                    dangerouslySetInnerHTML={{
+                      __html: currentQuestion.text
+                        // Parse markdown links [text](url) -> <a href="url">text</a>
+                        .replace(
+                          /\[([^\]]+)\]\(([^)]+)\)/g,
+                          '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>'
+                        )
+                        // Ensure existing HTML links have proper styling if they don't already
+                        .replace(
+                          /<a href/g,
+                          '<a class="text-primary underline hover:text-primary/80" href'
+                        )
+                    }}
+                  />
                 )}
                 {renderAnswerInput()}
               </CardContent>

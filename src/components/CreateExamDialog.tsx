@@ -8,6 +8,7 @@ import { Plus, X, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
+import { Badge } from "@/components/ui/badge";
 
 type Section = {
   id: string;
@@ -435,17 +436,19 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
 
             <div className="grid md:grid-cols-2 gap-4 pl-3">
               {/* Option A: Upload PDF */}
-              <div className={`relative overflow-hidden rounded-xl border-2 transition-all ${!examName || sections.length === 0
-                ? "border-muted bg-muted/20 opacity-60 cursor-not-allowed"
-                : "border-primary/20 bg-primary/5 hover:border-primary hover:shadow-md"
-                }`}>
+              <div className="relative overflow-hidden rounded-xl border-2 border-muted bg-muted/20 opacity-80">
                 <div className="p-5 space-y-4">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-primary text-primary-foreground rounded-lg">
+                    <div className="p-2 bg-primary/20 text-primary rounded-lg grayscale">
                       <Upload className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="font-semibold text-foreground">Upload PDF & Auto-Parse</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-semibold text-foreground">Upload PDF & Auto-Parse</h4>
+                        <Badge variant="secondary" className="h-5 text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 border-blue-200">
+                          Coming Soon
+                        </Badge>
+                      </div>
                       <p className="text-xs text-muted-foreground">Recommended for existing papers</p>
                     </div>
                   </div>
@@ -453,20 +456,12 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                     Upload your exam PDF. AI will automatically extract questions, options, and answers.
                   </p>
 
-                  <input
-                    type="file"
-                    id="pdf-upload"
-                    accept=".pdf"
-                    className="hidden"
-                    onChange={handlePdfUpload}
-                    disabled={uploadingPdf || !examName || sections.length === 0}
-                  />
                   <Button
                     className="w-full"
-                    disabled={uploadingPdf || !examName || sections.length === 0}
-                    onClick={() => document.getElementById('pdf-upload')?.click()}
+                    disabled={true}
+                    variant="secondary"
                   >
-                    {uploadingPdf ? "Uploading & Parsing..." : "Select PDF File"}
+                    Coming Soon
                   </Button>
                 </div>
               </div>

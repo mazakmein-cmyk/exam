@@ -19,7 +19,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import PdfSnipper from "@/components/PdfSnipper";
 import { QuestionForm } from "@/components/QuestionForm";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
@@ -948,7 +949,12 @@ export default function ExamDetail() {
                 <TabsList className="grid w-full grid-cols-3 mb-6">
                   <TabsTrigger value="direct">Direct Upload</TabsTrigger>
                   <TabsTrigger value="pdf">PDF Snipping</TabsTrigger>
-                  <TabsTrigger value="ai">AI Parse</TabsTrigger>
+                  <TabsTrigger value="ai" className="gap-2">
+                    AI Parse
+                    <Badge variant="secondary" className="h-5 text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 hover:bg-blue-100 border-blue-200">
+                      Coming Soon
+                    </Badge>
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="direct" className="space-y-0">
@@ -1045,147 +1051,161 @@ export default function ExamDetail() {
                 </TabsContent>
 
                 <TabsContent value="ai" className="space-y-6">
-                  <div className="space-y-2">
-                    <Label>Upload PDF Document</Label>
-                    <div className="flex gap-2">
-                      <Button variant="outline" className="w-full h-12 border-dashed" onClick={() => document.getElementById('ai-pdf-upload')?.click()}>
-                        <FileText className="mr-2 h-4 w-4" />
-                        {aiPdfUrl ? "Change PDF File" : "Select PDF File"}
-                        <input
-                          id="ai-pdf-upload"
-                          type="file"
-                          accept=".pdf"
-                          className="hidden"
-                          onChange={handleAiPdfUpload}
-                        />
-                      </Button>
+                  {/* Coming Soon Overlay */}
+                  <div className="text-center py-16 border rounded-lg bg-slate-50">
+                    <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Sparkles className="w-8 h-8" />
                     </div>
+                    <h3 className="text-xl font-bold mb-2">AI Parse Coming Soon</h3>
+                    <p className="text-muted-foreground max-w-md mx-auto">
+                      We are working on an advanced AI feature that will automatically extract questions, options, and answers from your PDF files. Stay tuned!
+                    </p>
                   </div>
 
-                  {aiPdfUrl && (
-                    <Button
-                      className="w-full"
-                      onClick={handleAiParse}
-                      disabled={aiParsingStatus === 'parsing'}
-                    >
-                      {aiParsingStatus === 'parsing' ? (
-                        <>
-                          <span className="mr-2">Parsing...</span>
-                          <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-                        </>
-                      ) : (
-                        'Parse with AI'
-                      )}
-                    </Button>
-                  )}
-
-                  {aiParsingStatus === 'parsing' && (
-                    <div className="text-center py-12 border rounded-lg bg-slate-50">
-                      <div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-                      <p className="text-muted-foreground">AI is analyzing your PDF...</p>
+                  {/* Hidden Functionality */}
+                  <div className="hidden">
+                    <div className="space-y-2">
+                      <Label>Upload PDF Document</Label>
+                      <div className="flex gap-2">
+                        <Button variant="outline" className="w-full h-12 border-dashed" onClick={() => document.getElementById('ai-pdf-upload')?.click()}>
+                          <FileText className="mr-2 h-4 w-4" />
+                          {aiPdfUrl ? "Change PDF File" : "Select PDF File"}
+                          <input
+                            id="ai-pdf-upload"
+                            type="file"
+                            accept=".pdf"
+                            className="hidden"
+                            onChange={handleAiPdfUpload}
+                          />
+                        </Button>
+                      </div>
                     </div>
-                  )}
 
-                  {aiParsingStatus === 'success' && aiParsedQuestions.length > 0 && (
-                    <div className="space-y-4">
-                      <h3 className="font-semibold text-lg">Extracted Questions ({aiParsedQuestions.length})</h3>
-                      {aiParsedQuestions.map((q, idx) => (
-                        <Card key={idx} className="p-4">
-                          <div className="space-y-4">
-                            <div className="flex items-start justify-between">
-                              <div className="flex items-center gap-2">
-                                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm">
-                                  {idx + 1}
+                    {aiPdfUrl && (
+                      <Button
+                        className="w-full"
+                        onClick={handleAiParse}
+                        disabled={aiParsingStatus === 'parsing'}
+                      >
+                        {aiParsingStatus === 'parsing' ? (
+                          <>
+                            <span className="mr-2">Parsing...</span>
+                            <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                          </>
+                        ) : (
+                          'Parse with AI'
+                        )}
+                      </Button>
+                    )}
+
+                    {aiParsingStatus === 'parsing' && (
+                      <div className="text-center py-12 border rounded-lg bg-slate-50">
+                        <div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
+                        <p className="text-muted-foreground">AI is analyzing your PDF...</p>
+                      </div>
+                    )}
+
+                    {aiParsingStatus === 'success' && aiParsedQuestions.length > 0 && (
+                      <div className="space-y-4">
+                        <h3 className="font-semibold text-lg">Extracted Questions ({aiParsedQuestions.length})</h3>
+                        {aiParsedQuestions.map((q, idx) => (
+                          <Card key={idx} className="p-4">
+                            <div className="space-y-4">
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm">
+                                    {idx + 1}
+                                  </div>
+                                  <div>
+                                    <p className="font-medium">{q.text || "Question with image"}</p>
+                                    <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
+                                  </div>
                                 </div>
+                              </div>
+
+                              {q.image_url && (
+                                <div className="border rounded-lg p-2 bg-slate-50">
+                                  <img src={q.image_url} alt="Question" className="max-w-full h-auto rounded-md" />
+                                </div>
+                              )}
+
+                              {q.text && (
                                 <div>
-                                  <p className="font-medium">{q.text || "Question with image"}</p>
-                                  <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
+                                  <Label className="text-xs">Question Text</Label>
+                                  <Textarea
+                                    value={q.text}
+                                    onChange={(e) => {
+                                      const updated = [...aiParsedQuestions];
+                                      updated[idx].text = e.target.value;
+                                      setAiParsedQuestions(updated);
+                                    }}
+                                    className="mt-1"
+                                  />
                                 </div>
-                              </div>
-                            </div>
+                              )}
 
-                            {q.image_url && (
-                              <div className="border rounded-lg p-2 bg-slate-50">
-                                <img src={q.image_url} alt="Question" className="max-w-full h-auto rounded-md" />
-                              </div>
-                            )}
-
-                            {q.text && (
-                              <div>
-                                <Label className="text-xs">Question Text</Label>
-                                <Textarea
-                                  value={q.text}
-                                  onChange={(e) => {
-                                    const updated = [...aiParsedQuestions];
-                                    updated[idx].text = e.target.value;
-                                    setAiParsedQuestions(updated);
-                                  }}
-                                  className="mt-1"
-                                />
-                              </div>
-                            )}
-
-                            {(q.answer_type === "single" || q.answer_type === "multi") && q.options && (
-                              <div>
-                                <Label className="text-xs">Options</Label>
-                                <div className="space-y-2 mt-1">
-                                  {q.options.map((opt: string, optIdx: number) => (
-                                    <div key={optIdx} className="flex items-center gap-2">
-                                      <span className="font-semibold text-sm w-6">{String.fromCharCode(65 + optIdx)}.</span>
-                                      <Input
-                                        value={opt}
-                                        onChange={(e) => {
-                                          const updated = [...aiParsedQuestions];
-                                          updated[idx].options[optIdx] = e.target.value;
-                                          setAiParsedQuestions(updated);
-                                        }}
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            <div>
-                              <Label className="text-xs">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
-                              <div className="p-3 bg-green-50 border border-green-200 rounded-md mt-1">
-                                {Array.isArray(q.correct_answer) ? (
-                                  <div className="space-y-1">
-                                    {q.correct_answer.map((ans: string, ansIdx: number) => (
-                                      <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
+                              {(q.answer_type === "single" || q.answer_type === "multi") && q.options && (
+                                <div>
+                                  <Label className="text-xs">Options</Label>
+                                  <div className="space-y-2 mt-1">
+                                    {q.options.map((opt: string, optIdx: number) => (
+                                      <div key={optIdx} className="flex items-center gap-2">
+                                        <span className="font-semibold text-sm w-6">{String.fromCharCode(65 + optIdx)}.</span>
+                                        <Input
+                                          value={opt}
+                                          onChange={(e) => {
+                                            const updated = [...aiParsedQuestions];
+                                            updated[idx].options[optIdx] = e.target.value;
+                                            setAiParsedQuestions(updated);
+                                          }}
+                                        />
+                                      </div>
                                     ))}
                                   </div>
-                                ) : (
-                                  <p className="text-sm font-medium text-green-700">{q.correct_answer}</p>
-                                )}
+                                </div>
+                              )}
+
+                              <div>
+                                <Label className="text-xs">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
+                                <div className="p-3 bg-green-50 border border-green-200 rounded-md mt-1">
+                                  {Array.isArray(q.correct_answer) ? (
+                                    <div className="space-y-1">
+                                      {q.correct_answer.map((ans: string, ansIdx: number) => (
+                                        <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm font-medium text-green-700">{q.correct_answer}</p>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex gap-2 pt-2">
+                                <Button
+                                  className="flex-1"
+                                  onClick={() => handleAddAiQuestion(q)}
+                                >
+                                  Add to Exam
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={() => setAiParsedQuestions(aiParsedQuestions.filter((_, i) => i !== idx))}
+                                >
+                                  Discard
+                                </Button>
                               </div>
                             </div>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
 
-                            <div className="flex gap-2 pt-2">
-                              <Button
-                                className="flex-1"
-                                onClick={() => handleAddAiQuestion(q)}
-                              >
-                                Add to Exam
-                              </Button>
-                              <Button
-                                variant="outline"
-                                onClick={() => setAiParsedQuestions(aiParsedQuestions.filter((_, i) => i !== idx))}
-                              >
-                                Discard
-                              </Button>
-                            </div>
-                          </div>
-                        </Card>
-                      ))}
-                    </div>
-                  )}
-
-                  {aiParsingStatus === 'idle' && !aiPdfUrl && (
-                    <div className="text-center py-12 border rounded-lg bg-slate-50 text-muted-foreground">
-                      Upload a PDF to start AI parsing
-                    </div>
-                  )}
+                    {aiParsingStatus === 'idle' && !aiPdfUrl && (
+                      <div className="text-center py-12 border rounded-lg bg-slate-50 text-muted-foreground">
+                        Upload a PDF to start AI parsing
+                      </div>
+                    )}
+                  </div>
                 </TabsContent>
               </Tabs>
             </CardContent>
