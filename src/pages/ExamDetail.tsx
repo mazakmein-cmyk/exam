@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2 } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PdfSnipper from "@/components/PdfSnipper";
 import { QuestionForm } from "@/components/QuestionForm";
@@ -101,6 +101,10 @@ export default function ExamDetail() {
   const [deleteSectionId, setDeleteSectionId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showDeleteExamDialog, setShowDeleteExamDialog] = useState(false);
+
+  // Delete Question Confirmation State
+  const [deleteQuestionId, setDeleteQuestionId] = useState<string | null>(null);
+  const [showDeleteQuestionDialog, setShowDeleteQuestionDialog] = useState(false);
   const [isExamDetailsCollapsed, setIsExamDetailsCollapsed] = useState(false);
   const [isSectionsCollapsed, setIsSectionsCollapsed] = useState(false);
   const [isQuestionsCollapsed, setIsQuestionsCollapsed] = useState(false);
@@ -258,6 +262,100 @@ export default function ExamDetail() {
       title: "Share",
       description: "Sharing functionality coming soon!",
     });
+  };
+
+  const handleDuplicateExam = async () => {
+    if (!exam) return;
+
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast({
+          title: "Error",
+          description: "You must be logged in to duplicate an exam",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Create a copy of the exam
+      const { data: newExam, error: examError } = await supabase
+        .from("exams")
+        .insert({
+          name: `${exam.name} (Copy)`,
+          description: exam.description,
+          instruction: exam.instruction,
+          exam_category: exam.exam_category,
+          user_id: user.id,
+        })
+        .select()
+        .single();
+
+      if (examError) throw examError;
+
+      // Duplicate all sections and their questions
+      for (const section of sections) {
+        const { data: newSection, error: sectionError } = await supabase
+          .from("sections")
+          .insert({
+            exam_id: newExam.id,
+            name: section.name,
+            time_minutes: section.time_minutes,
+          })
+          .select()
+          .single();
+
+        if (sectionError) throw sectionError;
+
+        // Get questions for this section
+        const { data: sectionQuestions, error: questionsError } = await supabase
+          .from("parsed_questions")
+          .select("*")
+          .eq("section_id", section.id);
+
+        if (questionsError) throw questionsError;
+
+        // Duplicate questions to the new section
+        if (sectionQuestions && sectionQuestions.length > 0) {
+          const newQuestions = sectionQuestions.map((q: any) => ({
+            section_id: newSection.id,
+            q_no: q.q_no,
+            text: q.text,
+            options: q.options,
+            answer_type: q.answer_type,
+            image_url: q.image_url,
+            correct_answer: q.correct_answer,
+            requires_review: q.requires_review || false,
+            is_excluded: q.is_excluded || false,
+            is_finalized: q.is_finalized || true,
+          }));
+
+          const { error: insertError } = await supabase
+            .from("parsed_questions")
+            .insert(newQuestions);
+
+          if (insertError) throw insertError;
+        }
+      }
+
+      toast({
+        title: "Duplicated",
+        description: "Exam duplicated successfully! Redirecting to the new exam...",
+      });
+
+      // Navigate to the new exam
+      navigate(`/exam/${newExam.id}`);
+    } catch (error: any) {
+      console.error("Duplicate error:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to duplicate exam",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDeleteExam = () => {
@@ -536,16 +634,23 @@ export default function ExamDetail() {
     }
   };
 
-  const handleDeleteQuestion = async (id: string) => {
+  const handleDeleteQuestionClick = (id: string) => {
+    setDeleteQuestionId(id);
+    setShowDeleteQuestionDialog(true);
+  };
+
+  const handleConfirmDeleteQuestion = async () => {
+    if (!deleteQuestionId) return;
+
     try {
       const { error } = await supabase
         .from("parsed_questions")
         .delete()
-        .eq("id", id);
+        .eq("id", deleteQuestionId);
 
       if (error) throw error;
 
-      setQuestions(questions.filter(q => q.id !== id));
+      setQuestions(questions.filter(q => q.id !== deleteQuestionId));
       toast({
         title: "Deleted",
         description: "Question removed successfully",
@@ -556,6 +661,9 @@ export default function ExamDetail() {
         description: "Failed to delete question",
         variant: "destructive",
       });
+    } finally {
+      setShowDeleteQuestionDialog(false);
+      setDeleteQuestionId(null);
     }
   };
 
@@ -853,6 +961,10 @@ export default function ExamDetail() {
           <h1 className="text-xl font-bold">Edit Exam</h1>
         </div>
         <div className="flex gap-2">
+          <Button variant="ghost" onClick={() => navigate(`/exam/${examId}/intro`)}>
+            <BookOpen className="mr-2 h-4 w-4" />
+            View Exam
+          </Button>
           <Button onClick={handleSaveExam} disabled={saving}>
             <Save className="mr-2 h-4 w-4" />
             Save
@@ -868,6 +980,10 @@ export default function ExamDetail() {
               <DropdownMenuItem onClick={handleShare}>
                 <Share2 className="mr-2 h-4 w-4" />
                 Share
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleDuplicateExam}>
+                <Copy className="mr-2 h-4 w-4" />
+                Duplicate
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleDeleteExam} className="text-destructive focus:text-destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
@@ -1064,7 +1180,11 @@ export default function ExamDetail() {
                                 Has image
                               </div>
                             )}
-                            <p className="font-medium">{q.text || "Question with image"}</p>
+                            {q.text ? (
+                              <p className="font-medium" dangerouslySetInnerHTML={{ __html: q.text }} />
+                            ) : (
+                              <p className="font-medium">Question with image</p>
+                            )}
                             <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
                           </div>
                           <div className="flex gap-2">
@@ -1097,7 +1217,7 @@ export default function ExamDetail() {
                               variant="ghost"
                               size="icon"
                               className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={() => handleDeleteQuestion(q.id)}
+                              onClick={() => handleDeleteQuestionClick(q.id)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -1120,7 +1240,7 @@ export default function ExamDetail() {
                             {q.text && (
                               <div>
                                 <Label className="mb-2 block font-semibold">Question Text</Label>
-                                <p className="text-sm p-3 bg-slate-50 rounded-md">{q.text}</p>
+                                <div className="text-sm p-3 bg-slate-50 rounded-md" dangerouslySetInnerHTML={{ __html: q.text }} />
                               </div>
                             )}
 
@@ -1476,6 +1596,24 @@ export default function ExamDetail() {
             <AlertDialogCancel onClick={() => setShowDeleteExamDialog(false)}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={executeDeleteExam} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Delete Exam
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Question Confirmation Dialog */}
+      <AlertDialog open={showDeleteQuestionDialog} onOpenChange={setShowDeleteQuestionDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Question</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this question? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setShowDeleteQuestionDialog(false); setDeleteQuestionId(null); }}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDeleteQuestion} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete Question
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -41,6 +41,10 @@ const Dashboard = () => {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [examToDelete, setExamToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  // Publish/Unpublish Confirmation State
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [publishAction, setPublishAction] = useState<{ examId: string; examName: string; isPublishing: boolean } | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -220,19 +224,28 @@ const Dashboard = () => {
     }
   };
 
-  const handleTogglePublish = async (examId: string, isPublished: boolean) => {
+  const handleTogglePublishClick = (examId: string, examName: string, isPublishing: boolean) => {
+    setPublishAction({ examId, examName, isPublishing });
+    setShowPublishDialog(true);
+  };
+
+  const executeTogglePublish = async () => {
+    if (!publishAction) return;
+
+    const { examId, isPublishing } = publishAction;
+
     try {
       const { error } = await supabase
         .from("exams")
-        .update({ is_published: isPublished })
+        .update({ is_published: isPublishing })
         .eq("id", examId);
 
       if (error) throw error;
 
-      setExams(exams.map(e => e.id === examId ? { ...e, is_published: isPublished } : e));
+      setExams(exams.map(e => e.id === examId ? { ...e, is_published: isPublishing } : e));
       toast({
-        title: isPublished ? "Published" : "Unpublished",
-        description: isPublished ? "Exam is now visible in Marketplace" : "Exam removed from Marketplace",
+        title: isPublishing ? "Published" : "Unpublished",
+        description: isPublishing ? "Exam is now visible in Marketplace" : "Exam removed from Marketplace",
       });
     } catch (error: any) {
       toast({
@@ -240,6 +253,9 @@ const Dashboard = () => {
         description: error.message || "Failed to update publish status",
         variant: "destructive",
       });
+    } finally {
+      setShowPublishDialog(false);
+      setPublishAction(null);
     }
   };
 
@@ -317,7 +333,7 @@ const Dashboard = () => {
                       </span>
                       <Switch
                         checked={exam.is_published}
-                        onCheckedChange={(checked) => handleTogglePublish(exam.id, checked)}
+                        onCheckedChange={(checked) => handleTogglePublishClick(exam.id, exam.name, checked)}
                       />
                     </div>
                     {exam.exam_category && (
@@ -394,6 +410,29 @@ const Dashboard = () => {
             <AlertDialogCancel onClick={() => setShowDeleteDialog(false)}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={executeDeleteExam} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Publish/Unpublish Confirmation Dialog */}
+      <AlertDialog open={showPublishDialog} onOpenChange={setShowPublishDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {publishAction?.isPublishing ? "Publish Exam" : "Unpublish Exam"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {publishAction?.isPublishing
+                ? `Are you sure you want to publish "${publishAction?.examName}"? This will make the exam visible in the Marketplace for everyone.`
+                : `Are you sure you want to unpublish "${publishAction?.examName}"? This will remove the exam from the Marketplace.`
+              }
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setShowPublishDialog(false); setPublishAction(null); }}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeTogglePublish} className={publishAction?.isPublishing ? "bg-primary" : "bg-orange-500 hover:bg-orange-600"}>
+              {publishAction?.isPublishing ? "Publish" : "Unpublish"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

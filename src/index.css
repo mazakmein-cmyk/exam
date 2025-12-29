@@ -1,3 +1,5 @@
+@import 'katex/dist/katex.min.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -130,5 +132,9 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  blockquote {
+    @apply border-l-4 border-primary pl-4 italic text-muted-foreground my-4;
   }
 }
