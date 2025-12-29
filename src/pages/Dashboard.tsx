@@ -92,7 +92,7 @@ const Dashboard = () => {
         variant: "destructive",
       });
     } else {
-      setExams(data || []);
+      setExams((data || []) as Exam[]);
     }
     setLoading(false);
   };
@@ -379,12 +379,12 @@ const Dashboard = () => {
       </nav>
 
       <main className="container mx-auto max-w-7xl px-6 py-8">
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-bold text-foreground">My Exams</h1>
             <p className="text-muted-foreground mt-2">Create and manage your exam simulations</p>
           </div>
-          <Button onClick={() => setShowCreateDialog(true)}>
+          <Button onClick={() => setShowCreateDialog(true)} className="self-start md:self-auto">
             <Plus className="mr-2 h-4 w-4" />
             New Exam
           </Button>
@@ -407,19 +407,19 @@ const Dashboard = () => {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {exams.map((exam) => (
               <Card key={exam.id} className="flex flex-col justify-between">
                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <CardTitle className="text-xl font-bold">{exam.name}</CardTitle>
+                      <CardTitle className="text-xl font-bold break-all">{exam.name}</CardTitle>
                     </div>
-                    <CardDescription>{exam.description || "No description"}</CardDescription>
+                    <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
                   </div>
-                  <div className="flex flex-col items-end gap-2">
+                  <div className="flex flex-col items-end gap-2 pl-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-xs text-muted-foreground hidden xs:inline">
                         {exam.is_published ? "Published" : "Unpublished"}
                       </span>
                       <Switch
@@ -435,13 +435,14 @@ const Dashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent className="mt-4">
-                  <div className="flex gap-3">
+                  <div className="flex flex-wrap gap-3">
                     <Button
-                      className="flex-1 bg-blue-600 hover:bg-blue-700"
+                      className="flex-1 min-w-[100px] bg-blue-600 hover:bg-blue-700"
                       onClick={() => navigate(`/exam/${exam.id}`)}
                     >
                       <FileText className="mr-2 h-4 w-4" />
-                      Edit Exam
+                      <span className="hidden sm:inline">Edit</span>
+                      <span className="sm:hidden">Edit</span>
                     </Button>
                     <Button
                       variant="outline"

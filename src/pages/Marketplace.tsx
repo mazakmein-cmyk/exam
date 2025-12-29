@@ -131,14 +131,14 @@ const Marketplace = () => {
                                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                                     <div className="space-y-1">
                                         <div className="flex items-center gap-2">
-                                            <CardTitle className="text-xl font-bold">{exam.name}</CardTitle>
+                                            <CardTitle className="text-xl font-bold break-all">{exam.name}</CardTitle>
                                             {exam.exam_category && (
-                                                <Badge variant="secondary" className="text-xs font-normal">
+                                                <Badge variant="secondary" className="text-xs font-normal shrink-0">
                                                     {exam.exam_category}
                                                 </Badge>
                                             )}
                                         </div>
-                                        <CardDescription>{exam.description || "No description"}</CardDescription>
+                                        <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
                                     </div>
                                 </CardHeader>
                                 <CardContent className="mt-4">

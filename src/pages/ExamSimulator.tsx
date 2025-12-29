@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
+import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 type Question = {
   id: string;
@@ -62,6 +63,7 @@ const ExamSimulator = () => {
   const [showSectionCompleteDialog, setShowSectionCompleteDialog] = useState(false);
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
   const [isLoading, setIsLoading] = useState(true);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
   useEffect(() => {
     fetchSectionAndQuestions();
@@ -511,27 +513,81 @@ const ExamSimulator = () => {
   }
 
   const currentQuestion = questions[currentQuestionIndex];
-  const currentSectionIndex = allSections.findIndex(s => s.id === sectionId);
-  const nextSection = allSections[currentSectionIndex + 1];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <div className="border-b border-border bg-card">
-        <div className="container mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-foreground">{section?.name}</h1>
-          <div className="flex items-center space-x-2 text-foreground">
-            <Clock className="h-5 w-5" />
-            <span className="text-lg font-mono">{formatTime(timeRemaining)}</span>
+      <div className="border-b border-border bg-card sticky top-0 z-10">
+        <div className="container mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-semibold text-foreground truncate max-w-[150px] sm:max-w-md">{section?.name}</h1>
+          </div>
+          <div className="flex items-center space-x-4 text-foreground">
+            <div className="flex items-center space-x-2">
+              <Clock className="h-4 w-4 sm:h-5 sm:w-5" />
+              <span className={`text-lg font-mono ${timeRemaining < 300 ? 'text-red-500 animate-pulse' : ''}`}>
+                {formatTime(timeRemaining)}
+              </span>
+            </div>
+
+            {/* Mobile Menu Trigger */}
+            <Sheet open={isPaletteOpen} onOpenChange={setIsPaletteOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="icon" className="lg:hidden">
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-[300px] sm:w-[350px] overflow-y-auto">
+                <SheetHeader className="mb-4">
+                  <SheetTitle>Question Palette</SheetTitle>
+                </SheetHeader>
+                <div className="grid grid-cols-5 gap-2">
+                  {questions.map((q, idx) => (
+                    <button
+                      key={q.id}
+                      onClick={() => {
+                        handleQuestionSelect(idx);
+                        setIsPaletteOpen(false);
+                      }}
+                      className={`aspect-square rounded-md text-sm transition-all ${idx === currentQuestionIndex
+                        ? "border-4 border-primary font-bold text-lg shadow-lg scale-110"
+                        : "border-2 border-border font-medium"
+                        } ${getQuestionColor(q.id)}`}
+                    >
+                      {idx + 1}
+                    </button>
+                  ))}
+                </div>
+                {/* Legend */}
+                <div className="space-y-2 text-xs mt-6">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-4 rounded bg-green-500"></div>
+                    <span>Attempted</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-4 rounded bg-red-500"></div>
+                    <span>Marked for Review</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-4 rounded bg-purple-500"></div>
+                    <span>Viewed</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-4 rounded bg-background border border-border"></div>
+                    <span>Untouched</span>
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 flex">
+      <div className="flex-1 flex overflow-hidden">
         {/* Main Question Area */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-20 sm:pb-6">
           <div className="max-w-3xl mx-auto space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <h2 className="text-sm font-medium text-muted-foreground">
                 Question {currentQuestionIndex + 1} of {questions.length}
                 {currentQuestion?.section_label && ` - ${currentQuestion.section_label}`}
@@ -540,26 +596,27 @@ const ExamSimulator = () => {
                 variant={questionStates[currentQuestion?.id]?.isMarkedForReview ? "destructive" : "outline"}
                 size="sm"
                 onClick={handleMarkForReview}
+                className="self-start sm:self-auto"
               >
                 <Flag className="h-4 w-4 mr-2" />
                 {questionStates[currentQuestion?.id]?.isMarkedForReview ? "Marked" : "Mark for Review"}
               </Button>
             </div>
 
-            <Card>
+            <Card className="border-t-4 border-t-primary">
               <CardContent className="pt-6 space-y-6">
                 {currentQuestion?.image_url && (
-                  <div className="border rounded-lg p-4 bg-slate-50">
+                  <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
                     <img
                       src={currentQuestion.image_url}
                       alt="Question"
-                      className="max-w-full h-auto rounded-md"
+                      className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
                     />
                   </div>
                 )}
                 {currentQuestion?.text && (
                   <div
-                    className="text-foreground whitespace-pre-wrap"
+                    className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                     dangerouslySetInnerHTML={{
                       __html: currentQuestion.text
                         // Parse markdown links [text](url) -> <a href="url">text</a>
@@ -581,26 +638,37 @@ const ExamSimulator = () => {
                     }}
                   />
                 )}
-                {renderAnswerInput()}
+                <div className="mt-6 pt-6 border-t">
+                  {renderAnswerInput()}
+                </div>
               </CardContent>
             </Card>
 
-            <div className="flex justify-between">
+            <div className="flex justify-between pb-8">
               <Button
                 variant="outline"
                 onClick={() => handleNavigation("prev")}
                 disabled={currentQuestionIndex === 0}
+                className="w-1/3 sm:w-auto"
               >
                 <ChevronLeft className="h-4 w-4 mr-2" />
-                Previous
+                <span className="hidden sm:inline">Previous</span>
+                <span className="sm:hidden">Prev</span>
               </Button>
+
+              {/* Mobile count indicator */}
+              <span className="text-sm text-muted-foreground flex items-center sm:hidden">
+                {currentQuestionIndex + 1} / {questions.length}
+              </span>
+
               {currentQuestionIndex === questions.length - 1 ? (
-                <Button onClick={() => setShowSubmitDialog(true)}>
-                  Submit Section
+                <Button onClick={() => setShowSubmitDialog(true)} className="w-1/3 sm:w-auto">
+                  Submit
                 </Button>
               ) : (
-                <Button onClick={() => handleNavigation("next")}>
-                  Next
+                <Button onClick={() => handleNavigation("next")} className="w-1/3 sm:w-auto">
+                  <span className="hidden sm:inline">Next</span>
+                  <span className="sm:hidden">Next</span>
                   <ChevronRight className="h-4 w-4 ml-2" />
                 </Button>
               )}
@@ -608,8 +676,8 @@ const ExamSimulator = () => {
           </div>
         </div>
 
-        {/* Question Palette */}
-        <div className="w-80 border-l border-border bg-card overflow-y-auto p-6">
+        {/* Desktop Question Palette - Hidden on mobile */}
+        <div className="hidden lg:block w-80 border-l border-border bg-card overflow-y-auto p-6">
           <h3 className="text-sm font-semibold text-foreground mb-4">Question Palette</h3>
           <div className="grid grid-cols-5 gap-2 mb-6">
             {questions.map((q, idx) => (
@@ -685,9 +753,8 @@ const ExamSimulator = () => {
             <AlertDialogTitle>Section Completed!</AlertDialogTitle>
             <AlertDialogDescription>
               You have successfully completed <strong>{section?.name}</strong>.
-              {nextSection ? (
+              {allSections.find(s => s.id === sectionId)?.id !== allSections[allSections.length - 1].id ? (
                 <p className="mt-2">
-                  The next section is <strong>{nextSection.name}</strong> ({nextSection.time_minutes} minutes).
                   Click below to proceed.
                 </p>
               ) : (
@@ -698,7 +765,7 @@ const ExamSimulator = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            {nextSection ? (
+            {allSections.find(s => s.id === sectionId)?.id !== allSections[allSections.length - 1].id ? (
               <AlertDialogAction onClick={handleProceedToNextSection}>
                 Start Next Section
               </AlertDialogAction>

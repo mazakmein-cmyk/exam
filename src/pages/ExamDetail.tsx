@@ -953,21 +953,28 @@ export default function ExamDetail() {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
-      <header className="bg-white border-b px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-4">
+      <header className="bg-white border-b px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+        <div className="flex items-center gap-2 sm:gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-xl font-bold">Edit Exam</h1>
+          <h1 className="text-lg sm:text-xl font-bold truncate max-w-[150px] sm:max-w-md">Edit Exam</h1>
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => navigate(`/exam/${examId}/intro`)}>
+          <Button variant="ghost" size="sm" className="hidden sm:flex" onClick={() => navigate(`/exam/${examId}/intro`)}>
             <BookOpen className="mr-2 h-4 w-4" />
-            View Exam
+            View
           </Button>
-          <Button onClick={handleSaveExam} disabled={saving}>
+          <Button variant="ghost" size="icon" className="sm:hidden" onClick={() => navigate(`/exam/${examId}/intro`)}>
+            <BookOpen className="h-4 w-4" />
+          </Button>
+
+          <Button onClick={handleSaveExam} disabled={saving} size="sm" className="hidden sm:flex">
             <Save className="mr-2 h-4 w-4" />
             Save
+          </Button>
+          <Button onClick={handleSaveExam} disabled={saving} size="icon" className="sm:hidden">
+            <Save className="h-4 w-4" />
           </Button>
 
           <DropdownMenu>
@@ -994,7 +1001,7 @@ export default function ExamDetail() {
         </div>
       </header>
 
-      <main className="container mx-auto max-w-[1600px] p-6 grid grid-cols-12 gap-6">
+      <main className="container mx-auto max-w-[1600px] p-4 sm:p-6 grid grid-cols-12 gap-6">
         {/* Left Sidebar: Exam Details & Sections */}
         <div className="col-span-12 lg:col-span-3 space-y-6">
           <Card>
@@ -1129,14 +1136,14 @@ export default function ExamDetail() {
         <div className="col-span-12 lg:col-span-9 space-y-6">
           {/* Questions List */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="flex items-center gap-2">
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between space-y-2 sm:space-y-0 pb-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <CardTitle className="text-lg font-bold">Questions ({questions.length})</CardTitle>
                 <Select
                   value={section?.id}
                   onValueChange={(value) => handleSectionChange(value)}
                 >
-                  <SelectTrigger className="h-8 w-[200px] ml-2">
+                  <SelectTrigger className="h-8 flex-1 sm:w-[200px] ml-2">
                     <SelectValue placeholder="Select section" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1152,6 +1159,7 @@ export default function ExamDetail() {
                 variant="ghost"
                 size="sm"
                 onClick={() => setIsQuestionsCollapsed(!isQuestionsCollapsed)}
+                className="self-end sm:self-auto"
               >
                 {isQuestionsCollapsed ? (
                   <ChevronDown className="h-4 w-4" />
@@ -1173,7 +1181,7 @@ export default function ExamDetail() {
                           <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
                             {idx + 1}
                           </div>
-                          <div className="flex-1 space-y-2">
+                          <div className="flex-1 space-y-2 min-w-0">
                             {q.image_url && (
                               <div className="flex items-center gap-2 text-sm text-blue-600">
                                 <ImageIcon className="h-4 w-4" />
@@ -1181,7 +1189,7 @@ export default function ExamDetail() {
                               </div>
                             )}
                             {q.text ? (
-                              <p className="font-medium" dangerouslySetInnerHTML={{ __html: q.text }} />
+                              <div className="font-medium truncate" dangerouslySetInnerHTML={{ __html: q.text }} />
                             ) : (
                               <p className="font-medium">Question with image</p>
                             )}
@@ -1194,21 +1202,15 @@ export default function ExamDetail() {
                               onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
                             >
                               {isExpanded ? (
-                                <>
-                                  <ChevronUp className="mr-2 h-4 w-4" />
-                                  Hide Question
-                                </>
+                                <ChevronUp className="h-4 w-4" />
                               ) : (
-                                <>
-                                  <ChevronDown className="mr-2 h-4 w-4" />
-                                  View Question
-                                </>
+                                <ChevronDown className="h-4 w-4" />
                               )}
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
                               onClick={() => handleEditQuestion(q)}
                             >
                               <Edit className="h-4 w-4" />
@@ -1216,7 +1218,7 @@ export default function ExamDetail() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="text-destructive opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
                               onClick={() => handleDeleteQuestionClick(q.id)}
                             >
                               <Trash2 className="h-4 w-4" />
