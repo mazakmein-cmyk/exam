@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FileText, LogOut, Plus, BarChart3, BookOpen, Trash2, MoreVertical, Share2 } from "lucide-react";
+import { FileText, LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
@@ -34,7 +34,10 @@ type Exam = {
   exam_category: string | null;
 };
 
+import { useUserRole } from "@/hooks/use-user-role";
+
 const Dashboard = () => {
+  const { role, loading: roleLoading } = useUserRole();
   const [user, setUser] = useState<any>(null);
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,6 +125,97 @@ const Dashboard = () => {
       title: "Share Exam",
       description: `Sharing functionality for "${examName}" coming soon!`,
     });
+  };
+
+  const handleDuplicateExam = async (exam: Exam) => {
+    try {
+      setLoading(true);
+
+      // Create a copy of the exam
+      const { data: newExam, error: examError } = await supabase
+        .from("exams")
+        .insert({
+          name: `${exam.name} (Copy)`,
+          description: exam.description,
+          exam_category: exam.exam_category,
+          user_id: user.id,
+          is_published: false,
+        })
+        .select()
+        .single();
+
+      if (examError) throw examError;
+
+      // Get all sections for this exam
+      const { data: sectionsData, error: sectionsError } = await supabase
+        .from("sections")
+        .select("*")
+        .eq("exam_id", exam.id);
+
+      if (sectionsError) throw sectionsError;
+
+      // Duplicate all sections and their questions
+      for (const section of sectionsData || []) {
+        const { data: newSection, error: sectionError } = await supabase
+          .from("sections")
+          .insert({
+            exam_id: newExam.id,
+            name: section.name,
+            time_minutes: section.time_minutes,
+          })
+          .select()
+          .single();
+
+        if (sectionError) throw sectionError;
+
+        // Get questions for this section
+        const { data: sectionQuestions, error: questionsError } = await supabase
+          .from("parsed_questions")
+          .select("*")
+          .eq("section_id", section.id);
+
+        if (questionsError) throw questionsError;
+
+        // Duplicate questions to the new section
+        if (sectionQuestions && sectionQuestions.length > 0) {
+          const newQuestions = sectionQuestions.map((q: any) => ({
+            section_id: newSection.id,
+            q_no: q.q_no,
+            text: q.text,
+            options: q.options,
+            answer_type: q.answer_type,
+            image_url: q.image_url,
+            correct_answer: q.correct_answer,
+            requires_review: q.requires_review || false,
+            is_excluded: q.is_excluded || false,
+            is_finalized: q.is_finalized || true,
+          }));
+
+          const { error: insertError } = await supabase
+            .from("parsed_questions")
+            .insert(newQuestions);
+
+          if (insertError) throw insertError;
+        }
+      }
+
+      // Refresh the exams list
+      fetchExams();
+
+      toast({
+        title: "Duplicated",
+        description: `"${exam.name}" has been duplicated successfully!`,
+      });
+    } catch (error: any) {
+      console.error("Duplicate error:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to duplicate exam",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDeleteExam = (examId: string, examName: string) => {
@@ -274,10 +368,7 @@ const Dashboard = () => {
               <span className="text-xl font-bold text-foreground">ExamSim</span>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" onClick={() => navigate("/analytics")}>
-                <BarChart3 className="mr-2 h-4 w-4" />
-                Analytics
-              </Button>
+
               <Button variant="ghost" onClick={handleSignOut}>
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign Out
@@ -374,6 +465,10 @@ const Dashboard = () => {
                         <DropdownMenuItem onClick={() => handleShare(exam.name)}>
                           <Share2 className="mr-2 h-4 w-4" />
                           Share
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleDuplicateExam(exam)}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleDeleteExam(exam.id, exam.name)}

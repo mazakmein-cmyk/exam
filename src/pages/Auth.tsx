@@ -25,6 +25,9 @@ const Auth = () => {
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/dashboard`,
+        data: {
+          user_type: "creator",
+        },
       },
     });
 
@@ -129,6 +132,15 @@ const Auth = () => {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? "Signing in..." : "Sign In"}
                   </Button>
+                  <p className="text-center text-sm text-muted-foreground mt-4">
+                    Want to take exams?{" "}
+                    <span
+                      className="text-primary hover:underline cursor-pointer"
+                      onClick={() => navigate("/student-auth?mode=signin")}
+                    >
+                      Sign in as Student
+                    </span>
+                  </p>
                 </form>
               </TabsContent>
 
@@ -159,6 +171,15 @@ const Auth = () => {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? "Creating account..." : "Create Account"}
                   </Button>
+                  <p className="text-center text-sm text-muted-foreground mt-4">
+                    Want to take exams?{" "}
+                    <span
+                      className="text-primary hover:underline cursor-pointer"
+                      onClick={() => navigate("/student-auth?mode=signup")}
+                    >
+                      Sign up as Student
+                    </span>
+                  </p>
                 </form>
               </TabsContent>
             </Tabs>

@@ -18,7 +18,10 @@ type Exam = {
     exam_category: string | null;
 };
 
+import { useUserRole } from "@/hooks/use-user-role";
+
 const Marketplace = () => {
+    const { role, loading: roleLoading } = useUserRole();
     const [exams, setExams] = useState<Exam[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -54,7 +57,7 @@ const Marketplace = () => {
 
     return (
         <div className="min-h-screen bg-background">
-            <Navbar />
+            <Navbar navButtonLabel="Analytics" navButtonLink="/analytics?from=marketplace" />
 
             <main className="container mx-auto max-w-7xl px-6 py-8">
                 {/* Back Button */}

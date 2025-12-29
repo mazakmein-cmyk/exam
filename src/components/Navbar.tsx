@@ -1,8 +1,38 @@
 import { Button } from "@/components/ui/button";
-import { FileText, LogIn } from "lucide-react";
-import { Link } from "react-router-dom";
+import { FileText, LogIn, LogOut } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
-const Navbar = () => {
+interface NavbarProps {
+  navButtonLabel?: string;
+  navButtonLink?: string;
+}
+
+const Navbar = ({ navButtonLabel = "Marketplace", navButtonLink = "/marketplace" }: NavbarProps) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [session, setSession] = useState<any>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate("/");
+  };
+
   return (
     <nav className="sticky top-0 z-50 border-b border-border bg-card/80 backdrop-blur-lg">
       <div className="container mx-auto max-w-7xl px-6">
@@ -13,15 +43,22 @@ const Navbar = () => {
           </Link>
 
           <div className="flex items-center space-x-4">
-            <Link to="/marketplace">
-              <Button variant="ghost">Marketplace</Button>
+            <Link to={navButtonLink}>
+              <Button variant="ghost">{navButtonLabel}</Button>
             </Link>
-            <Link to="/auth">
-              <Button variant="outline" size="sm">
-                <LogIn className="mr-2 h-4 w-4" />
-                Sign In
+            {session ? (
+              <Button variant="outline" size="sm" onClick={handleLogout}>
+                <LogOut className="mr-2 h-4 w-4" />
+                Logout
               </Button>
-            </Link>
+            ) : (
+              <Link to={location.pathname === "/marketplace" ? "/student-auth?from=marketplace" : "/student-auth"}>
+                <Button variant="outline" size="sm">
+                  <LogIn className="mr-2 h-4 w-4" />
+                  Sign In
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </div>

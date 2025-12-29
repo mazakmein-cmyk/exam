@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -27,6 +27,7 @@ interface Attempt {
 
 export default function Analytics() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -38,9 +39,10 @@ export default function Analytics() {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
-      
+
       if (!user) {
-        navigate("/auth");
+        const from = searchParams.get("from");
+        navigate(from === "marketplace" ? "/student-auth?from=marketplace" : "/student-auth");
         return;
       }
 
@@ -179,11 +181,11 @@ export default function Analytics() {
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
-              onClick={() => navigate("/dashboard")}
+              onClick={() => navigate(searchParams.get("from") === "marketplace" ? "/marketplace" : "/dashboard")}
               className="gap-2"
             >
               <ArrowLeft className="w-4 h-4" />
-              Back
+              {searchParams.get("from") === "marketplace" ? "Back to Marketplace" : "Back"}
             </Button>
             <h1 className="text-3xl font-bold">Performance Analytics</h1>
           </div>
