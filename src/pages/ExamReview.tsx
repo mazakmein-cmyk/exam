@@ -47,6 +47,8 @@ export default function ExamReview() {
   const [answerKeyInSamePdf, setAnswerKeyInSamePdf] = useState(false);
   const [uploadingAnswerKey, setUploadingAnswerKey] = useState(false);
 
+  const [isCreator, setIsCreator] = useState(false);
+
   useEffect(() => {
     fetchReviewData();
   }, [attemptId]);
@@ -67,6 +69,20 @@ export default function ExamReview() {
       const examId = currentAttempt.sections.exam_id;
       const userId = currentAttempt.user_id;
       setSectionId(currentAttempt.sections.id); // Default to current section for uploads
+
+      // 1b. Check if current user is the creator
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: examData, error: examError } = await supabase
+          .from("exams")
+          .select("user_id")
+          .eq("id", examId)
+          .single();
+
+        if (!examError && examData) {
+          setIsCreator(user.id === examData.user_id);
+        }
+      }
 
       // 2. Fetch all sections for this exam
       const { data: sections, error: sectionsError } = await supabase
@@ -287,63 +303,65 @@ export default function ExamReview() {
             Back to Dashboard
           </Button>
 
-          <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Upload className="w-4 h-4" />
-                Upload Answer Key
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Upload Answer Key</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="same-pdf"
-                    checked={answerKeyInSamePdf}
-                    onCheckedChange={(checked) => setAnswerKeyInSamePdf(checked as boolean)}
-                  />
-                  <Label htmlFor="same-pdf">
-                    Answer key is in the same PDF
-                  </Label>
-                </div>
-
-                {!answerKeyInSamePdf && (
-                  <div>
-                    <Label htmlFor="answer-key-file">Upload Answer Key PDF</Label>
-                    <input
-                      id="answer-key-file"
-                      type="file"
-                      accept=".pdf"
-                      className="mt-2 block w-full text-sm text-muted-foreground
-                        file:mr-4 file:py-2 file:px-4
-                        file:rounded-md file:border-0
-                        file:text-sm file:font-semibold
-                        file:bg-primary file:text-primary-foreground
-                        hover:file:bg-primary/90"
-                      onChange={(e) => {
-                        if (e.target.files?.[0]) {
-                          handleUploadAnswerKey(e.target.files[0]);
-                        }
-                      }}
+          {isCreator && (
+            <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="gap-2">
+                  <Upload className="w-4 h-4" />
+                  Upload Answer Key
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Upload Answer Key</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="same-pdf"
+                      checked={answerKeyInSamePdf}
+                      onCheckedChange={(checked) => setAnswerKeyInSamePdf(checked as boolean)}
                     />
+                    <Label htmlFor="same-pdf">
+                      Answer key is in the same PDF
+                    </Label>
                   </div>
-                )}
 
-                {answerKeyInSamePdf && (
-                  <Button
-                    onClick={() => handleUploadAnswerKey(null)}
-                    disabled={uploadingAnswerKey}
-                    className="w-full"
-                  >
-                    {uploadingAnswerKey ? "Processing..." : "Extract & Grade"}
-                  </Button>
-                )}
-              </div>
-            </DialogContent>
-          </Dialog>
+                  {!answerKeyInSamePdf && (
+                    <div>
+                      <Label htmlFor="answer-key-file">Upload Answer Key PDF</Label>
+                      <input
+                        id="answer-key-file"
+                        type="file"
+                        accept=".pdf"
+                        className="mt-2 block w-full text-sm text-muted-foreground
+                          file:mr-4 file:py-2 file:px-4
+                          file:rounded-md file:border-0
+                          file:text-sm file:font-semibold
+                          file:bg-primary file:text-primary-foreground
+                          hover:file:bg-primary/90"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) {
+                            handleUploadAnswerKey(e.target.files[0]);
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {answerKeyInSamePdf && (
+                    <Button
+                      onClick={() => handleUploadAnswerKey(null)}
+                      disabled={uploadingAnswerKey}
+                      className="w-full"
+                    >
+                      {uploadingAnswerKey ? "Processing..." : "Extract & Grade"}
+                    </Button>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
 
         {/* Stats Summary */}

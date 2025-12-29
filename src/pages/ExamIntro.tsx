@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,10 +17,13 @@ type Exam = {
 const ExamIntro = () => {
     const { examId } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const { toast } = useToast();
     const [exam, setExam] = useState<Exam | null>(null);
     const [loading, setLoading] = useState(true);
     const [firstSectionId, setFirstSectionId] = useState<string | null>(null);
+
+    const fromPage = searchParams.get("from");
 
     useEffect(() => {
         if (examId) {
@@ -77,6 +80,14 @@ const ExamIntro = () => {
         }
     };
 
+    const handleBack = () => {
+        if (fromPage === "marketplace") {
+            navigate("/marketplace");
+        } else {
+            navigate("/dashboard");
+        }
+    };
+
     if (loading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -92,7 +103,7 @@ const ExamIntro = () => {
             <Card className="max-w-2xl w-full">
                 <CardHeader>
                     <div className="flex items-center gap-4 mb-4">
-                        <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")}>
+                        <Button variant="ghost" size="icon" onClick={handleBack}>
                             <ArrowLeft className="h-5 w-5" />
                         </Button>
                         <CardTitle className="text-2xl">Exam Instructions</CardTitle>

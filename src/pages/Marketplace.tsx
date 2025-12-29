@@ -52,7 +52,7 @@ const Marketplace = () => {
     };
 
     const handleTakeExam = (examId: string) => {
-        navigate(`/exam/${examId}/intro`);
+        navigate(`/exam/${examId}/intro?from=marketplace`);
     };
 
     return (
