@@ -19,11 +19,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PdfSnipper from "@/components/PdfSnipper";
 import { QuestionForm } from "@/components/QuestionForm";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Exam = {
   id: string;
@@ -93,6 +100,10 @@ export default function ExamDetail() {
   // Delete Section Confirmation State
   const [deleteSectionId, setDeleteSectionId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDeleteExamDialog, setShowDeleteExamDialog] = useState(false);
+  const [isExamDetailsCollapsed, setIsExamDetailsCollapsed] = useState(false);
+  const [isSectionsCollapsed, setIsSectionsCollapsed] = useState(false);
+  const [isQuestionsCollapsed, setIsQuestionsCollapsed] = useState(false);
   const questionFormRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -183,6 +194,35 @@ export default function ExamDetail() {
 
   const handleSaveExam = async () => {
     if (!exam) return;
+
+    // Validate mandatory fields
+    if (!examCategory || !examCategory.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please select an Exam Category",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!examDescription || !examDescription.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter an Exam Description",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!examInstruction || !examInstruction.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter Exam Instructions",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
     try {
       // Update Exam
@@ -210,6 +250,113 @@ export default function ExamDetail() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleShare = () => {
+    toast({
+      title: "Share",
+      description: "Sharing functionality coming soon!",
+    });
+  };
+
+  const handleDeleteExam = () => {
+    setShowDeleteExamDialog(true);
+  };
+
+  const executeDeleteExam = async () => {
+    if (!exam) return;
+
+    try {
+      setLoading(true);
+
+      // First, get exam_versions for this exam (if they exist)
+      const { data: examVersions } = await supabase
+        .from("exam_versions" as any)
+        .select("id")
+        .eq("exam_id", exam.id);
+
+      if (examVersions && examVersions.length > 0) {
+        const versionIds = examVersions.map((v: any) => v.id);
+
+        // Delete all exam_attempts that reference these versions
+        await supabase
+          .from("exam_attempts" as any)
+          .delete()
+          .in("exam_version_id", versionIds);
+
+        // Delete the exam_versions themselves
+        await supabase
+          .from("exam_versions" as any)
+          .delete()
+          .eq("exam_id", exam.id);
+      }
+
+      // Get all sections for this exam
+      const { data: sections } = await supabase
+        .from("sections")
+        .select("id")
+        .eq("exam_id", exam.id);
+
+      if (sections && sections.length > 0) {
+        const sectionIds = sections.map(s => s.id);
+
+        // Delete all responses for attempts on these sections
+        const { data: attempts } = await supabase
+          .from("attempts")
+          .select("id")
+          .in("section_id", sectionIds);
+
+        if (attempts && attempts.length > 0) {
+          const attemptIds = attempts.map(a => a.id);
+          await supabase
+            .from("responses")
+            .delete()
+            .in("attempt_id", attemptIds);
+        }
+
+        // Delete all attempts for these sections
+        await supabase
+          .from("attempts")
+          .delete()
+          .in("section_id", sectionIds);
+
+        // Delete all parsed_questions for these sections
+        await supabase
+          .from("parsed_questions")
+          .delete()
+          .in("section_id", sectionIds);
+
+        // Delete all sections
+        await supabase
+          .from("sections")
+          .delete()
+          .eq("exam_id", exam.id);
+      }
+
+      // Now delete the exam itself
+      const { error } = await supabase
+        .from("exams")
+        .delete()
+        .eq("id", exam.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Deleted",
+        description: "Exam deleted successfully",
+      });
+
+      navigate("/dashboard");
+    } catch (error: any) {
+      console.error("Delete error:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete exam",
+        variant: "destructive",
+      });
+      setLoading(false);
+      setShowDeleteExamDialog(false);
     }
   };
 
@@ -705,105 +852,160 @@ export default function ExamDetail() {
           </Button>
           <h1 className="text-xl font-bold">Edit Exam</h1>
         </div>
-        <Button onClick={handleSaveExam} disabled={saving}>
-          <Save className="mr-2 h-4 w-4" />
-          Save
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={handleSaveExam} disabled={saving}>
+            <Save className="mr-2 h-4 w-4" />
+            Save
+          </Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleShare}>
+                <Share2 className="mr-2 h-4 w-4" />
+                Share
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleDeleteExam} className="text-destructive focus:text-destructive">
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete Exam
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </header>
 
       <main className="container mx-auto max-w-[1600px] p-6 grid grid-cols-12 gap-6">
         {/* Left Sidebar: Exam Details & Sections */}
         <div className="col-span-12 lg:col-span-3 space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle>Exam Details</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-lg font-bold">Edit Exam Details</CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsExamDetailsCollapsed(!isExamDetailsCollapsed)}
+              >
+                {isExamDetailsCollapsed ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+              </Button>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Title</Label>
-                <Input value={examTitle} onChange={(e) => setExamTitle(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <CategoryCombobox value={examCategory} onChange={setExamCategory} />
-              </div>
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <Textarea
-                  value={examDescription}
-                  onChange={(e) => setExamDescription(e.target.value)}
-                  rows={4}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Instruction</Label>
-                <Textarea
-                  value={examInstruction}
-                  onChange={(e) => setExamInstruction(e.target.value)}
-                  rows={4}
-                />
-              </div>
+            {!isExamDetailsCollapsed && (
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Title <span className="text-destructive">*</span></Label>
+                  <Input value={examTitle} onChange={(e) => setExamTitle(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Category <span className="text-destructive">*</span></Label>
+                  <CategoryCombobox value={examCategory} onChange={setExamCategory} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Description <span className="text-destructive">*</span></Label>
+                  <Textarea
+                    value={examDescription}
+                    onChange={(e) => setExamDescription(e.target.value)}
+                    rows={4}
+                    placeholder="Brief description of the exam..."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Instruction <span className="text-destructive">*</span></Label>
+                  <Textarea
+                    value={examInstruction}
+                    onChange={(e) => setExamInstruction(e.target.value)}
+                    rows={4}
+                    placeholder="Specific instructions for the exam..."
+                  />
+                </div>
 
-            </CardContent>
+              </CardContent>
+            )}
           </Card>
 
           {/* Sections Management */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg font-bold">Sections</CardTitle>
-              <Button size="sm" variant="outline" onClick={handleAddSection}>
-                <Plus className="h-4 w-4" />
+              <CardTitle className="text-lg font-bold">Edit Sections</CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsSectionsCollapsed(!isSectionsCollapsed)}
+              >
+                {isSectionsCollapsed ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
               </Button>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {sections.map((s) => (
-                <div
-                  key={s.id}
-                  className={`p-3 rounded-lg border cursor-pointer transition-all ${section?.id === s.id
-                    ? "bg-primary/5 border-primary shadow-sm"
-                    : "hover:bg-muted border-transparent bg-slate-50"
-                    }`}
-                  onClick={() => handleSectionChange(s.id)}
-                >
-                  <div className="flex justify-between items-start mb-2 gap-2">
-                    <Input
-                      className="h-7 text-sm font-medium border-transparent hover:border-input focus:border-input px-1 -ml-1"
-                      value={s.name}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => handleUpdateSection(s.id, { name: e.target.value })}
-                    />
-                    {sections.length > 1 && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          handleDeleteSectionClick(s.id);
-                        }}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    )}
+            {!isSectionsCollapsed && (
+              <CardContent className="space-y-3">
+                {sections.map((s) => (
+                  <div
+                    key={s.id}
+                    className={`p-3 rounded-lg border cursor-pointer transition-all ${section?.id === s.id
+                      ? "bg-primary/5 border-primary shadow-sm"
+                      : "hover:bg-muted border-transparent bg-slate-50"
+                      }`}
+                    onClick={() => handleSectionChange(s.id)}
+                  >
+                    <div className="flex justify-between items-start mb-2 gap-2">
+                      <Input
+                        className="h-7 text-sm font-medium border-transparent hover:border-input focus:border-input px-1 -ml-1"
+                        value={s.name}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => handleUpdateSection(s.id, { name: e.target.value })}
+                      />
+                      {sections.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            handleDeleteSectionClick(s.id);
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      <Input
+                        className="h-6 w-16 text-xs"
+                        type="number"
+                        value={s.time_minutes}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) =>
+                          handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
+                        }
+                      />
+                      <span>min</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    <Input
-                      className="h-6 w-16 text-xs"
-                      type="number"
-                      value={s.time_minutes}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) =>
-                        handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
-                      }
-                    />
-                    <span>min</span>
-                  </div>
+                ))}
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    className="w-full gap-2 border-dashed text-muted-foreground hover:text-primary"
+                    onClick={handleAddSection}
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Section
+                  </Button>
                 </div>
-              ))}
-            </CardContent>
+              </CardContent>
+            )}
           </Card>
         </div>
 
@@ -811,132 +1013,162 @@ export default function ExamDetail() {
         <div className="col-span-12 lg:col-span-9 space-y-6">
           {/* Questions List */}
           <Card>
-            <CardHeader>
-              <CardTitle>Questions ({questions.length})</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-lg font-bold">Questions ({questions.length})</CardTitle>
+                <Select
+                  value={section?.id}
+                  onValueChange={(value) => handleSectionChange(value)}
+                >
+                  <SelectTrigger className="h-8 w-[200px] ml-2">
+                    <SelectValue placeholder="Select section" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sections.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsQuestionsCollapsed(!isQuestionsCollapsed)}
+              >
+                {isQuestionsCollapsed ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+              </Button>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {questions.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No questions added yet.</p>
-              ) : (
-                questions.map((q, idx) => {
-                  const isExpanded = expandedQuestionId === q.id;
-                  return (
-                    <div key={q.id} className="border rounded-lg bg-white">
-                      <div className="flex items-start gap-4 p-4 group">
-                        <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
-                          {idx + 1}
-                        </div>
-                        <div className="flex-1 space-y-2">
-                          {q.image_url && (
-                            <div className="flex items-center gap-2 text-sm text-blue-600">
-                              <ImageIcon className="h-4 w-4" />
-                              Has image
-                            </div>
-                          )}
-                          <p className="font-medium">{q.text || "Question with image"}</p>
-                          <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
-                          >
-                            {isExpanded ? (
-                              <>
-                                <ChevronUp className="mr-2 h-4 w-4" />
-                                Hide Question
-                              </>
-                            ) : (
-                              <>
-                                <ChevronDown className="mr-2 h-4 w-4" />
-                                View Question
-                              </>
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={() => handleEditQuestion(q)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={() => handleDeleteQuestion(q.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-
-                      {isExpanded && (
-                        <div className="px-4 pb-4 pt-2 border-t space-y-4">
-                          {q.image_url && (
-                            <div className="border rounded-lg p-4 bg-slate-50">
-                              <Label className="mb-2 block font-semibold">Question Image</Label>
-                              <img
-                                src={q.image_url}
-                                alt="Question"
-                                className="max-w-full h-auto rounded-md"
-                              />
-                            </div>
-                          )}
-
-                          {q.text && (
-                            <div>
-                              <Label className="mb-2 block font-semibold">Question Text</Label>
-                              <p className="text-sm p-3 bg-slate-50 rounded-md">{q.text}</p>
-                            </div>
-                          )}
-
-                          <div>
-                            <Label className="mb-2 block font-semibold">Question Type</Label>
-                            <p className="text-sm p-3 bg-slate-50 rounded-md capitalize">
-                              {q.answer_type === "single" ? "Multiple Choice (Single)" :
-                                q.answer_type === "multi" ? "Multiple Choice (Multiple)" :
-                                  q.answer_type === "numeric" ? "Numeric" : "Text"}
-                            </p>
+            {!isQuestionsCollapsed && (
+              <CardContent className="space-y-4 max-h-[380px] overflow-y-auto">
+                {questions.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-4">No questions added yet.</p>
+                ) : (
+                  questions.map((q, idx) => {
+                    const isExpanded = expandedQuestionId === q.id;
+                    return (
+                      <div key={q.id} className="border rounded-lg bg-white">
+                        <div className="flex items-start gap-4 p-4 group">
+                          <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
+                            {idx + 1}
                           </div>
-
-                          {(q.answer_type === "single" || q.answer_type === "multi") && q.options && (
-                            <div>
-                              <Label className="mb-2 block font-semibold">Options</Label>
-                              <div className="space-y-2">
-                                {(Array.isArray(q.options) ? q.options : []).map((opt: string, optIdx: number) => (
-                                  <div key={optIdx} className="flex items-center gap-2 p-2 bg-slate-50 rounded-md">
-                                    <span className="font-semibold text-sm">{String.fromCharCode(65 + optIdx)}.</span>
-                                    <span className="text-sm">{opt}</span>
-                                  </div>
-                                ))}
+                          <div className="flex-1 space-y-2">
+                            {q.image_url && (
+                              <div className="flex items-center gap-2 text-sm text-blue-600">
+                                <ImageIcon className="h-4 w-4" />
+                                Has image
                               </div>
-                            </div>
-                          )}
+                            )}
+                            <p className="font-medium">{q.text || "Question with image"}</p>
+                            <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
+                            >
+                              {isExpanded ? (
+                                <>
+                                  <ChevronUp className="mr-2 h-4 w-4" />
+                                  Hide Question
+                                </>
+                              ) : (
+                                <>
+                                  <ChevronDown className="mr-2 h-4 w-4" />
+                                  View Question
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => handleEditQuestion(q)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => handleDeleteQuestion(q.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
 
-                          <div>
-                            <Label className="mb-2 block font-semibold">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
-                            <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                              {Array.isArray(q.correct_answer) ? (
-                                <div className="space-y-1">
-                                  {q.correct_answer.map((ans: string, ansIdx: number) => (
-                                    <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
+                        {isExpanded && (
+                          <div className="px-4 pb-4 pt-2 border-t space-y-4">
+                            {q.image_url && (
+                              <div className="border rounded-lg p-4 bg-slate-50">
+                                <Label className="mb-2 block font-semibold">Question Image</Label>
+                                <img
+                                  src={q.image_url}
+                                  alt="Question"
+                                  className="max-w-full h-auto rounded-md"
+                                />
+                              </div>
+                            )}
+
+                            {q.text && (
+                              <div>
+                                <Label className="mb-2 block font-semibold">Question Text</Label>
+                                <p className="text-sm p-3 bg-slate-50 rounded-md">{q.text}</p>
+                              </div>
+                            )}
+
+                            <div>
+                              <Label className="mb-2 block font-semibold">Question Type</Label>
+                              <p className="text-sm p-3 bg-slate-50 rounded-md capitalize">
+                                {q.answer_type === "single" ? "Multiple Choice (Single)" :
+                                  q.answer_type === "multi" ? "Multiple Choice (Multiple)" :
+                                    q.answer_type === "numeric" ? "Numeric" : "Text"}
+                              </p>
+                            </div>
+
+                            {(q.answer_type === "single" || q.answer_type === "multi") && q.options && (
+                              <div>
+                                <Label className="mb-2 block font-semibold">Options</Label>
+                                <div className="space-y-2">
+                                  {(Array.isArray(q.options) ? q.options : []).map((opt: string, optIdx: number) => (
+                                    <div key={optIdx} className="flex items-center gap-2 p-2 bg-slate-50 rounded-md">
+                                      <span className="font-semibold text-sm">{String.fromCharCode(65 + optIdx)}.</span>
+                                      <span className="text-sm">{opt}</span>
+                                    </div>
                                   ))}
                                 </div>
-                              ) : (
-                                <p className="text-sm font-medium text-green-700">{q.correct_answer || "Not specified"}</p>
-                              )}
+                              </div>
+                            )}
+
+                            <div>
+                              <Label className="mb-2 block font-semibold">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
+                              <div className="p-3 bg-green-50 border border-green-200 rounded-md">
+                                {Array.isArray(q.correct_answer) ? (
+                                  <div className="space-y-1">
+                                    {q.correct_answer.map((ans: string, ansIdx: number) => (
+                                      <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-sm font-medium text-green-700">{q.correct_answer || "Not specified"}</p>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </CardContent>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            )}
           </Card>
 
           {/* Add Question Form */}
@@ -1226,6 +1458,24 @@ export default function ExamDetail() {
             <AlertDialogCancel onClick={() => setDeleteSectionId(null)}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmDeleteSection} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Exam Confirmation Dialog */}
+      <AlertDialog open={showDeleteExamDialog} onOpenChange={setShowDeleteExamDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Exam</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{exam?.name}"? This will permanently delete the exam and all associated data (sections, questions, attempts). This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowDeleteExamDialog(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeDeleteExam} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete Exam
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

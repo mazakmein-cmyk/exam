@@ -1176,7 +1176,7 @@ export function QuestionForm({
 
             {!isEditing && (
                 <Button className="w-full" onClick={onAdd}>
-                    <Plus className="mr-2 h-4 w-4" /> Add Question
+                    <Plus className="mr-2 h-4 w-4" /> Save Question
                 </Button>
             )}
         </div>

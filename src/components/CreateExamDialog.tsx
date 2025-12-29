@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -210,6 +210,41 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       return;
     }
 
+    if (!examCategory) {
+      toast({
+        title: "Invalid exam",
+        description: "Please select an exam category",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!examDescription) {
+      toast({
+        title: "Invalid exam",
+        description: "Please enter an exam description",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!examInstruction) {
+      toast({
+        title: "Invalid exam",
+        description: "Please enter exam instructions",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (sections.length === 0) {
+      toast({
+        title: "No sections added",
+        description: "Please add at least one section to create an exam",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
@@ -288,10 +323,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0 gap-0 bg-background">
         <DialogHeader className="p-6 pb-4 border-b">
-          <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-            <div className="p-2 bg-primary/10 rounded-lg">
-              <Plus className="h-6 w-6 text-primary" />
-            </div>
+          <DialogTitle className="text-2xl font-bold">
             Create New Exam
           </DialogTitle>
           <DialogDescription className="text-base">
@@ -304,7 +336,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           <div className="space-y-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 text-foreground/90">
               <div className="h-6 w-1 bg-primary rounded-full" />
-              1. Exam Details
+              1. Exam Overview
             </h3>
             <div className="grid gap-4 pl-3">
               <div className="space-y-2">
@@ -314,36 +346,36 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                   placeholder="e.g., Mathematics Final Exam 2024"
                   value={examName}
                   onChange={(e) => setExamName(e.target.value)}
-                  className="h-11"
+                  className="h-11 placeholder:text-muted-foreground/50"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="exam-category" className="text-sm font-medium">Exam Category</Label>
+                <Label htmlFor="exam-category" className="text-sm font-medium">Exam Category <span className="text-destructive">*</span></Label>
                 <CategoryCombobox value={examCategory} onChange={setExamCategory} />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="exam-description" className="text-sm font-medium">Description</Label>
+                <Label htmlFor="exam-description" className="text-sm font-medium">Description <span className="text-destructive">*</span></Label>
                 <Textarea
                   id="exam-description"
                   placeholder="Brief description of the exam..."
                   value={examDescription}
                   onChange={(e) => setExamDescription(e.target.value)}
                   rows={2}
-                  className="resize-none"
+                  className="resize-none placeholder:text-muted-foreground/50"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="exam-instruction" className="text-sm font-medium">Instruction</Label>
+                <Label htmlFor="exam-instruction" className="text-sm font-medium">Instruction <span className="text-destructive">*</span></Label>
                 <Textarea
                   id="exam-instruction"
                   placeholder="Specific instructions for the exam..."
                   value={examInstruction}
                   onChange={(e) => setExamInstruction(e.target.value)}
                   rows={2}
-                  className="resize-none"
+                  className="resize-none placeholder:text-muted-foreground/50"
                 />
               </div>
             </div>
@@ -353,7 +385,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           <div className="space-y-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 text-foreground/90">
               <div className="h-6 w-1 bg-primary rounded-full" />
-              2. Sections Configuration
+              2. Add Exam Sections <span className="text-destructive">*</span>
             </h3>
 
             <div className="pl-3 space-y-4">
@@ -366,7 +398,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                       placeholder="e.g., Multiple Choice"
                       value={newSectionName}
                       onChange={(e) => setNewSectionName(e.target.value)}
-                      className="bg-background"
+                      className="bg-background placeholder:text-muted-foreground/50"
                     />
                   </div>
                   <div className="w-32 space-y-2">
@@ -375,20 +407,23 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                       id="section-time"
                       type="number"
                       min="1"
-                      placeholder="60"
+                      placeholder="e.g., 60"
                       value={newSectionTime}
                       onChange={(e) => setNewSectionTime(e.target.value)}
-                      className="bg-background"
+                      className="bg-background placeholder:text-muted-foreground/50"
                     />
                   </div>
-                  <Button onClick={addSection} size="icon" className="h-10 w-10 shrink-0">
+                </div>
+                <div className="flex justify-center pt-2">
+                  <Button onClick={addSection} className="gap-2 rounded-full px-6">
                     <Plus className="h-5 w-5" />
+                    Add Section
                   </Button>
                 </div>
 
-                {sections.length > 0 ? (
-                  <div className="space-y-2 mt-2">
-                    <Label className="text-xs font-medium text-muted-foreground">Added Sections ({sections.length})</Label>
+                <div className="space-y-2 mt-2">
+                  <Label className="text-xs font-medium text-muted-foreground">Added Sections ({sections.length})</Label>
+                  {sections.length > 0 ? (
                     <div className="grid gap-2 max-h-[200px] overflow-y-auto pr-1">
                       {sections.map((section) => (
                         <div
@@ -417,87 +452,26 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                         </div>
                       ))}
                     </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-4 text-sm text-muted-foreground bg-background/50 rounded-lg border border-dashed">
-                    No sections added yet. Add at least one section to proceed.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Creation Actions */}
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold flex items-center gap-2 text-foreground/90">
-              <div className="h-6 w-1 bg-primary rounded-full" />
-              3. Create Exam
-            </h3>
-
-            <div className="grid md:grid-cols-2 gap-4 pl-3">
-              {/* Option A: Upload PDF */}
-              <div className="relative overflow-hidden rounded-xl border-2 border-muted bg-muted/20 opacity-80">
-                <div className="p-5 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-primary/20 text-primary rounded-lg grayscale">
-                      <Upload className="h-5 w-5" />
+                  ) : (
+                    <div className="text-center py-4 text-sm text-muted-foreground bg-background/50 rounded-lg border border-dashed">
+                      No sections added yet. Add at least one section to proceed.
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-semibold text-foreground">Upload PDF & Auto-Parse</h4>
-                        <Badge variant="secondary" className="h-5 text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 border-blue-200">
-                          Coming Soon
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Recommended for existing papers</p>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Upload your exam PDF. AI will automatically extract questions, options, and answers.
-                  </p>
-
-                  <Button
-                    className="w-full"
-                    disabled={true}
-                    variant="secondary"
-                  >
-                    Coming Soon
-                  </Button>
-                </div>
-              </div>
-
-              {/* Option B: Manual */}
-              <div className={`relative overflow-hidden rounded-xl border-2 transition-all ${!examName
-                ? "border-muted bg-muted/20 opacity-60 cursor-not-allowed"
-                : "border-muted hover:border-foreground/20 bg-card"
-                }`}>
-                <div className="p-5 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-secondary text-secondary-foreground rounded-lg">
-                      <Plus className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-foreground">Create Empty Exam</h4>
-                      <p className="text-xs text-muted-foreground">Build from scratch</p>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Create a blank exam structure and add questions manually one by one.
-                  </p>
-
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={handleCreateExam}
-                    disabled={loading || uploadingPdf || !examName}
-                  >
-                    {loading ? "Creating..." : "Create Empty Exam"}
-                  </Button>
+                  )}
                 </div>
               </div>
             </div>
           </div>
+
         </div>
+        <DialogFooter className="p-6 pt-0">
+          <Button
+            className="w-full"
+            onClick={handleCreateExam}
+            disabled={loading || uploadingPdf || !examName}
+          >
+            {loading ? "Creating..." : "Create Exam"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -14,5 +14,6 @@ export const EXAM_CATEGORIES = [
     "LIC ADO",
     "CAT",
     "XAT",
-    "CMAT"
+    "CMAT",
+    "Others"
 ];

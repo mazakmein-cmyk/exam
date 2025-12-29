@@ -44,7 +44,7 @@ export function CategoryCombobox({ value, onChange }: Props) {
     }, [search])
 
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={setOpen} modal={true}>
             <PopoverTrigger asChild>
                 <Button
                     variant="outline"
@@ -54,7 +54,7 @@ export function CategoryCombobox({ value, onChange }: Props) {
                 >
                     {value
                         ? EXAM_CATEGORIES.find((framework) => framework === value)
-                        : "Select category..."}
+                        : <span className="text-muted-foreground/50">Select category...</span>}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>

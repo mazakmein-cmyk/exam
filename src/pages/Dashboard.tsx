@@ -4,10 +4,26 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FileText, LogOut, Plus, BarChart3, BookOpen, Trash2 } from "lucide-react";
+import { FileText, LogOut, Plus, BarChart3, BookOpen, Trash2, MoreVertical, Share2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Exam = {
   id: string;
@@ -23,6 +39,8 @@ const Dashboard = () => {
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [examToDelete, setExamToDelete] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -95,10 +113,22 @@ const Dashboard = () => {
     }
   };
 
-  const handleDeleteExam = async (examId: string, examName: string) => {
-    if (!confirm(`Are you sure you want to delete "${examName}"? This action cannot be undone.`)) {
-      return;
-    }
+  const handleShare = (examName: string) => {
+    toast({
+      title: "Share Exam",
+      description: `Sharing functionality for "${examName}" coming soon!`,
+    });
+  };
+
+  const handleDeleteExam = (examId: string, examName: string) => {
+    setExamToDelete({ id: examId, name: examName });
+    setShowDeleteDialog(true);
+  };
+
+  const executeDeleteExam = async () => {
+    if (!examToDelete) return;
+
+    const { id: examId } = examToDelete;
 
     try {
       // First, get exam_versions for this exam (if they exist)
@@ -178,6 +208,8 @@ const Dashboard = () => {
         title: "Deleted",
         description: "Exam deleted successfully",
       });
+      setShowDeleteDialog(false);
+      setExamToDelete(null);
     } catch (error: any) {
       console.error("Delete error:", error);
       toast({
@@ -275,49 +307,67 @@ const Dashboard = () => {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <CardTitle className="text-xl font-bold">{exam.name}</CardTitle>
-                      {exam.exam_category && (
-                        <Badge variant="secondary" className="text-xs font-normal">
-                          {exam.exam_category}
-                        </Badge>
-                      )}
                     </div>
                     <CardDescription>{exam.description || "No description"}</CardDescription>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {exam.is_published ? "Published" : "Unpublished"}
-                    </span>
-                    <Switch
-                      checked={exam.is_published}
-                      onCheckedChange={(checked) => handleTogglePublish(exam.id, checked)}
-                    />
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {exam.is_published ? "Published" : "Unpublished"}
+                      </span>
+                      <Switch
+                        checked={exam.is_published}
+                        onCheckedChange={(checked) => handleTogglePublish(exam.id, checked)}
+                      />
+                    </div>
+                    {exam.exam_category && (
+                      <Badge variant="secondary" className="text-xs font-normal">
+                        {exam.exam_category}
+                      </Badge>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="mt-4">
                   <div className="flex gap-3">
                     <Button
-                      variant="outline"
-                      className="flex-1"
+                      className="flex-1 bg-blue-600 hover:bg-blue-700"
                       onClick={() => navigate(`/exam/${exam.id}`)}
                     >
                       <FileText className="mr-2 h-4 w-4" />
                       Edit Exam
                     </Button>
                     <Button
-                      className="flex-1 bg-blue-600 hover:bg-blue-700"
+                      variant="outline"
+                      className="flex-1"
                       onClick={() => handleTakeExam(exam.id)}
                     >
                       <BookOpen className="mr-2 h-4 w-4" />
-                      Take Exam
+                      View Exam
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                      onClick={() => handleDeleteExam(exam.id, exam.name)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleShare(exam.name)}>
+                          <Share2 className="mr-2 h-4 w-4" />
+                          Share
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handleDeleteExam(exam.id, exam.name)}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </CardContent>
               </Card>
@@ -331,6 +381,23 @@ const Dashboard = () => {
         onOpenChange={setShowCreateDialog}
         onExamCreated={handleExamCreated}
       />
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Exam</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{examToDelete?.name}"? This will permanently delete the exam and all associated data. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowDeleteDialog(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeDeleteExam} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
