@@ -9,6 +9,16 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, ArrowLeft } from "lucide-react";
 import { saveExamAttempt, ExamSubmissionData } from "@/services/examService";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const StudentAuth = () => {
     const [email, setEmail] = useState("");
@@ -19,6 +29,28 @@ const StudentAuth = () => {
     const [searchParams] = useSearchParams();
     const defaultTab = searchParams.get("mode") === "signup" ? "signup" : "signin";
     const isExamSubmit = searchParams.get("trigger") === "exam_submit";
+    const [showExitDialog, setShowExitDialog] = useState(false);
+
+    useEffect(() => {
+        if (!isExamSubmit) return;
+
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            e.preventDefault();
+            e.returnValue = "Exam responses will not be saved. Please sign up to save the responses.";
+            return "Exam responses will not be saved. Please sign up to save the responses.";
+        };
+
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    }, [isExamSubmit]);
+
+    const handleBackWithCheck = () => {
+        if (isExamSubmit) {
+            setShowExitDialog(true);
+        } else {
+            navigate(searchParams.get("from") === "marketplace" ? "/marketplace" : "/");
+        }
+    };
 
     const handleSignUp = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -148,12 +180,32 @@ const StudentAuth = () => {
             {/* Back Button */}
             <Button
                 variant="ghost"
-                onClick={() => navigate((searchParams.get("from") === "marketplace" || isExamSubmit) ? "/marketplace" : "/")}
+                onClick={handleBackWithCheck}
                 className="absolute top-6 left-6 text-foreground hover:bg-white/20"
             >
                 <ArrowLeft className="h-5 w-5 mr-2" />
                 {(searchParams.get("from") === "marketplace" || isExamSubmit) ? "Back to Marketplace" : "Back to Home"}
             </Button>
+
+            <AlertDialog open={showExitDialog} onOpenChange={setShowExitDialog}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Are you sure you want to leave?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Exam responses will not be saved. Please sign up to save the responses.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Stay</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={() => navigate("/marketplace")}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            Leave & Discard
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <div className="w-full max-w-md">
                 <div className="flex items-center justify-center mb-8 space-x-2">
