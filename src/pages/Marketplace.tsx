@@ -5,9 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, BookOpen, Store, Search, ArrowLeft } from "lucide-react";
+import { FileText, BookOpen, Store, Search, ArrowLeft, Share2, MoreVertical } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useToast } from "@/components/ui/use-toast";
 
 type Exam = {
     id: string;
@@ -22,6 +29,7 @@ import { useUserRole } from "@/hooks/use-user-role";
 
 const Marketplace = () => {
     const { role, loading: roleLoading } = useUserRole();
+    const { toast } = useToast();
     const [exams, setExams] = useState<Exam[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -53,6 +61,15 @@ const Marketplace = () => {
 
     const handleTakeExam = (examId: string) => {
         navigate(`/exam/${examId}/intro?from=marketplace`);
+    };
+
+    const handleShare = (examId: string) => {
+        const url = `${window.location.origin}/exam/${examId}/intro`;
+        navigator.clipboard.writeText(url);
+        toast({
+            title: "Link copied",
+            description: "The exam link has been copied to your clipboard.",
+        });
     };
 
     return (
@@ -139,6 +156,23 @@ const Marketplace = () => {
                                             )}
                                         </div>
                                         <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
+                                    </div>
+                                    <div className="flex items-center gap-1 -mr-2">
+                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => handleShare(exam.id)}>
+                                            <Share2 className="h-4 w-4" />
+                                        </Button>
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+                                                    <MoreVertical className="h-4 w-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
+                                                    View Details
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
                                     </div>
                                 </CardHeader>
                                 <CardContent className="mt-4">

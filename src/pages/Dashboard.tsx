@@ -120,10 +120,21 @@ const Dashboard = () => {
     }
   };
 
-  const handleShare = (examName: string) => {
+  const handleShare = (exam: Exam) => {
+    if (!exam.is_published) {
+      toast({
+        title: "Cannot Share Exam",
+        description: "Please publish the exam first to share it with users.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const url = `${window.location.origin}/exam/${exam.id}/intro`;
+    navigator.clipboard.writeText(url);
     toast({
-      title: "Share Exam",
-      description: `Sharing functionality for "${examName}" coming soon!`,
+      title: "Link copied",
+      description: "The exam link has been copied to your clipboard.",
     });
   };
 
@@ -463,7 +474,7 @@ const Dashboard = () => {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleShare(exam.name)}>
+                        <DropdownMenuItem onClick={() => handleShare(exam)}>
                           <Share2 className="mr-2 h-4 w-4" />
                           Share
                         </DropdownMenuItem>
