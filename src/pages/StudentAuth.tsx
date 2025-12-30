@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, ArrowLeft } from "lucide-react";
+import { saveExamAttempt, ExamSubmissionData } from "@/services/examService";
 
 const StudentAuth = () => {
     const [email, setEmail] = useState("");
@@ -17,6 +18,7 @@ const StudentAuth = () => {
     const { toast } = useToast();
     const [searchParams] = useSearchParams();
     const defaultTab = searchParams.get("mode") === "signup" ? "signup" : "signin";
+    const isExamSubmit = searchParams.get("trigger") === "exam_submit";
 
     const handleSignUp = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -44,7 +46,7 @@ const StudentAuth = () => {
                 title: "Success!",
                 description: "Account created successfully.",
             });
-            navigate("/marketplace");
+            await handlePendingExamSubmission();
         }
         setLoading(false);
     };
@@ -69,9 +71,76 @@ const StudentAuth = () => {
                 title: "Welcome back!",
                 description: "Signed in successfully.",
             });
-            navigate("/marketplace");
+            await handlePendingExamSubmission();
         }
         setLoading(false);
+    };
+
+    const handlePendingExamSubmission = async () => {
+        const pendingSubmissionsStr = sessionStorage.getItem('pendingExamSubmissions');
+        // Legacy support
+        const singleSubmissionStr = sessionStorage.getItem('pendingExamSubmission');
+
+        let pendingSubmissions = [];
+        if (pendingSubmissionsStr) {
+            try {
+                pendingSubmissions = JSON.parse(pendingSubmissionsStr);
+            } catch (e) {
+                console.error("Error parsing pending submissions", e);
+            }
+        }
+        if (singleSubmissionStr) {
+            try {
+                pendingSubmissions.push(JSON.parse(singleSubmissionStr));
+            } catch (e) {
+                console.error("Error parsing single submission", e);
+            }
+        }
+
+        if (pendingSubmissions.length === 0) {
+            navigate("/marketplace");
+            return;
+        }
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+
+            if (!user) {
+                navigate("/marketplace");
+                return;
+            }
+
+            let lastAttemptId = null;
+
+            for (const submission of pendingSubmissions) {
+                lastAttemptId = await saveExamAttempt({
+                    ...submission,
+                    userId: user.id,
+                });
+            }
+
+            sessionStorage.removeItem('pendingExamSubmissions');
+            sessionStorage.removeItem('pendingExamSubmission');
+
+            toast({
+                title: "Exams Submitted",
+                description: `Successfully saved ${pendingSubmissions.length} section(s).`,
+            });
+
+            if (lastAttemptId) {
+                navigate(`/exam/review/${lastAttemptId}`);
+            } else {
+                navigate("/marketplace");
+            }
+        } catch (error) {
+            console.error("Error saving pending exam:", error);
+            toast({
+                title: "Error",
+                description: "Failed to save your exam attempt.",
+                variant: "destructive",
+            });
+            navigate("/marketplace");
+        }
     };
 
     return (
@@ -79,11 +148,11 @@ const StudentAuth = () => {
             {/* Back Button */}
             <Button
                 variant="ghost"
-                onClick={() => navigate(searchParams.get("from") === "marketplace" ? "/marketplace" : "/")}
+                onClick={() => navigate((searchParams.get("from") === "marketplace" || isExamSubmit) ? "/marketplace" : "/")}
                 className="absolute top-6 left-6 text-foreground hover:bg-white/20"
             >
                 <ArrowLeft className="h-5 w-5 mr-2" />
-                {searchParams.get("from") === "marketplace" ? "Back to Marketplace" : "Back to Home"}
+                {(searchParams.get("from") === "marketplace" || isExamSubmit) ? "Back to Marketplace" : "Back to Home"}
             </Button>
 
             <div className="w-full max-w-md">
@@ -94,8 +163,12 @@ const StudentAuth = () => {
 
                 <Card>
                     <CardHeader>
-                        <CardTitle>Student Access</CardTitle>
-                        <CardDescription>Sign in or create a student account to access exams from the marketplace</CardDescription>
+                        <CardTitle>{isExamSubmit ? "Save Your Results" : "Student Access"}</CardTitle>
+                        <CardDescription>
+                            {isExamSubmit
+                                ? "To check your results, please sign in or sign up below"
+                                : "Sign in or create a student account to access exams from the marketplace"}
+                        </CardDescription>
                     </CardHeader>
                     <CardContent>
                         <Tabs defaultValue={defaultTab} className="w-full">
@@ -130,7 +203,7 @@ const StudentAuth = () => {
                                     <Button type="submit" className="w-full" disabled={loading}>
                                         {loading ? "Signing in..." : "Sign In"}
                                     </Button>
-                                    {searchParams.get("from") !== "marketplace" && (
+                                    {searchParams.get("from") !== "marketplace" && !isExamSubmit && (
                                         <p className="text-center text-sm text-muted-foreground mt-4">
                                             Want to create exams?{" "}
                                             <span
@@ -171,7 +244,7 @@ const StudentAuth = () => {
                                     <Button type="submit" className="w-full" disabled={loading}>
                                         {loading ? "Creating account..." : "Create Account"}
                                     </Button>
-                                    {searchParams.get("from") !== "marketplace" && (
+                                    {searchParams.get("from") !== "marketplace" && !isExamSubmit && (
                                         <p className="text-center text-sm text-muted-foreground mt-4">
                                             Want to create exams?{" "}
                                             <span

@@ -45,6 +45,8 @@ type QuestionState = {
   status: "untouched" | "attempted" | "viewed";
 };
 
+import { saveExamAttempt } from "@/services/examService";
+
 const ExamSimulator = () => {
   const { examId, sectionId } = useParams();
   const navigate = useNavigate();
@@ -291,45 +293,55 @@ const ExamSimulator = () => {
   };
 
   const submitExam = async () => {
-    // For anonymous users (no attemptId), just show completion dialog
+    const totalTimeSpent = (section?.time_minutes || 0) * 60 - timeRemaining;
+
+    // For anonymous users, store state and show dialog
     if (!attemptId) {
+      const pendingSubmission = {
+        sectionId,
+        timeSpentSeconds: totalTimeSpent,
+        questions: questions.map(q => ({ id: q.id })),
+        questionStates,
+      };
+
+      const existingSubmissionsStr = sessionStorage.getItem('pendingExamSubmissions');
+      const existingSubmissions = existingSubmissionsStr ? JSON.parse(existingSubmissionsStr) : [];
+
+      sessionStorage.setItem('pendingExamSubmissions', JSON.stringify([...existingSubmissions, pendingSubmission]));
+
       toast({
         title: "Section Completed",
-        description: "You've completed this section!",
+        description: "Your progress has been saved locally.",
       });
+
       setShowSectionCompleteDialog(true);
       return;
     }
 
-    const totalTimeSpent = (section?.time_minutes || 0) * 60 - timeRemaining;
+    try {
+      await saveExamAttempt({
+        userId: (await supabase.auth.getUser()).data.user?.id!,
+        sectionId: sectionId!,
+        attemptId,
+        timeSpentSeconds: totalTimeSpent,
+        questions,
+        questionStates,
+      });
 
-    // Update attempt
-    await supabase
-      .from("attempts")
-      .update({
-        submitted_at: new Date().toISOString(),
-        time_spent_seconds: totalTimeSpent,
-      })
-      .eq("id", attemptId);
+      toast({
+        title: "Section Submitted",
+        description: "Your responses have been saved successfully",
+      });
 
-    // Save all responses
-    const responses = questions.map((q) => ({
-      attempt_id: attemptId,
-      question_id: q.id,
-      selected_answer: questionStates[q.id]?.selectedAnswer || null,
-      is_marked_for_review: questionStates[q.id]?.isMarkedForReview || false,
-      time_spent_seconds: questionStates[q.id]?.timeSpentSeconds || 0,
-    }));
-
-    await supabase.from("responses").insert(responses);
-
-    toast({
-      title: "Section Submitted",
-      description: "Your responses have been saved successfully",
-    });
-
-    // Show completion dialog instead of navigating immediately
-    setShowSectionCompleteDialog(true);
+      setShowSectionCompleteDialog(true);
+    } catch (error) {
+      console.error("Error submitting exam:", error);
+      toast({
+        title: "Error",
+        description: "Failed to submit exam",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleProceedToNextSection = () => {
@@ -350,8 +362,12 @@ const ExamSimulator = () => {
     if (attemptId) {
       navigate(`/exam/review/${attemptId}`);
     } else {
-      // Anonymous users - redirect to marketplace
-      navigate("/marketplace");
+      // Anonymous users - redirect to auth to save progress
+      toast({
+        title: "Almost there!",
+        description: "Please sign in to save your results.",
+      });
+      navigate("/student-auth?mode=signin&trigger=exam_submit");
     }
   };
 
