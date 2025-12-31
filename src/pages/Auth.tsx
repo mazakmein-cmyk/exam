@@ -9,10 +9,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { FileText, ArrowLeft } from "lucide-react";
 
+import EmailVerificationModal from "@/components/EmailVerificationModal";
+
 const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -20,7 +23,7 @@ const Auth = () => {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -32,31 +35,68 @@ const Auth = () => {
     });
 
     if (error) {
-      toast({
-        title: "Sign up failed",
-        description: error.message,
-        variant: "destructive",
+      if (error.message.includes("already registered") || error.message.includes("User already exists")) {
+        toast({
+          title: "Account already exists",
+          description: "Please sign in instead.",
+        });
+      } else {
+        toast({
+          title: "Sign up failed",
+          description: error.message,
+          variant: "destructive",
+        });
+      }
+    } else if (data.user && data.user.identities && data.user.identities.length === 0) {
+      // Supabase returns empty identities for existing users. 
+      // Try to resend verification email in case they are unverified.
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/dashboard`,
+        },
       });
+
+      if (resendError) {
+        toast({
+          title: "Account already exists",
+          description: "Please sign in instead.",
+        });
+      } else {
+        toast({
+          title: "Account exists",
+          description: "We've resent the verification email. Please check your inbox.",
+        });
+        setShowVerificationModal(true);
+      }
     } else {
-      toast({
-        title: "Success!",
-        description: "Account created successfully.",
-      });
-      // Check if there's a pending PDF upload
-      const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
-      navigate(hasPendingUpload ? "/" : "/dashboard");
+      setShowVerificationModal(true);
     }
     setLoading(false);
+  };
+
+  const handleVerificationComplete = () => {
+    setShowVerificationModal(false);
+    toast({
+      title: "Success!",
+      description: "Account verified successfully.",
+    });
+    // Check if there's a pending PDF upload
+    const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
+    navigate(hasPendingUpload ? "/" : "/dashboard");
   };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
+    // ... existing signIn logic ...
+
 
     if (error) {
       toast({
@@ -65,19 +105,41 @@ const Auth = () => {
         variant: "destructive",
       });
     } else {
-      toast({
-        title: "Welcome back!",
-        description: "Signed in successfully.",
-      });
-      // Check if there's a pending PDF upload
-      const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
-      navigate(hasPendingUpload ? "/" : "/dashboard");
+      console.log("Sign in successful. User data:", data.user);
+      console.log("User metadata:", data.user?.user_metadata);
+
+      // Check if user is a student trying to sign in to creator page
+      const userType = data.user?.user_metadata?.user_type;
+      console.log("Detected user type:", userType);
+
+      if (userType === "student") {
+        await supabase.auth.signOut();
+        toast({
+          title: "Wrong account type",
+          description: "This is a student account. Please sign in from the Student sign-in page.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Welcome back!",
+          description: "Signed in successfully.",
+        });
+        // Check if there's a pending PDF upload
+        const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
+        navigate(hasPendingUpload ? "/" : "/dashboard");
+      }
     }
     setLoading(false);
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-hero p-6 relative">
+      <EmailVerificationModal
+        isOpen={showVerificationModal}
+        onOpenChange={setShowVerificationModal}
+        email={email}
+        onVerified={handleVerificationComplete}
+      />
       {/* Back Button */}
       <Button
         variant="ghost"

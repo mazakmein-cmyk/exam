@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, ArrowLeft } from "lucide-react";
 import { saveExamAttempt, ExamSubmissionData } from "@/services/examService";
+import EmailVerificationModal from "@/components/EmailVerificationModal";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -24,6 +25,7 @@ const StudentAuth = () => {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
+    const [showVerificationModal, setShowVerificationModal] = useState(false);
     const navigate = useNavigate();
     const { toast } = useToast();
     const [searchParams] = useSearchParams();
@@ -56,7 +58,7 @@ const StudentAuth = () => {
         e.preventDefault();
         setLoading(true);
 
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
             email,
             password,
             options: {
@@ -68,42 +70,106 @@ const StudentAuth = () => {
         });
 
         if (error) {
-            toast({
-                title: "Sign up failed",
-                description: error.message,
-                variant: "destructive",
+            if (error.message.includes("already registered") || error.message.includes("User already exists")) {
+                toast({
+                    title: "Account already exists",
+                    description: "Please sign in instead.",
+                });
+            } else {
+                toast({
+                    title: "Sign up failed",
+                    description: error.message,
+                    variant: "destructive",
+                });
+            }
+        } else if (data.user && data.user.identities && data.user.identities.length === 0) {
+            // Supabase returns empty identities for existing users.
+            // Try to resend verification email in case they are unverified.
+            const { error: resendError } = await supabase.auth.resend({
+                type: 'signup',
+                email,
+                options: {
+                    emailRedirectTo: `${window.location.origin}/marketplace`,
+                },
             });
+
+            if (resendError) {
+                toast({
+                    title: "Account already exists",
+                    description: "Please sign in instead.",
+                });
+            } else {
+                toast({
+                    title: "Account exists",
+                    description: "We've resent the verification email. Please check your inbox.",
+                });
+                setShowVerificationModal(true);
+            }
         } else {
-            toast({
-                title: "Success!",
-                description: "Account created successfully.",
-            });
-            await handlePendingExamSubmission();
+            setShowVerificationModal(true);
         }
         setLoading(false);
+    };
+
+    const handleVerificationComplete = async () => {
+        setShowVerificationModal(false);
+        toast({
+            title: "Success!",
+            description: "Account verified successfully.",
+        });
+        await handlePendingExamSubmission();
     };
 
     const handleSignIn = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
 
-        const { error } = await supabase.auth.signInWithPassword({
+        const { error: signInError } = await supabase.auth.signInWithPassword({
             email,
             password,
         });
 
-        if (error) {
+        if (signInError) {
             toast({
                 title: "Sign in failed",
-                description: error.message,
+                description: signInError.message,
                 variant: "destructive",
             });
         } else {
-            toast({
-                title: "Welcome back!",
-                description: "Signed in successfully.",
-            });
-            await handlePendingExamSubmission();
+            // Fetch fresh user data to ensure we have the latest metadata
+            const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+            if (userError || !user) {
+                toast({
+                    title: "Error",
+                    description: "Failed to fetch user profile.",
+                    variant: "destructive",
+                });
+                setLoading(false);
+                return;
+            }
+
+            console.log("Student Sign in successful. User data:", user);
+            console.log("User metadata:", user.user_metadata);
+
+            // Check if user is a creator trying to sign in to student page
+            const userType = user.user_metadata?.user_type;
+            console.log("Detected user type:", userType);
+
+            if (userType === "creator") {
+                await supabase.auth.signOut();
+                toast({
+                    title: "Wrong account type",
+                    description: "This is a creator account. Please sign in from the Creator sign-in page.",
+                    variant: "destructive",
+                });
+            } else {
+                toast({
+                    title: "Welcome back!",
+                    description: "Signed in successfully.",
+                });
+                await handlePendingExamSubmission();
+            }
         }
         setLoading(false);
     };
@@ -177,6 +243,12 @@ const StudentAuth = () => {
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-hero p-6 relative">
+            <EmailVerificationModal
+                isOpen={showVerificationModal}
+                onOpenChange={setShowVerificationModal}
+                email={email}
+                onVerified={handleVerificationComplete}
+            />
             {/* Back Button */}
             <Button
                 variant="ghost"
