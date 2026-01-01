@@ -23,6 +23,8 @@ type Exam = {
     created_at: string;
     is_published: boolean;
     exam_category: string | null;
+    user_id: string;
+    creator_username?: string;
 };
 
 import { useUserRole } from "@/hooks/use-user-role";
@@ -45,7 +47,7 @@ const Marketplace = () => {
 
     const fetchPublishedExams = async () => {
         setLoading(true);
-        const { data, error } = await supabase
+        const { data: examsData, error } = await supabase
             .from("exams")
             .select("*")
             .eq("is_published", true)
@@ -53,8 +55,28 @@ const Marketplace = () => {
 
         if (error) {
             console.error("Error loading exams:", error);
+            setExams([]);
         } else {
-            setExams(data || []);
+            // Fetch creator profiles
+            const userIds = [...new Set(examsData.map(exam => exam.user_id))];
+
+            if (userIds.length > 0) {
+                const { data: profiles } = await supabase
+                    .from('profiles')
+                    .select('id, username')
+                    .in('id', userIds);
+
+                const profileMap = new Map(profiles?.map(p => [p.id, p.username]) || []);
+
+                const examsWithUsernames = examsData.map(exam => ({
+                    ...exam,
+                    creator_username: profileMap.get(exam.user_id) || 'Unknown'
+                }));
+
+                setExams(examsWithUsernames);
+            } else {
+                setExams(examsData);
+            }
         }
         setLoading(false);
     };
@@ -156,6 +178,9 @@ const Marketplace = () => {
                                             )}
                                         </div>
                                         <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
+                                        <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
+                                            <span className="font-medium text-primary">@{exam.creator_username || "Unknown"}</span>
+                                        </div>
                                     </div>
                                     <div className="flex items-center gap-1 -mr-2">
                                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => handleShare(exam.id)}>
