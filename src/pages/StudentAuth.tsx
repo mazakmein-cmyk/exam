@@ -83,7 +83,7 @@ const StudentAuth = () => {
                 });
             }
         } else if (data.user && data.user.identities && data.user.identities.length === 0) {
-            // User exists. Try to sign them in.
+            // User exists. Check status.
             const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
                 email,
                 password,
@@ -91,22 +91,12 @@ const StudentAuth = () => {
 
             if (!signInError && signInData.user) {
                 // User verified and password correct
-                const userType = signInData.user.user_metadata?.user_type;
-                if (userType === "creator") {
-                    await supabase.auth.signOut();
-                    toast({
-                        title: "Wrong account type",
-                        description: "This is a creator account. Please sign in from the Creator sign-in page.",
-                        variant: "destructive",
-                    });
-                } else {
-                    toast({
-                        title: "Welcome back!",
-                        description: "Account already exists. Signed in successfully.",
-                    });
-                    await handlePendingExamSubmission();
-                }
-
+                // Do NOT log them in automatically from the signup tab.
+                // Do NOT show verification modal.
+                toast({
+                    title: "Account already exists",
+                    description: "Please sign in to your account.",
+                });
             } else if (signInError && signInError.message.includes("Email not confirmed")) {
                 // User exists but not verified. Resend verification.
                 const { error: resendError } = await supabase.auth.resend({
@@ -137,6 +127,8 @@ const StudentAuth = () => {
                 });
             }
         } else {
+            // New user created, or existing user found and needs verification.
+            // Show verification modal for newly created users.
             setShowVerificationModal(true);
         }
         setLoading(false);
@@ -174,6 +166,18 @@ const StudentAuth = () => {
                 toast({
                     title: "Error",
                     description: "Failed to fetch user profile.",
+                    variant: "destructive",
+                });
+                setLoading(false);
+                return;
+            }
+
+            // Strict verification check
+            if (!user.email_confirmed_at) {
+                await supabase.auth.signOut();
+                toast({
+                    title: "Verification required",
+                    description: "Please verify your email before signing in.",
                     variant: "destructive",
                 });
                 setLoading(false);

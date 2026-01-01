@@ -48,33 +48,24 @@ const Auth = () => {
         });
       }
     } else if (data.user && data.user.identities && data.user.identities.length === 0) {
-      // User exists. Try to sign them in to see if they are verified and password matches.
+      // User exists. Check status.
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (!signInError && signInData.user) {
-        // User is verified and password is correct.
-        // Check user type
-        const userType = signInData.user.user_metadata?.user_type;
-        if (userType === "student") {
-          await supabase.auth.signOut();
-          toast({
-            title: "Wrong account type",
-            description: "This is a student account. Please sign in from the Student sign-in page.",
-            variant: "destructive",
-          });
-        } else {
-          toast({
-            title: "Welcome back!",
-            description: "Account already exists. Signed in successfully.",
-          });
-          const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
-          navigate(hasPendingUpload ? "/" : "/dashboard");
-        }
+        // User exists, is verified, and password is correct.
+        // Do NOT log them in automatically from the signup tab.
+        // Do NOT show verification modal.
+        toast({
+          title: "Account already exists",
+          description: "Please sign in to your account.",
+        });
+        // Optional: Switch to sign in tab? For now just toast.
       } else if (signInError && signInError.message.includes("Email not confirmed")) {
-        // User exists but is not verified. Resend verification.
+        // User exists but is not verified. 
+        // Resend verification and SHOW modal.
         const { error: resendError } = await supabase.auth.resend({
           type: 'signup',
           email,
@@ -103,6 +94,7 @@ const Auth = () => {
         });
       }
     } else {
+      // New user created successfully
       setShowVerificationModal(true);
     }
     setLoading(false);
@@ -127,8 +119,6 @@ const Auth = () => {
       email,
       password,
     });
-    // ... existing signIn logic ...
-
 
     if (error) {
       toast({
@@ -137,6 +127,18 @@ const Auth = () => {
         variant: "destructive",
       });
     } else {
+      // Check for email verification strictly
+      if (!data.user?.email_confirmed_at) {
+        await supabase.auth.signOut();
+        toast({
+          title: "Verification required",
+          description: "Please verify your email before signing in.",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
       console.log("Sign in successful. User data:", data.user);
       console.log("User metadata:", data.user?.user_metadata);
 
