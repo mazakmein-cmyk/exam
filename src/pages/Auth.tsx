@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,18 +10,41 @@ import { useToast } from "@/hooks/use-toast";
 import { FileText, ArrowLeft } from "lucide-react";
 
 import EmailVerificationModal from "@/components/EmailVerificationModal";
+import ForgotPasswordModal from "@/components/ForgotPasswordModal";
+import UpdatePasswordModal from "@/components/UpdatePasswordModal";
 
 const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [showUpdatePasswordModal, setShowUpdatePasswordModal] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  useEffect(() => {
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setShowUpdatePasswordModal(true);
+      }
+    });
+  }, []);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+
+    if (password !== confirmPassword) {
+      toast({
+        title: "Passwords do not match",
+        description: "Please make sure your passwords match.",
+        variant: "destructive",
+      });
+      setLoading(false);
+      return;
+    }
 
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -174,6 +197,16 @@ const Auth = () => {
         email={email}
         onVerified={handleVerificationComplete}
       />
+      <ForgotPasswordModal
+        isOpen={showForgotPasswordModal}
+        onOpenChange={setShowForgotPasswordModal}
+        defaultEmail={email}
+        redirectTo="/auth"
+      />
+      <UpdatePasswordModal
+        isOpen={showUpdatePasswordModal}
+        onOpenChange={setShowUpdatePasswordModal}
+      />
       {/* Back Button */}
       <Button
         variant="ghost"
@@ -228,6 +261,16 @@ const Auth = () => {
                   <Button type="submit" className="w-full" disabled={loading}>
                     {loading ? "Signing in..." : "Sign In"}
                   </Button>
+                  <div className="text-center mt-2">
+                    <Button
+                      variant="link"
+                      className="text-xs text-muted-foreground p-0 h-auto font-normal"
+                      onClick={() => setShowForgotPasswordModal(true)}
+                      type="button"
+                    >
+                      Forgot your password?
+                    </Button>
+                  </div>
                   <p className="text-center text-sm text-muted-foreground mt-4">
                     Want to take exams?{" "}
                     <span
@@ -260,6 +303,17 @@ const Auth = () => {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      required
+                      minLength={6}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-confirm-password">Confirm Password</Label>
+                    <Input
+                      id="signup-confirm-password"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
                       required
                       minLength={6}
                     />

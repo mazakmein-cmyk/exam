@@ -10,6 +10,8 @@ import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, ArrowLeft } from "lucide-react";
 import { saveExamAttempt, ExamSubmissionData } from "@/services/examService";
 import EmailVerificationModal from "@/components/EmailVerificationModal";
+import ForgotPasswordModal from "@/components/ForgotPasswordModal";
+import UpdatePasswordModal from "@/components/UpdatePasswordModal";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -24,14 +26,25 @@ import {
 const StudentAuth = () => {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [loading, setLoading] = useState(false);
     const [showVerificationModal, setShowVerificationModal] = useState(false);
+    const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+    const [showUpdatePasswordModal, setShowUpdatePasswordModal] = useState(false);
     const navigate = useNavigate();
     const { toast } = useToast();
     const [searchParams] = useSearchParams();
     const defaultTab = searchParams.get("mode") === "signup" ? "signup" : "signin";
     const isExamSubmit = searchParams.get("trigger") === "exam_submit";
     const [showExitDialog, setShowExitDialog] = useState(false);
+
+    useEffect(() => {
+        supabase.auth.onAuthStateChange(async (event, session) => {
+            if (event === "PASSWORD_RECOVERY") {
+                setShowUpdatePasswordModal(true);
+            }
+        });
+    }, []);
 
     useEffect(() => {
         if (!isExamSubmit) return;
@@ -57,6 +70,16 @@ const StudentAuth = () => {
     const handleSignUp = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+
+        if (password !== confirmPassword) {
+            toast({
+                title: "Passwords do not match",
+                description: "Please make sure your passwords match.",
+                variant: "destructive",
+            });
+            setLoading(false);
+            return;
+        }
 
         const { data, error } = await supabase.auth.signUp({
             email,
@@ -284,6 +307,16 @@ const StudentAuth = () => {
                 email={email}
                 onVerified={handleVerificationComplete}
             />
+            <ForgotPasswordModal
+                isOpen={showForgotPasswordModal}
+                onOpenChange={setShowForgotPasswordModal}
+                defaultEmail={email}
+                redirectTo="/student-auth"
+            />
+            <UpdatePasswordModal
+                isOpen={showUpdatePasswordModal}
+                onOpenChange={setShowUpdatePasswordModal}
+            />
             {/* Back Button */}
             <Button
                 variant="ghost"
@@ -362,6 +395,16 @@ const StudentAuth = () => {
                                     <Button type="submit" className="w-full" disabled={loading}>
                                         {loading ? "Signing in..." : "Sign In"}
                                     </Button>
+                                    <div className="text-center mt-2">
+                                        <Button
+                                            variant="link"
+                                            className="text-xs text-muted-foreground p-0 h-auto font-normal"
+                                            onClick={() => setShowForgotPasswordModal(true)}
+                                            type="button"
+                                        >
+                                            Forgot your password?
+                                        </Button>
+                                    </div>
                                     {searchParams.get("from") !== "marketplace" && !isExamSubmit && (
                                         <p className="text-center text-sm text-muted-foreground mt-4">
                                             Want to create exams?{" "}
@@ -396,6 +439,17 @@ const StudentAuth = () => {
                                             type="password"
                                             value={password}
                                             onChange={(e) => setPassword(e.target.value)}
+                                            required
+                                            minLength={6}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="signup-confirm-password">Confirm Password</Label>
+                                        <Input
+                                            id="signup-confirm-password"
+                                            type="password"
+                                            value={confirmPassword}
+                                            onChange={(e) => setConfirmPassword(e.target.value)}
                                             required
                                             minLength={6}
                                         />
