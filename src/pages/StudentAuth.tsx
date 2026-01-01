@@ -12,6 +12,7 @@ import { saveExamAttempt, ExamSubmissionData } from "@/services/examService";
 import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
 import UpdatePasswordModal from "@/components/UpdatePasswordModal";
+import OnboardingModal from "@/components/OnboardingModal";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -31,6 +32,7 @@ const StudentAuth = () => {
     const [showVerificationModal, setShowVerificationModal] = useState(false);
     const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
     const [showUpdatePasswordModal, setShowUpdatePasswordModal] = useState(false);
+    const [showOnboardingModal, setShowOnboardingModal] = useState(false);
     const navigate = useNavigate();
     const { toast } = useToast();
     const [searchParams] = useSearchParams();
@@ -163,6 +165,28 @@ const StudentAuth = () => {
             title: "Success!",
             description: "Account verified successfully.",
         });
+        checkProfileAndRedirect();
+    };
+
+    const checkProfileAndRedirect = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+
+        if (!profile) {
+            setShowOnboardingModal(true);
+        } else {
+            await handlePendingExamSubmission();
+        }
+    };
+
+    const handleOnboardingComplete = async () => {
+        setShowOnboardingModal(false);
         await handlePendingExamSubmission();
     };
 
@@ -226,7 +250,7 @@ const StudentAuth = () => {
                     title: "Welcome back!",
                     description: "Signed in successfully.",
                 });
-                await handlePendingExamSubmission();
+                checkProfileAndRedirect();
             }
         }
         setLoading(false);
@@ -316,6 +340,10 @@ const StudentAuth = () => {
             <UpdatePasswordModal
                 isOpen={showUpdatePasswordModal}
                 onOpenChange={setShowUpdatePasswordModal}
+            />
+            <OnboardingModal
+                isOpen={showOnboardingModal}
+                onComplete={handleOnboardingComplete}
             />
             {/* Back Button */}
             <Button

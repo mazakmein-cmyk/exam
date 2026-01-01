@@ -12,6 +12,7 @@ import { FileText, ArrowLeft } from "lucide-react";
 import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
 import UpdatePasswordModal from "@/components/UpdatePasswordModal";
+import OnboardingModal from "@/components/OnboardingModal";
 
 const Auth = () => {
   const [email, setEmail] = useState("");
@@ -21,6 +22,7 @@ const Auth = () => {
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
   const [showUpdatePasswordModal, setShowUpdatePasswordModal] = useState(false);
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -131,6 +133,37 @@ const Auth = () => {
     });
     // Check if there's a pending PDF upload
     const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
+    setShowVerificationModal(false);
+    toast({
+      title: "Success!",
+      description: "Account verified successfully.",
+    });
+    // After verification, check for profile and show onboarding if needed
+    checkProfileAndRedirect();
+  };
+
+  const checkProfileAndRedirect = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (!profile) {
+      setShowOnboardingModal(true);
+    } else {
+      // Check if there's a pending PDF upload
+      const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
+      navigate(hasPendingUpload ? "/" : "/dashboard");
+    }
+  };
+
+  const handleOnboardingComplete = () => {
+    setShowOnboardingModal(false);
+    const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
     navigate(hasPendingUpload ? "/" : "/dashboard");
   };
 
@@ -182,8 +215,7 @@ const Auth = () => {
           description: "Signed in successfully.",
         });
         // Check if there's a pending PDF upload
-        const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
-        navigate(hasPendingUpload ? "/" : "/dashboard");
+        checkProfileAndRedirect();
       }
     }
     setLoading(false);
@@ -206,6 +238,10 @@ const Auth = () => {
       <UpdatePasswordModal
         isOpen={showUpdatePasswordModal}
         onOpenChange={setShowUpdatePasswordModal}
+      />
+      <OnboardingModal
+        isOpen={showOnboardingModal}
+        onComplete={handleOnboardingComplete}
       />
       {/* Back Button */}
       <Button
