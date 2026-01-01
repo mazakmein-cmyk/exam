@@ -83,27 +83,58 @@ const StudentAuth = () => {
                 });
             }
         } else if (data.user && data.user.identities && data.user.identities.length === 0) {
-            // Supabase returns empty identities for existing users.
-            // Try to resend verification email in case they are unverified.
-            const { error: resendError } = await supabase.auth.resend({
-                type: 'signup',
+            // User exists. Try to sign them in.
+            const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
                 email,
-                options: {
-                    emailRedirectTo: `${window.location.origin}/marketplace`,
-                },
+                password,
             });
 
-            if (resendError) {
+            if (!signInError && signInData.user) {
+                // User verified and password correct
+                const userType = signInData.user.user_metadata?.user_type;
+                if (userType === "creator") {
+                    await supabase.auth.signOut();
+                    toast({
+                        title: "Wrong account type",
+                        description: "This is a creator account. Please sign in from the Creator sign-in page.",
+                        variant: "destructive",
+                    });
+                } else {
+                    toast({
+                        title: "Welcome back!",
+                        description: "Account already exists. Signed in successfully.",
+                    });
+                    await handlePendingExamSubmission();
+                }
+
+            } else if (signInError && signInError.message.includes("Email not confirmed")) {
+                // User exists but not verified. Resend verification.
+                const { error: resendError } = await supabase.auth.resend({
+                    type: 'signup',
+                    email,
+                    options: {
+                        emailRedirectTo: `${window.location.origin}/marketplace`,
+                    },
+                });
+
+                if (resendError) {
+                    toast({
+                        title: "Account already exists",
+                        description: "Please sign in instead.",
+                    });
+                } else {
+                    toast({
+                        title: "Account exists",
+                        description: "We've resent the verification email. Please check your inbox.",
+                    });
+                    setShowVerificationModal(true);
+                }
+            } else {
+                // User exists, password wrong or other error
                 toast({
                     title: "Account already exists",
                     description: "Please sign in instead.",
                 });
-            } else {
-                toast({
-                    title: "Account exists",
-                    description: "We've resent the verification email. Please check your inbox.",
-                });
-                setShowVerificationModal(true);
             }
         } else {
             setShowVerificationModal(true);

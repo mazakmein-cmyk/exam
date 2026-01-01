@@ -48,27 +48,59 @@ const Auth = () => {
         });
       }
     } else if (data.user && data.user.identities && data.user.identities.length === 0) {
-      // Supabase returns empty identities for existing users. 
-      // Try to resend verification email in case they are unverified.
-      const { error: resendError } = await supabase.auth.resend({
-        type: 'signup',
+      // User exists. Try to sign them in to see if they are verified and password matches.
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
-        options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-        },
+        password,
       });
 
-      if (resendError) {
+      if (!signInError && signInData.user) {
+        // User is verified and password is correct.
+        // Check user type
+        const userType = signInData.user.user_metadata?.user_type;
+        if (userType === "student") {
+          await supabase.auth.signOut();
+          toast({
+            title: "Wrong account type",
+            description: "This is a student account. Please sign in from the Student sign-in page.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Welcome back!",
+            description: "Account already exists. Signed in successfully.",
+          });
+          const hasPendingUpload = sessionStorage.getItem('pendingPdfUpload');
+          navigate(hasPendingUpload ? "/" : "/dashboard");
+        }
+      } else if (signInError && signInError.message.includes("Email not confirmed")) {
+        // User exists but is not verified. Resend verification.
+        const { error: resendError } = await supabase.auth.resend({
+          type: 'signup',
+          email,
+          options: {
+            emailRedirectTo: `${window.location.origin}/dashboard`,
+          },
+        });
+
+        if (resendError) {
+          toast({
+            title: "Account already exists",
+            description: "Please sign in instead.",
+          });
+        } else {
+          toast({
+            title: "Account exists",
+            description: "We've resent the verification email. Please check your inbox.",
+          });
+          setShowVerificationModal(true);
+        }
+      } else {
+        // User exists but password wrong or other error.
         toast({
           title: "Account already exists",
           description: "Please sign in instead.",
         });
-      } else {
-        toast({
-          title: "Account exists",
-          description: "We've resent the verification email. Please check your inbox.",
-        });
-        setShowVerificationModal(true);
       }
     } else {
       setShowVerificationModal(true);
