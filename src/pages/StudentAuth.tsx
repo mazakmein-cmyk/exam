@@ -41,12 +41,28 @@ const StudentAuth = () => {
     const [showExitDialog, setShowExitDialog] = useState(false);
 
     useEffect(() => {
+        const checkUser = async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+                // If already logged in, redirect to marketplace
+                if (session.user.user_metadata?.user_type === 'student') {
+                    navigate("/marketplace");
+                }
+            }
+        };
+
+        checkUser();
+
         supabase.auth.onAuthStateChange(async (event, session) => {
             if (event === "PASSWORD_RECOVERY") {
                 setShowUpdatePasswordModal(true);
+            } else if (event === "SIGNED_IN" && session) {
+                if (session.user.user_metadata?.user_type === 'student') {
+                    navigate("/marketplace");
+                }
             }
         });
-    }, []);
+    }, [navigate]);
 
     useEffect(() => {
         if (!isExamSubmit) return;

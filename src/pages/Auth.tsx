@@ -27,12 +27,28 @@ const Auth = () => {
   const { toast } = useToast();
 
   useEffect(() => {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        // If already logged in, redirect to dashboard
+        if (session.user.user_metadata?.user_type === 'creator') {
+          navigate("/dashboard");
+        }
+      }
+    };
+
+    checkUser();
+
     supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "PASSWORD_RECOVERY") {
         setShowUpdatePasswordModal(true);
+      } else if (event === "SIGNED_IN" && session) {
+        if (session.user.user_metadata?.user_type === 'creator') {
+          navigate("/dashboard");
+        }
       }
     });
-  }, []);
+  }, [navigate]);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
