@@ -89,7 +89,21 @@ const EmailVerificationModal = ({
 
         // 2. Poll for verification status (if session exists or check if session appears)
         const intervalId = setInterval(async () => {
-            setChecking(true);
+            // setChecking(true); // Don't show loading state during background polling to avoid UI flicker
+
+            // Try to refresh session first to get latest claims
+            const { data: { session }, error } = await supabase.auth.refreshSession();
+
+            if (session?.user?.email_confirmed_at) {
+                setIsVerified(true);
+                clearInterval(intervalId);
+                setTimeout(() => {
+                    onVerified();
+                }, 2000);
+                return;
+            }
+
+            // Fallback to getUser
             const { data: { user } } = await supabase.auth.getUser();
 
             if (user?.email_confirmed_at) {
@@ -99,7 +113,7 @@ const EmailVerificationModal = ({
                     onVerified();
                 }, 2000);
             }
-            setChecking(false);
+            // setChecking(false);
         }, 3000);
 
         return () => {
