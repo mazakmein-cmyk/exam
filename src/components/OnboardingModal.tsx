@@ -110,7 +110,7 @@ const OnboardingModal = ({
     return (
         <Dialog open={isOpen}>
             <DialogContent
-                className="sm:max-w-md"
+                className="sm:max-w-md [&>button]:hidden"
                 onInteractOutside={handleInteractOutside}
                 onEscapeKeyDown={handleEscapeKeyDown}
             >
