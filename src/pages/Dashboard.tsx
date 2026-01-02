@@ -243,8 +243,16 @@ const Dashboard = () => {
     }
   };
 
-  const handleDeleteExam = (examId: string, examName: string) => {
-    setExamToDelete({ id: examId, name: examName });
+  const handleDeleteExam = (exam: Exam) => {
+    if (exam.is_published) {
+      toast({
+        title: "Cannot Delete Published Exam",
+        description: "Please unpublish the exam first to delete it.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setExamToDelete({ id: exam.id, name: exam.name });
     setShowDeleteDialog(true);
   };
 
@@ -500,7 +508,7 @@ const Dashboard = () => {
                           Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => handleDeleteExam(exam.id, exam.name)}
+                          onClick={() => handleDeleteExam(exam)}
                           className="text-destructive focus:text-destructive"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />

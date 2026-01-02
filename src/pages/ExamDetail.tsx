@@ -39,6 +39,7 @@ type Exam = {
   instruction: string | null;
   exam_category: string | null;
   user_id: string;
+  is_published: boolean;
 };
 
 type Section = {
@@ -359,6 +360,17 @@ export default function ExamDetail() {
   };
 
   const handleDeleteExam = () => {
+    if (!exam) return;
+
+    if (exam.is_published) {
+      toast({
+        title: "Cannot Delete Published Exam",
+        description: "Please unpublish the exam first to delete it.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setShowDeleteExamDialog(true);
   };
 
