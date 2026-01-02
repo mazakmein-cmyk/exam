@@ -16,6 +16,7 @@ interface EmailVerificationModalProps {
     onOpenChange: (open: boolean) => void;
     email: string;
     onVerified: () => void;
+    verifyCredentials?: () => Promise<boolean>;
 }
 
 const EmailVerificationModal = ({
@@ -23,6 +24,7 @@ const EmailVerificationModal = ({
     onOpenChange,
     email,
     onVerified,
+    verifyCredentials,
 }: EmailVerificationModalProps) => {
     const [isVerified, setIsVerified] = useState(false);
     const [checking, setChecking] = useState(false);
@@ -30,6 +32,19 @@ const EmailVerificationModal = ({
 
     const handleManualCheck = async () => {
         setChecking(true);
+
+        if (verifyCredentials) {
+            const success = await verifyCredentials();
+            if (success) {
+                setIsVerified(true);
+                setTimeout(() => {
+                    onVerified();
+                }, 1000);
+                setChecking(false);
+                return;
+            }
+        }
+
         // Force refresh session to get latest data from server
         const { data: { session }, error } = await supabase.auth.refreshSession();
 

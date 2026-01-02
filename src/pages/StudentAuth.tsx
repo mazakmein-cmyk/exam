@@ -330,6 +330,15 @@ const StudentAuth = () => {
                 onOpenChange={setShowVerificationModal}
                 email={email}
                 onVerified={handleVerificationComplete}
+                verifyCredentials={async () => {
+                    if (!password) return false;
+                    const { data, error } = await supabase.auth.signInWithPassword({
+                        email,
+                        password,
+                    });
+                    if (error || !data.session) return false;
+                    return true;
+                }}
             />
             <ForgotPasswordModal
                 isOpen={showForgotPasswordModal}
