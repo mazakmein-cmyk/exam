@@ -15,6 +15,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/components/ui/use-toast";
+import OnboardingModal from "@/components/OnboardingModal";
 
 type Exam = {
     id: string;
@@ -36,12 +37,29 @@ const Marketplace = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
+    const [showOnboardingModal, setShowOnboardingModal] = useState(false);
     const navigate = useNavigate();
 
     const uniqueCategories = Array.from(new Set(exams.map(e => e.exam_category).filter(Boolean))) as string[];
     const categoryOptions = uniqueCategories.map(c => ({ label: c, value: c }));
 
     useEffect(() => {
+        const checkProfile = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .eq('id', user.id)
+                    .single();
+
+                if (!profile) {
+                    setShowOnboardingModal(true);
+                }
+            }
+        };
+
+        checkProfile();
         fetchPublishedExams();
     }, []);
 
@@ -97,6 +115,10 @@ const Marketplace = () => {
     return (
         <div className="min-h-screen bg-background">
             <Navbar navButtonLabel="Analytics" navButtonLink="/analytics?from=marketplace" />
+            <OnboardingModal
+                isOpen={showOnboardingModal}
+                onComplete={() => setShowOnboardingModal(false)}
+            />
 
             <main className="container mx-auto max-w-7xl px-6 py-8">
                 {/* Back Button */}

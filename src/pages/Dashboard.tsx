@@ -15,15 +15,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import OnboardingModal from "@/components/OnboardingModal";
 
 type Exam = {
   id: string;
@@ -44,6 +39,7 @@ const Dashboard = () => {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [examToDelete, setExamToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
 
   // Publish/Unpublish Confirmation State
   const [showPublishDialog, setShowPublishDialog] = useState(false);
@@ -60,6 +56,16 @@ const Dashboard = () => {
       }
       setUser(session.user);
       fetchExams(session.user.id);
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (!profile) {
+        setShowOnboardingModal(true);
+      }
     };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -544,7 +550,12 @@ const Dashboard = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+
+      <OnboardingModal
+        isOpen={showOnboardingModal}
+        onComplete={() => setShowOnboardingModal(false)}
+      />
+    </div >
   );
 };
 
