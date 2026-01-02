@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FileText, LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy } from "lucide-react";
+import { FileText, LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
@@ -25,6 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import OnboardingModal from "@/components/OnboardingModal";
+import ProfileDialog from "@/components/ProfileDialog";
 
 type Exam = {
   id: string;
@@ -46,6 +47,7 @@ const Dashboard = () => {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [examToDelete, setExamToDelete] = useState<{ id: string; name: string } | null>(null);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
   // Publish/Unpublish Confirmation State
   const [showPublishDialog, setShowPublishDialog] = useState(false);
@@ -104,7 +106,7 @@ const Dashboard = () => {
         variant: "destructive",
       });
     } else {
-      setExams((data || []) as Exam[]);
+      setExams((data || []) as unknown as Exam[]);
     }
     setLoading(false);
   };
@@ -391,7 +393,10 @@ const Dashboard = () => {
               <span className="text-xl font-bold text-foreground">ExamSim</span>
             </div>
             <div className="flex items-center gap-2">
-
+              <Button variant="ghost" onClick={() => setShowProfile(true)}>
+                <User className="mr-2 h-4 w-4" />
+                Profile
+              </Button>
               <Button variant="ghost" onClick={handleSignOut}>
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign Out
@@ -560,6 +565,11 @@ const Dashboard = () => {
       <OnboardingModal
         isOpen={showOnboardingModal}
         onComplete={() => setShowOnboardingModal(false)}
+      />
+
+      <ProfileDialog
+        isOpen={showProfile}
+        onOpenChange={setShowProfile}
       />
     </div >
   );
