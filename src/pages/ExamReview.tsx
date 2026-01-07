@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Clock, CheckCircle2, XCircle, Circle, Upload } from "lucide-react";
+import { ArrowLeft, Clock, CheckCircle2, XCircle, Circle, Upload, ChevronDown, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,7 @@ interface Response {
     correct_answer: any;
     q_no: number;
     section_id: string;
+    image_url: string | null;
   };
 }
 
@@ -48,6 +49,10 @@ export default function ExamReview() {
   const [uploadingAnswerKey, setUploadingAnswerKey] = useState(false);
 
   const [isCreator, setIsCreator] = useState(false);
+
+  // Expand/collapse state for sections and questions
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [expandedQuestions, setExpandedQuestions] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetchReviewData();
@@ -120,7 +125,7 @@ export default function ExamReview() {
         .from("responses")
         .select(`
           *,
-          question:parsed_questions(text, options, answer_type, correct_answer, q_no, section_id)
+          question:parsed_questions(text, options, answer_type, correct_answer, q_no, section_id, image_url)
         `)
         .in("attempt_id", selectedAttemptIds);
 
@@ -282,6 +287,82 @@ export default function ExamReview() {
     return String(answer);
   };
 
+  // Toggle section expand/collapse
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
+  };
+
+  // Toggle question expand/collapse
+  const toggleQuestion = (questionId: string) => {
+    setExpandedQuestions(prev => ({ ...prev, [questionId]: !prev[questionId] }));
+  };
+
+  // Group responses by section
+  const groupedResponses = responses.reduce((acc: Record<string, Response[]>, response) => {
+    const sectionId = response.question.section_id;
+    if (!acc[sectionId]) {
+      acc[sectionId] = [];
+    }
+    acc[sectionId].push(response);
+    return acc;
+  }, {});
+
+  // Render options with highlighting
+  const renderOptions = (response: Response) => {
+    const { options, answer_type, correct_answer } = response.question;
+    const selectedAnswer = response.selected_answer;
+
+    if (!options || !Array.isArray(options) || options.length === 0) {
+      return null;
+    }
+
+    const isMultiple = answer_type === "multi" || answer_type === "multiple";
+    const selectedArray = isMultiple && Array.isArray(selectedAnswer) ? selectedAnswer : [selectedAnswer];
+    const correctArray = isMultiple && Array.isArray(correct_answer) ? correct_answer : [correct_answer];
+
+    return (
+      <div className="space-y-2 mt-4">
+        <p className="font-semibold text-sm text-muted-foreground">Options:</p>
+        {options.map((option: string, idx: number) => {
+          const isSelected = selectedArray.includes(option);
+          const isCorrect = correctArray.includes(option);
+
+          let bgClass = "bg-background";
+          let borderClass = "border-border";
+          let icon = null;
+
+          if (isCorrect) {
+            bgClass = "bg-green-50 dark:bg-green-950";
+            borderClass = "border-green-500";
+            icon = <CheckCircle2 className="w-4 h-4 text-green-500" />;
+          }
+          if (isSelected && !isCorrect) {
+            bgClass = "bg-red-50 dark:bg-red-950";
+            borderClass = "border-red-500";
+            icon = <XCircle className="w-4 h-4 text-red-500" />;
+          }
+          if (isSelected && isCorrect) {
+            bgClass = "bg-green-50 dark:bg-green-950";
+            borderClass = "border-green-500";
+            icon = <CheckCircle2 className="w-4 h-4 text-green-500" />;
+          }
+
+          return (
+            <div
+              key={idx}
+              className={`flex items-center gap-3 p-3 rounded-md border ${bgClass} ${borderClass}`}
+            >
+              <span className="font-medium text-sm">{String.fromCharCode(65 + idx)})</span>
+              <span className="flex-1">{option}</span>
+              {icon}
+              {isSelected && <span className="text-xs text-muted-foreground">(Your choice)</span>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -395,58 +476,140 @@ export default function ExamReview() {
           </Card>
         )}
 
-        {/* Questions Review */}
+        {/* Questions Review - Collapsible Sections */}
         <div className="space-y-4">
-          {responses.map((response, index) => {
-            const currentSectionId = response.question.section_id;
-            const previousSectionId = index > 0 ? responses[index - 1].question.section_id : null;
-            const showSectionHeader = currentSectionId !== previousSectionId;
-            const sectionName = sections.find(s => s.id === currentSectionId)?.name;
+          {sections.map((section) => {
+            const sectionResponses = groupedResponses[section.id] || [];
+            if (sectionResponses.length === 0) return null;
+
+            const isSectionExpanded = expandedSections[section.id] !== false; // Default expanded
+            const correctCount = sectionResponses.filter(r => r.is_correct === true).length;
+            const wrongCount = sectionResponses.filter(r => r.is_correct === false).length;
 
             return (
-              <div key={response.id}>
-                {showSectionHeader && (
-                  <div className="flex items-center gap-2 mt-8 mb-4">
-                    <h3 className="text-xl font-bold text-primary">{sectionName}</h3>
-                    <div className="h-px bg-border flex-1" />
+              <Card key={section.id} className="overflow-hidden">
+                {/* Section Header - Clickable */}
+                <div
+                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => toggleSection(section.id)}
+                >
+                  <div className="flex items-center gap-3">
+                    {isSectionExpanded ? (
+                      <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                    )}
+                    <h3 className="text-lg font-bold text-primary">{section.name}</h3>
+                    <span className="text-sm text-muted-foreground">
+                      ({sectionResponses.length} questions)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
+                      {correctCount} correct
+                    </Badge>
+                    <Badge variant="secondary" className="bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300">
+                      {wrongCount} wrong
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* Section Content - Questions */}
+                {isSectionExpanded && (
+                  <div className="border-t space-y-2 p-4">
+                    {sectionResponses.map((response) => {
+                      const isQuestionExpanded = expandedQuestions[response.id] === true; // Default collapsed
+
+                      return (
+                        <div key={response.id} className="border rounded-lg overflow-hidden">
+                          {/* Question Header - Clickable */}
+                          <div
+                            className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/30 transition-colors bg-muted/10"
+                            onClick={() => toggleQuestion(response.id)}
+                          >
+                            <div className="flex items-center gap-3">
+                              {isQuestionExpanded ? (
+                                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                              )}
+                              {getStatusIcon(response)}
+                              <span className="font-medium">Question {response.question.q_no}</span>
+                              <Badge
+                                variant={response.is_correct ? "default" : "destructive"}
+                                className={response.is_correct ? "bg-green-500" : ""}
+                              >
+                                {getStatusText(response)}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Clock className="w-4 h-4" />
+                              {response.time_spent_seconds}s
+                            </div>
+                          </div>
+
+                          {/* Question Content - Expanded View */}
+                          {isQuestionExpanded && (
+                            <div className="p-4 border-t bg-background">
+                              {/* Question Image */}
+                              {response.question.image_url && (
+                                <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                                  <img
+                                    src={response.question.image_url}
+                                    alt="Question"
+                                    className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                                  />
+                                </div>
+                              )}
+
+                              {/* Question Text - Rendered HTML */}
+                              <div
+                                className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
+                                dangerouslySetInnerHTML={{
+                                  __html: response.question.text
+                                    .replace(
+                                      /\[([^\]]+)\]\(([^)]+)\)/g,
+                                      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>'
+                                    )
+                                    .replace(
+                                      /<a href/g,
+                                      '<a class="text-primary underline hover:text-primary/80" href'
+                                    )
+                                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                                    .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                                }}
+                              />
+
+                              {/* Options Display */}
+                              {renderOptions(response)}
+
+                              {/* Answer Summary */}
+                              <div className="space-y-2 bg-muted/50 p-4 rounded-md mt-4">
+                                <div>
+                                  <span className="font-semibold">Your Answer: </span>
+                                  <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
+                                    {formatAnswer(response.selected_answer, response.question.answer_type)}
+                                  </span>
+                                </div>
+
+                                {response.question.correct_answer && (
+                                  <div>
+                                    <span className="font-semibold">Correct Answer: </span>
+                                    <span className="text-green-600 font-medium">
+                                      {formatAnswer(response.question.correct_answer, response.question.answer_type)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
-                <Card className="p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      {getStatusIcon(response)}
-                      <div>
-                        <h3 className="font-semibold">Question {response.question.q_no}</h3>
-                        <Badge variant="secondary">{getStatusText(response)}</Badge>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Clock className="w-4 h-4" />
-                      {response.time_spent_seconds}s
-                    </div>
-                  </div>
-
-                  <p className="mb-4">{response.question.text}</p>
-
-                  <div className="space-y-2 bg-muted/50 p-4 rounded-md">
-                    <div>
-                      <span className="font-semibold">Your Answer: </span>
-                      <span className={response.is_correct === false ? "text-destructive" : ""}>
-                        {formatAnswer(response.selected_answer, response.question.answer_type)}
-                      </span>
-                    </div>
-
-                    {response.question.correct_answer && (
-                      <div>
-                        <span className="font-semibold">Correct Answer: </span>
-                        <span className="text-green-600">
-                          {formatAnswer(response.question.correct_answer, response.question.answer_type)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </Card>
-              </div>
+              </Card>
             );
           })}
         </div>

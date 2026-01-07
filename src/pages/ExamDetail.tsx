@@ -200,6 +200,11 @@ export default function ExamDetail() {
   const handleSaveExam = async () => {
     if (!exam) return;
 
+    if (editingQuestionId) {
+      const success = await handleUpdateQuestion();
+      if (!success) return;
+    }
+
     // Validate mandatory fields
     if (!examCategory || !examCategory.trim()) {
       toast({
@@ -697,7 +702,7 @@ export default function ExamDetail() {
   };
 
   const handleUpdateQuestion = async () => {
-    if (!editingQuestionId || !section) return;
+    if (!editingQuestionId || !section) return false;
 
     try {
       const updateData: any = {
@@ -737,6 +742,7 @@ export default function ExamDetail() {
         title: "Success",
         description: "Question updated successfully",
       });
+      return true;
     } catch (error: any) {
       console.error("Error updating question:", error);
       toast({
@@ -744,6 +750,7 @@ export default function ExamDetail() {
         description: error.message || "Failed to update question",
         variant: "destructive",
       });
+      return false;
     }
   };
 

@@ -15,6 +15,7 @@ import ExamReview from "./pages/ExamReview";
 import Analytics from "./pages/Analytics";
 import ExamIntro from "./pages/ExamIntro";
 import NotFound from "./pages/NotFound";
+import AuthStateListener from "./components/AuthStateListener";
 
 const queryClient = new QueryClient();
 
@@ -24,6 +25,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <AuthStateListener />
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
