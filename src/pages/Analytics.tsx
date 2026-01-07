@@ -485,7 +485,46 @@ export default function Analytics() {
           </Card>
         )}
 
-        {/* Recent Attempts List */}
+        {/* Recent Attempts List (Student Only) */}
+        {!examId && (
+          <Card className="p-6">
+            <h3 className="text-lg font-semibold mb-4">History</h3>
+            <div className="space-y-3">
+              {attempts.length === 0 ? (
+                <p className="text-muted-foreground text-center py-4">No attempts recorded yet.</p>
+              ) : (
+                attempts.map((attempt) => (
+                  <div
+                    key={attempt.id}
+                    className="flex items-center justify-between p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors"
+                    onClick={() => navigate(`/exam/review/${attempt.id}`)}
+                  >
+                    <div>
+                      <p className="font-semibold">{attempt.section.exam.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {attempt.section.name} • {new Date(attempt.submitted_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <p className="font-semibold">
+                          {attempt.score}/{attempt.total_questions}
+                        </p>
+                        <Badge variant="secondary">
+                          {attempt.accuracy_percentage.toFixed(1)}%
+                        </Badge>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        <Clock className="w-4 h-4 inline mr-1" />
+                        {Math.floor(attempt.time_spent_seconds / 60)}m
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+        )}
 
       </div>
     </div>
