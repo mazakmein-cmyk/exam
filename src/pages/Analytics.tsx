@@ -111,13 +111,13 @@ export default function Analytics() {
           .order("submitted_at", { ascending: false });
 
         if (attemptsError) throw attemptsError;
-        setAttempts((sectionAttempts || []) as any);
+        // NOTE: We do NOT setAttempts here yet. We need to correct them first.
 
         // 3. Get all questions for this exam to build stats
         const { data: questionsData, error: questionsError } = await supabase
           .from("parsed_questions")
           .select(`
-            id, text, q_no, 
+            id, text, q_no, correct_answer, answer_type,
             section:sections!inner(id, name, exam_id)
           `)
           .eq("section.exam_id", examId);
@@ -126,17 +126,79 @@ export default function Analytics() {
 
         // 4. Get all responses for these attempts
         const attemptIds = (sectionAttempts || []).map(a => a.id);
+        let responsesData: any[] = [];
 
         if (attemptIds.length > 0) {
-          const { data: responsesData, error: responsesError } = await supabase
+          const { data: respData, error: responsesError } = await supabase
             .from("responses")
-            .select("question_id, is_correct, time_spent_seconds, selected_answer")
+            .select("question_id, is_correct, time_spent_seconds, selected_answer, attempt_id")
             .in("attempt_id", attemptIds);
 
           if (responsesError) throw responsesError;
+          responsesData = respData || [];
+        }
+
+        // Helper for normalization
+        const normalize = (val: any) => String(val).trim().toLowerCase();
+
+        // 5. Correct Attempts Data (Re-grade on fly)
+        const correctedAttempts = (sectionAttempts || []).map((attempt: any) => {
+          const attemptResponses = responsesData.filter(r => r.attempt_id === attempt.id);
+          let correctCount = 0;
+          let totalTime = 0;
+
+          attemptResponses.forEach(r => {
+            totalTime += (r.time_spent_seconds || 0);
+
+            // Find question to get correct answer
+            const question = questionsData?.find(q => q.id === r.question_id);
+            if (question && question.correct_answer) {
+              const selected = r.selected_answer;
+              const correct = question.correct_answer;
+              let isCorrect = false;
+
+              if (selected !== null && selected !== undefined) {
+                if (Array.isArray(correct)) {
+                  const selectedArray = Array.isArray(selected) ? selected : [selected];
+                  if (selectedArray.length === correct.length) {
+                    const sortedSelected = [...selectedArray].map(normalize).sort();
+                    const sortedCorrect = [...correct].map(normalize).sort();
+                    isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
+                  }
+                } else if (typeof correct === 'object' && correct !== null) {
+                  const val = (correct as any).answer || (correct as any).value;
+                  isCorrect = normalize(val) === normalize(selected);
+                } else {
+                  isCorrect = normalize(selected) === normalize(correct);
+                }
+              }
+
+              if (isCorrect) correctCount++;
+            } else {
+              // Fallback if no correct_answer found, trust DB (though DB might be wrong if 0)
+              if (r.is_correct) correctCount++;
+            }
+          });
+
+          const totalQuestions = questionsData?.filter(q => q.section.id === attempt.section_id).length || attempt.total_questions || 1;
+          const accuracy = totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
+
+          return {
+            ...attempt,
+            score: correctCount,
+            total_questions: totalQuestions,
+            accuracy_percentage: accuracy,
+            avg_time_per_question: totalQuestions > 0 ? totalTime / totalQuestions : 0
+          };
+        });
+
+        setAttempts(correctedAttempts);
+
+        if (attemptIds.length > 0) {
+          // ... Question stats calculation ...
 
           // 5. Calculate per-question stats
-          const statsMap = new Map<string, QuestionStats>();
+          const statsMap = new Map<string, QuestionStats & { correctAnswer?: any; answerType?: string }>();
 
           // Initialize stats for all questions
           questionsData?.forEach((q: any) => {
@@ -149,9 +211,13 @@ export default function Analytics() {
               wrongCount: 0,
               unansweredCount: 0,
               accuracy: 0,
-              avgTime: 0
+              avgTime: 0,
+              correctAnswer: q.correct_answer,
+              answerType: q.answer_type
             });
           });
+
+          const normalize = (val: any) => String(val).trim().toLowerCase();
 
           // Aggregate responses
           responsesData?.forEach((r: any) => {
@@ -160,9 +226,36 @@ export default function Analytics() {
               stat.totalAttempts++;
               stat.avgTime += r.time_spent_seconds || 0;
 
-              if (r.is_correct === true) stat.correctCount++;
-              else if (r.is_correct === false) stat.wrongCount++;
-              else stat.unansweredCount++;
+              // Check correctness dynamically if DB says false/null, or just trust dynamic?
+              // Let's perform robust check if DB flag is not explicitly true (or always to be safe)
+              // But relying on DB is faster. Let's do hybrid: if DB true, take it. If not, check robustly.
+
+              let isCorrect = r.is_correct === true;
+
+              if (!isCorrect && stat.correctAnswer) {
+                const selected = r.selected_answer;
+                const correct = stat.correctAnswer;
+
+                if (selected !== null && selected !== undefined) {
+                  if (Array.isArray(correct)) {
+                    const selectedArray = Array.isArray(selected) ? selected : [selected];
+                    if (selectedArray.length === correct.length) {
+                      const sortedSelected = [...selectedArray].map(normalize).sort();
+                      const sortedCorrect = [...correct].map(normalize).sort();
+                      isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
+                    }
+                  } else if (typeof correct === 'object' && correct !== null) {
+                    const val = (correct as any).answer || (correct as any).value;
+                    isCorrect = normalize(val) === normalize(selected);
+                  } else {
+                    isCorrect = normalize(selected) === normalize(correct);
+                  }
+                }
+              }
+
+              if (isCorrect) stat.correctCount++;
+              else if (r.selected_answer === null) stat.unansweredCount++;
+              else stat.wrongCount++;
             }
           });
 

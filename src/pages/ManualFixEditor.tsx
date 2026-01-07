@@ -27,6 +27,7 @@ interface ParsedQuestion {
   is_finalized: boolean;
   final_order: number | null;
   image_url: string | null;
+  correct_answer: any;
 }
 
 export default function ManualFixEditor() {
@@ -629,12 +630,12 @@ export default function ManualFixEditor() {
                   </div>
                 )}
 
-                {question.answer_hint && (
+                {question.answer_hint !== undefined && (
                   <div>
                     <Label htmlFor={`hint-${question.id}`}>Answer Hint</Label>
                     <Input
                       id={`hint-${question.id}`}
-                      value={question.answer_hint}
+                      value={question.answer_hint || ""}
                       onChange={(e) =>
                         setQuestions(prev =>
                           prev.map(q =>
@@ -648,6 +649,70 @@ export default function ManualFixEditor() {
                     />
                   </div>
                 )}
+
+                <div>
+                  <Label htmlFor={`correct-${question.id}`} className="text-green-600 font-semibold">Correct Answer</Label>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    {question.answer_type === 'multi'
+                      ? "For multiple choice, enter values separated by commas (e.g., Option A, Option B)"
+                      : "Enter the exact correct answer value"}
+                  </p>
+                  <Input
+                    id={`correct-${question.id}`}
+                    value={
+                      Array.isArray(question.correct_answer)
+                        ? question.correct_answer.join(", ")
+                        : (typeof question.correct_answer === 'object' && question.correct_answer !== null ? JSON.stringify(question.correct_answer) : (question.correct_answer || ""))
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      // Store raw string in state for editing convenience, parse on blur
+                      // But we need to update state to show what user types.
+                      // Since we map state directly to value, we might need a temp holder or just update it as string if we strictly use the value prop logic above.
+                      // However, question.correct_answer in state is likely expected to be the actual shape (array/string).
+                      // To support editing, we'll just update it as a string in state temporarily if we can, or usually separate 'editing' state is needed.
+                      // Simpler approach: update state as formatted string? No, that breaks partial updates.
+                      // Only way: parse immediately or handle string-to-object conversion in the value prop.
+
+                      // Let's UPDATE the state as the parsed version immediately? No, that makes typing commas hard.
+                      // A better way for this quick fix:
+                      // We'll update the state with the *value* as-is if it's text, but we need to know it's "dirty".
+                      // Actually, let's just assume for 'multi', the user types a string, and we parse it.
+
+                      // For now, let's treat the state update as string, and the `updateQuestion` call will handle the persistence.
+                      // But wait, `questions` state expects `ParsedQuestion` which has `correct_answer: any`.
+                      // So we can store the string.
+
+                      setQuestions(prev =>
+                        prev.map(q =>
+                          q.id === question.id ? { ...q, correct_answer: val } : q
+                        )
+                      )
+                    }}
+                    onBlur={(e) => {
+                      let val: any = e.target.value;
+                      if (question.answer_type === 'multi') {
+                        val = val.split(',').map((s: string) => s.trim()).filter(Boolean);
+                      }
+                      // If it looks like a number and type is numeric?
+                      if (question.answer_type === 'numeric') {
+                        const num = parseFloat(val);
+                        if (!isNaN(num)) val = num;
+                      }
+
+                      // Update state with valid shape
+                      setQuestions(prev =>
+                        prev.map(q =>
+                          q.id === question.id ? { ...q, correct_answer: val } : q
+                        )
+                      );
+                      // Persist
+                      updateQuestion(question.id, { correct_answer: val });
+                    }}
+                    placeholder={question.answer_type === 'multi' ? "Option A, Option B" : "Correct Answer"}
+                    className="border-green-200 focus:border-green-500"
+                  />
+                </div>
 
                 <div className="flex items-center gap-4 pt-2">
                   <div className="flex items-center space-x-2">
