@@ -728,6 +728,43 @@ export default function ExamDetail() {
   const handleAddQuestion = async () => {
     if (!section) return;
 
+    // Validate that correct answer is provided
+    const hasCorrectAnswer = Array.isArray(newQuestionCorrect)
+      ? newQuestionCorrect.length > 0
+      : newQuestionCorrect && newQuestionCorrect.toString().trim() !== "";
+
+    if (!hasCorrectAnswer) {
+      toast({
+        title: "Missing Answer",
+        description: "Please specify the correct answer before saving the question.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    // Validate options for single/multi choice questions
+    if (newQuestionType === "single" || newQuestionType === "multi") {
+      const filledOptions = newQuestionOptions.filter(opt => opt.trim() !== "");
+      if (filledOptions.length < 2) {
+        toast({
+          title: "Missing Options",
+          description: "Please add at least 2 options for a choice-type question.",
+          variant: "destructive",
+        });
+        return false;
+      }
+      // Check if any option is empty (user added but left blank)
+      const hasEmptyOption = newQuestionOptions.some((opt, idx) => idx < filledOptions.length && opt.trim() === "");
+      if (hasEmptyOption) {
+        toast({
+          title: "Empty Options",
+          description: "Please fill in all options or remove empty ones.",
+          variant: "destructive",
+        });
+        return false;
+      }
+    }
+
     try {
       // Prepare question data with proper defaults
       const newQuestion: any = {
@@ -743,7 +780,7 @@ export default function ExamDetail() {
       };
 
       // Only include options for choice-type questions
-      if (newQuestionType.includes("choice")) {
+      if (newQuestionType === "single" || newQuestionType === "multi") {
         newQuestion.options = newQuestionOptions.filter(opt => opt.trim() !== "");
       }
 
@@ -834,6 +871,33 @@ export default function ExamDetail() {
 
   const handleUpdateQuestion = async () => {
     if (!editingQuestionId || !section) return false;
+
+    // Validate that correct answer is provided
+    const hasCorrectAnswer = Array.isArray(newQuestionCorrect)
+      ? newQuestionCorrect.length > 0
+      : newQuestionCorrect && newQuestionCorrect.toString().trim() !== "";
+
+    if (!hasCorrectAnswer) {
+      toast({
+        title: "Missing Answer",
+        description: "Please specify the correct answer before updating the question.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    // Validate options for single/multi choice questions
+    if (newQuestionType === "single" || newQuestionType === "multi") {
+      const filledOptions = newQuestionOptions.filter(opt => opt.trim() !== "");
+      if (filledOptions.length < 2) {
+        toast({
+          title: "Missing Options",
+          description: "Please add at least 2 options for a choice-type question.",
+          variant: "destructive",
+        });
+        return false;
+      }
+    }
 
     try {
       const updateData: any = {
