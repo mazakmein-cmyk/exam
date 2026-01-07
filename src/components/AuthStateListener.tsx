@@ -1,47 +1,59 @@
 
 import { useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 const AuthStateListener = () => {
     const navigate = useNavigate();
-    const location = useLocation();
 
     useEffect(() => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
             console.log("Global Auth State Change:", event);
 
-            // Skip redirects for exam-related pages to prevent disruption during exams
-            const path = location.pathname;
-            const isExamPage = path.includes('/exam/') || path.includes('/simulator') || path.includes('/review');
+            // Get the current pathname at the time of the event, not from react-router state
+            // This ensures we have the most up-to-date pathname
+            const currentPath = window.location.pathname;
+
+            // Check if user is on exam-related pages - never redirect from these
+            const isExamPage = currentPath.includes('/exam/') ||
+                currentPath.includes('/simulator') ||
+                currentPath.includes('/review') ||
+                currentPath.includes('/intro');
+
+            // Ignore TOKEN_REFRESHED events completely - these happen during tab switches
+            if (event === 'TOKEN_REFRESHED') {
+                console.log("Token refreshed, ignoring...");
+                return;
+            }
 
             if (event === 'SIGNED_OUT') {
-                // When user signs out, redirect to home page or login page
-                // But skip if user is taking an exam to prevent data loss
-
+                // Never redirect if user is taking an exam
                 if (isExamPage) {
                     console.log("Skipping redirect on exam page due to SIGNED_OUT event");
                     return;
                 }
 
-                // Add a small delay to allow for session refresh scenarios
-                // This prevents false redirects when Supabase is refreshing the token
+                // Double-check session after a delay to handle false SIGNED_OUT events
+                // that can occur during token refresh
                 if (session === null) {
-                    // Double-check after a short delay that we're really signed out
                     setTimeout(async () => {
                         const { data: { session: currentSession } } = await supabase.auth.getSession();
-                        if (currentSession === null) {
-                            // Only redirect if still signed out after delay
+                        // Re-check current path in case user navigated
+                        const pathNow = window.location.pathname;
+                        const stillOnExamPage = pathNow.includes('/exam/') ||
+                            pathNow.includes('/simulator') ||
+                            pathNow.includes('/review') ||
+                            pathNow.includes('/intro');
+
+                        if (currentSession === null && !stillOnExamPage) {
                             navigate("/");
                         }
                     }, 500);
                 }
 
             } else if (event === 'SIGNED_IN' && session) {
-                // When user signs in (e.g. in another tab), we might want to redirect them 
-                // if they are currently on a login page.
-
-                const isAuthPage = path === '/auth' || path === '/student-auth';
+                // Only redirect from auth pages
+                const isAuthPage = currentPath === '/auth' || currentPath === '/student-auth';
 
                 if (isAuthPage) {
                     const userType = session.user.user_metadata?.user_type;
@@ -57,9 +69,10 @@ const AuthStateListener = () => {
         return () => {
             subscription.unsubscribe();
         };
-    }, [navigate, location]);
+    }, [navigate]);
 
     return null;
 };
 
 export default AuthStateListener;
+
