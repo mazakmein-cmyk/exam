@@ -1170,6 +1170,30 @@ export function QuestionForm({
         }
     };
 
+    const handleAutofill = (type: 'alpha' | 'numeric') => {
+        const newOptions = [...options];
+        // Ensure at least 4 options
+        while (newOptions.length < 4) {
+            newOptions.push("");
+        }
+
+        if (type === 'alpha') {
+            // Fill with a, b, c, d...
+            const letters = "abcdefghijklmnopqrstuvwxyz".split("");
+            for (let i = 0; i < newOptions.length; i++) {
+                if (i < letters.length) {
+                    newOptions[i] = letters[i];
+                }
+            }
+        } else {
+            // Fill with 1, 2, 3, 4...
+            for (let i = 0; i < newOptions.length; i++) {
+                newOptions[i] = (i + 1).toString();
+            }
+        }
+        setOptions(newOptions);
+    };
+
     const checkFormats = () => {
         setActiveFormats({
             bold: document.queryCommandState('bold'),
@@ -2412,6 +2436,20 @@ export function QuestionForm({
                     >
                         <Plus className="mr-2 h-4 w-4" /> Add Option
                     </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAutofill('alpha')}
+                    >
+                        <ListOrdered className="mr-2 h-4 w-4" /> Autofill (a, b, c, d)
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAutofill('numeric')}
+                    >
+                        <ListOrdered className="mr-2 h-4 w-4" /> Autofill (1, 2, 3, 4)
+                    </Button>
                 </div>
             )}
 
@@ -2458,11 +2496,13 @@ export function QuestionForm({
                 )}
             </div>
 
-            {!isEditing && (
-                <Button className="w-full" onClick={onAdd}>
-                    <Plus className="mr-2 h-4 w-4" /> Save Question
-                </Button>
-            )}
-        </div>
+            {
+                !isEditing && (
+                    <Button className="w-full" onClick={onAdd}>
+                        <Plus className="mr-2 h-4 w-4" /> Save Question
+                    </Button>
+                )
+            }
+        </div >
     );
 }

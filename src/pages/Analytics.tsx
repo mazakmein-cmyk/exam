@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Download, TrendingUp, Clock, Target } from "lucide-react";
+import { ArrowLeft, Download, TrendingUp, Clock, Target, Users, BookOpen } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface Attempt {
@@ -17,6 +17,8 @@ interface Attempt {
   accuracy_percentage: number;
   avg_time_per_question: number;
   time_spent_seconds: number;
+  updated_at: string;
+  user_id: string; // Needed for creator view
   section: {
     name: string;
     exam: {
@@ -25,17 +27,33 @@ interface Attempt {
   };
 }
 
+interface QuestionStats {
+  id: string;
+  text: string;
+  sectionName: string;
+  totalAttempts: number;
+  correctCount: number;
+  wrongCount: number;
+  unansweredCount: number;
+  accuracy: number;
+  avgTime: number;
+}
+
 export default function Analytics() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const examId = searchParams.get("examId");
+
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [examName, setExamName] = useState<string>("");
+  const [questionStats, setQuestionStats] = useState<QuestionStats[]>([]);
 
   useEffect(() => {
-    fetchAttempts();
-  }, []);
+    fetchData();
+  }, [examId]);
 
-  const fetchAttempts = async () => {
+  const fetchData = async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
@@ -46,24 +64,129 @@ export default function Analytics() {
         return;
       }
 
-      const { data, error } = await supabase
+      let query = supabase
         .from("attempts")
         .select(`
           *,
           section:sections(
             name,
+            exam_id,
             exam:exams(name)
           )
         `)
-        .eq("user_id", user.id)
         .not("submitted_at", "is", null)
         .order("submitted_at", { ascending: false });
 
-      if (error) throw error;
+      if (examId) {
+        // Creator View: Get all attempts for this exam (by joining sections)
+        // Note: Supabase filtering on joined tables usually needs !inner for correct filtering, 
+        // but since we are navigating from dashboard where we own the exam, we trust the ID. 
+        // However, standard foreign key filtering in PostgREST:
+        // attempts -> section -> exam_id.
+        // We can do this by filtering on the joined column, but JS client requires specific syntax or embedded resource filtering.
+        // Easier approach: Get sections for this exam first, then get attempts for those sections.
 
-      setAttempts(data as any);
+        // 1. Get Exam Name
+        const { data: examData, error: examError } = await supabase
+          .from("exams")
+          .select("name")
+          .eq("id", examId)
+          .single();
+
+        if (examError) throw examError;
+        setExamName(examData.name);
+
+        // 2. Get attempts through sections
+        const { data: sectionAttempts, error: attemptsError } = await supabase
+          .from("attempts")
+          .select(`
+            *,
+            section:sections!inner(
+              name,
+              exam:exams(name)
+            )
+          `)
+          .eq("section.exam_id", examId) // This uses the inner join filter
+          .not("submitted_at", "is", null)
+          .order("submitted_at", { ascending: false });
+
+        if (attemptsError) throw attemptsError;
+        setAttempts((sectionAttempts || []) as any);
+
+        // 3. Get all questions for this exam to build stats
+        const { data: questionsData, error: questionsError } = await supabase
+          .from("parsed_questions")
+          .select(`
+            id, text, q_no, 
+            section:sections!inner(id, name, exam_id)
+          `)
+          .eq("section.exam_id", examId);
+
+        if (questionsError) throw questionsError;
+
+        // 4. Get all responses for these attempts
+        const attemptIds = (sectionAttempts || []).map(a => a.id);
+
+        if (attemptIds.length > 0) {
+          const { data: responsesData, error: responsesError } = await supabase
+            .from("responses")
+            .select("question_id, is_correct, time_spent_seconds, selected_answer")
+            .in("attempt_id", attemptIds);
+
+          if (responsesError) throw responsesError;
+
+          // 5. Calculate per-question stats
+          const statsMap = new Map<string, QuestionStats>();
+
+          // Initialize stats for all questions
+          questionsData?.forEach((q: any) => {
+            statsMap.set(q.id, {
+              id: q.id,
+              text: q.text,
+              sectionName: q.section.name,
+              totalAttempts: 0,
+              correctCount: 0,
+              wrongCount: 0,
+              unansweredCount: 0,
+              accuracy: 0,
+              avgTime: 0
+            });
+          });
+
+          // Aggregate responses
+          responsesData?.forEach((r: any) => {
+            const stat = statsMap.get(r.question_id);
+            if (stat) {
+              stat.totalAttempts++;
+              stat.avgTime += r.time_spent_seconds || 0;
+
+              if (r.is_correct === true) stat.correctCount++;
+              else if (r.is_correct === false) stat.wrongCount++;
+              else stat.unansweredCount++;
+            }
+          });
+
+          // Finalize averages
+          const finalStats: QuestionStats[] = Array.from(statsMap.values()).map(stat => ({
+            ...stat,
+            accuracy: stat.totalAttempts > 0 ? (stat.correctCount / stat.totalAttempts) * 100 : 0,
+            avgTime: stat.totalAttempts > 0 ? stat.avgTime / stat.totalAttempts : 0
+          }));
+
+          setQuestionStats(finalStats);
+        } else {
+          setQuestionStats([]);
+        }
+
+      } else {
+        // Student View: Get only MY attempts
+        const { data, error } = await query.eq("user_id", user.id);
+        if (error) throw error;
+        setAttempts(data as any);
+      }
+
     } catch (error: any) {
-      console.error("Error fetching attempts:", error);
+      console.error("Error fetching analytics:", error);
       toast({
         title: "Error",
         description: "Failed to load analytics",
@@ -79,6 +202,7 @@ export default function Analytics() {
       "Date",
       "Exam",
       "Section",
+      "User ID",
       "Score",
       "Total Questions",
       "Accuracy %",
@@ -90,6 +214,7 @@ export default function Analytics() {
       new Date(attempt.submitted_at).toLocaleDateString(),
       attempt.section.exam.name,
       attempt.section.name,
+      attempt.user_id,
       attempt.score,
       attempt.total_questions,
       attempt.accuracy_percentage,
@@ -104,7 +229,7 @@ export default function Analytics() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `exam-analytics-${Date.now()}.csv`);
+    link.setAttribute("download", `analytics-${examId ? 'exam-' + examId : 'personal'}-${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -115,24 +240,37 @@ export default function Analytics() {
     });
   };
 
-  // Prepare chart data
-  const accuracyTrendData = attempts
-    .slice()
-    .reverse()
-    .map((attempt, index) => ({
-      attempt: `Attempt ${index + 1}`,
-      accuracy: attempt.accuracy_percentage,
-      date: new Date(attempt.submitted_at).toLocaleDateString(),
-    }));
+  // --- Calculations ---
 
-  const timeTrendData = attempts
-    .slice()
-    .reverse()
-    .map((attempt, index) => ({
-      attempt: `Attempt ${index + 1}`,
-      avgTime: parseFloat(attempt.avg_time_per_question.toFixed(2)),
-      date: new Date(attempt.submitted_at).toLocaleDateString(),
-    }));
+  // For Student View: Trend of accuracy over attempts
+  // For Creator View: Trend of average accuracy over time (grouped by day)
+  const accuracyTrendData = examId
+    ? (() => {
+      // Group by date
+      const grouped = attempts.reduce((acc: any, attempt) => {
+        const date = new Date(attempt.submitted_at).toLocaleDateString();
+        if (!acc[date]) {
+          acc[date] = { date, totalAccuracy: 0, count: 0 };
+        }
+        acc[date].totalAccuracy += attempt.accuracy_percentage;
+        acc[date].count++;
+        return acc;
+      }, {});
+
+      return Object.values(grouped).map((g: any) => ({
+        date: g.date,
+        accuracy: parseFloat((g.totalAccuracy / g.count).toFixed(1)),
+        attempts: g.count
+      })).reverse(); // Reverse to show chronological if fetched desc
+    })()
+    : attempts
+      .slice()
+      .reverse()
+      .map((attempt, index) => ({
+        attempt: `Attempt ${index + 1}`,
+        accuracy: attempt.accuracy_percentage,
+        date: new Date(attempt.submitted_at).toLocaleDateString(),
+      }));
 
   // Section-wise performance
   const sectionPerformance = attempts.reduce((acc: any, attempt) => {
@@ -155,16 +293,18 @@ export default function Analytics() {
   const sectionData = Object.values(sectionPerformance);
 
   // Overall stats
-  const overallStats = {
-    totalAttempts: attempts.length,
-    avgAccuracy:
-      attempts.reduce((sum, a) => sum + a.accuracy_percentage, 0) /
-      (attempts.length || 1),
-    avgTimePerQuestion:
-      attempts.reduce((sum, a) => sum + a.avg_time_per_question, 0) /
-      (attempts.length || 1),
-    bestScore: Math.max(...attempts.map((a) => a.accuracy_percentage), 0),
-  };
+  const totalAttempts = attempts.length;
+  // Unique students count (only relevant for Creator View)
+  const uniqueStudents = new Set(attempts.map(a => a.user_id)).size;
+
+  const avgAccuracy =
+    attempts.reduce((sum, a) => sum + a.accuracy_percentage, 0) /
+    (attempts.length || 1);
+  const avgTimePerQuestion =
+    attempts.reduce((sum, a) => sum + a.avg_time_per_question, 0) /
+    (attempts.length || 1);
+  const bestScore = Math.max(...attempts.map((a) => a.accuracy_percentage), 0);
+
 
   if (loading) {
     return (
@@ -174,6 +314,16 @@ export default function Analytics() {
     );
   }
 
+  const getBackPath = () => {
+    const from = searchParams.get("from");
+    if (from === "dashboard") return "/dashboard";
+    if (from === "edit" && examId) return `/exam/${examId}`;
+    if (from === "marketplace") return "/marketplace";
+    return "/dashboard"; // Default fallback
+  };
+
+
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto p-6">
@@ -181,13 +331,16 @@ export default function Analytics() {
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
-              onClick={() => navigate(searchParams.get("from") === "marketplace" ? "/marketplace" : "/dashboard")}
+              onClick={() => navigate(getBackPath())}
               className="gap-2"
             >
               <ArrowLeft className="w-4 h-4" />
-              {searchParams.get("from") === "marketplace" ? "Back to Marketplace" : "Back"}
+              Back
             </Button>
-            <h1 className="text-3xl font-bold">Performance Analytics</h1>
+            <div>
+              <h1 className="text-3xl font-bold">{examId ? "Exam Analytics" : "My Performance"}</h1>
+              {examId && <p className="text-muted-foreground">{examName}</p>}
+            </div>
           </div>
 
           <Button onClick={exportToCSV} className="gap-2">
@@ -203,8 +356,18 @@ export default function Analytics() {
               <TrendingUp className="w-5 h-5 text-primary" />
               <h3 className="font-semibold">Total Attempts</h3>
             </div>
-            <p className="text-3xl font-bold">{overallStats.totalAttempts}</p>
+            <p className="text-3xl font-bold">{totalAttempts}</p>
           </Card>
+
+          {examId && (
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-5 h-5 text-purple-500" />
+                <h3 className="font-semibold">Total Students</h3>
+              </div>
+              <p className="text-3xl font-bold">{uniqueStudents}</p>
+            </Card>
+          )}
 
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-2">
@@ -212,7 +375,7 @@ export default function Analytics() {
               <h3 className="font-semibold">Avg Accuracy</h3>
             </div>
             <p className="text-3xl font-bold">
-              {overallStats.avgAccuracy.toFixed(1)}%
+              {avgAccuracy.toFixed(1)}%
             </p>
           </Card>
 
@@ -222,27 +385,29 @@ export default function Analytics() {
               <h3 className="font-semibold">Avg Time/Q</h3>
             </div>
             <p className="text-3xl font-bold">
-              {overallStats.avgTimePerQuestion.toFixed(1)}s
+              {avgTimePerQuestion.toFixed(1)}s
             </p>
           </Card>
 
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-5 h-5 text-amber-500" />
-              <h3 className="font-semibold">Best Score</h3>
-            </div>
-            <p className="text-3xl font-bold">{overallStats.bestScore.toFixed(1)}%</p>
-          </Card>
+          {!examId && (
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="w-5 h-5 text-amber-500" />
+                <h3 className="font-semibold">Best Score</h3>
+              </div>
+              <p className="text-3xl font-bold">{bestScore.toFixed(1)}%</p>
+            </Card>
+          )}
         </div>
 
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Accuracy Trend</h3>
+            <h3 className="text-lg font-semibold mb-4">{examId ? "Accuracy Trend (Daily Avg)" : "Accuracy Trend"}</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={accuracyTrendData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="attempt" />
+                <XAxis dataKey={examId ? "date" : "attempt"} />
                 <YAxis />
                 <Tooltip />
                 <Legend />
@@ -250,6 +415,7 @@ export default function Analytics() {
                   type="monotone"
                   dataKey="accuracy"
                   stroke="hsl(var(--primary))"
+                  name="Accuracy %"
                   strokeWidth={2}
                 />
               </LineChart>
@@ -257,74 +423,70 @@ export default function Analytics() {
           </Card>
 
           <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Time Improvement</h3>
+            <h3 className="text-lg font-semibold mb-4">Section-wise Performance</h3>
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={timeTrendData}>
+              <BarChart data={sectionData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="attempt" />
+                <XAxis dataKey="name" />
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="avgTime"
-                  stroke="hsl(var(--chart-2))"
-                  strokeWidth={2}
-                />
-              </LineChart>
+                <Bar dataKey="avgAccuracy" fill="hsl(var(--chart-2))" name="Avg Accuracy %" />
+              </BarChart>
             </ResponsiveContainer>
           </Card>
         </div>
 
-        {/* Section-wise Performance */}
-        <Card className="p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-4">Section-wise Performance</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={sectionData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="avgAccuracy" fill="hsl(var(--primary))" name="Avg Accuracy %" />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
 
-        {/* Attempts History */}
-        <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4">Attempts History</h3>
-          <div className="space-y-3">
-            {attempts.map((attempt) => (
-              <div
-                key={attempt.id}
-                className="flex items-center justify-between p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors"
-                onClick={() => navigate(`/exam/review/${attempt.id}`)}
-              >
-                <div>
-                  <p className="font-semibold">{attempt.section.exam.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {attempt.section.name} • {new Date(attempt.submitted_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      {attempt.score}/{attempt.total_questions}
-                    </p>
-                    <Badge variant="secondary">
-                      {attempt.accuracy_percentage.toFixed(1)}%
-                    </Badge>
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    <Clock className="w-4 h-4 inline mr-1" />
-                    {Math.floor(attempt.time_spent_seconds / 60)}m
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
+        {/* Question-Level Analytics (Creator Only) */}
+        {examId && questionStats.length > 0 && (
+          <Card className="p-6 mb-6">
+            <h3 className="text-lg font-semibold mb-4">Question Analysis</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-muted/50 text-muted-foreground uppercase text-xs">
+                  <tr>
+                    <th className="px-4 py-3 rounded-tl-lg">Q. No</th>
+                    <th className="px-4 py-3">Question Snippet</th>
+                    <th className="px-4 py-3">Section</th>
+                    <th className="px-4 py-3 text-center">Attempts</th>
+                    <th className="px-4 py-3 text-center">Accuracy</th>
+                    <th className="px-4 py-3 text-center rounded-tr-lg">Avg Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {questionStats.map((q, idx) => (
+                    <tr key={q.id} className="hover:bg-muted/30">
+                      <td className="px-4 py-3 font-medium">{idx + 1}</td>
+                      <td className="px-4 py-3 max-w-md truncate" title={q.text}>
+                        {q.text.replace(/<[^>]*>?/gm, "")}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{q.sectionName}</td>
+                      <td className="px-4 py-3 text-center">{q.totalAttempts}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${q.accuracy >= 70 ? 'bg-green-500' : q.accuracy >= 40 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                              style={{ width: `${q.accuracy}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium w-9 text-right">{q.accuracy.toFixed(0)}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-center text-muted-foreground">
+                        {q.avgTime.toFixed(1)}s
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* Recent Attempts List */}
+
       </div>
     </div>
   );

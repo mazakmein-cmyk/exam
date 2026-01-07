@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PdfSnipper from "@/components/PdfSnipper";
 import { QuestionForm } from "@/components/QuestionForm";
@@ -111,6 +111,74 @@ export default function ExamDetail() {
   const [isQuestionsCollapsed, setIsQuestionsCollapsed] = useState(false);
   const questionFormRef = useRef<HTMLDivElement>(null);
 
+  // Dirty State Logic
+  const initialExamDataRef = useRef({
+    name: "",
+    category: "",
+    description: "",
+    instruction: ""
+  });
+
+  const [isDirty, setIsDirty] = useState(false);
+
+  // Check if form is dirty
+  useEffect(() => {
+    if (!exam) return;
+
+    // Check main exam fields
+    const isExamChanged =
+      examTitle !== initialExamDataRef.current.name ||
+      examCategory !== initialExamDataRef.current.category ||
+      examDescription !== initialExamDataRef.current.description ||
+      examInstruction !== initialExamDataRef.current.instruction;
+
+    // Check if new question is being typed but not empty (ignoring initial empty state)
+    const isQuestionFormDirty =
+      newQuestionText.trim() !== "" ||
+      newQuestionOptions.some(opt => opt.trim() !== "") ||
+      newQuestionImage !== null ||
+      newQuestionCorrect !== ""; // Simplified check
+
+    // Check if editing existing question
+    const isEditing = editingQuestionId !== null;
+
+    setIsDirty(isExamChanged || isEditing || (isQuestionFormDirty && !editingQuestionId));
+  }, [examTitle, examCategory, examDescription, examInstruction, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImage, newQuestionCorrect]);
+
+  // Section Switch Confirmation State
+  const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
+  const [showUnsavedSectionDialog, setShowUnsavedSectionDialog] = useState(false);
+
+  const isQuestionDirty = () => {
+    return (
+      editingQuestionId !== null ||
+      newQuestionText.trim() !== "" ||
+      newQuestionOptions.some((opt) => opt.trim() !== "") ||
+      newQuestionImage !== null ||
+      newQuestionCorrect !== ""
+    );
+  };
+
+  // Handle browser close / refresh
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+        return "";
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  // Handle in-app navigation
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      isDirty && currentLocation.pathname !== nextLocation.pathname
+  );
+
   useEffect(() => {
     if (examId) {
       fetchExamData();
@@ -133,6 +201,14 @@ export default function ExamDetail() {
       setExamCategory((examData as any).exam_category || "");
       setExamDescription(examData.description || "");
       setExamInstruction((examData as any).instruction || "");
+
+      // Set initial data for dirty check
+      initialExamDataRef.current = {
+        name: examData.name,
+        category: (examData as any).exam_category || "",
+        description: examData.description || "",
+        instruction: (examData as any).instruction || ""
+      };
 
       // Fetch Sections
       const { data: sectionsData, error: sectionsError } = await supabase
@@ -197,12 +273,12 @@ export default function ExamDetail() {
     setQuestions(questionsData || []);
   };
 
-  const handleSaveExam = async () => {
-    if (!exam) return;
+  const handleSaveExam = async (): Promise<boolean> => {
+    if (!exam) return false;
 
     if (editingQuestionId) {
       const success = await handleUpdateQuestion();
-      if (!success) return;
+      if (!success) return false;
     }
 
     // Validate mandatory fields
@@ -212,7 +288,7 @@ export default function ExamDetail() {
         description: "Please select an Exam Category",
         variant: "destructive",
       });
-      return;
+      return false;
     }
 
     if (!examDescription || !examDescription.trim()) {
@@ -221,7 +297,7 @@ export default function ExamDetail() {
         description: "Please enter an Exam Description",
         variant: "destructive",
       });
-      return;
+      return false;
     }
 
     if (!examInstruction || !examInstruction.trim()) {
@@ -230,7 +306,7 @@ export default function ExamDetail() {
         description: "Please enter Exam Instructions",
         variant: "destructive",
       });
-      return;
+      return false;
     }
 
     setSaving(true);
@@ -258,9 +334,20 @@ export default function ExamDetail() {
         description: error.message || "Failed to save exam details",
         variant: "destructive",
       });
+      return false;
     } finally {
       setSaving(false);
     }
+
+    // Update initial Ref after successful save to reset dirty state
+    initialExamDataRef.current = {
+      name: examTitle,
+      category: examCategory,
+      description: examDescription,
+      instruction: examInstruction
+    };
+    setIsDirty(false); // Force reset roughly, though effect will run again
+    return true;
   };
 
   const handleShare = () => {
@@ -476,10 +563,52 @@ export default function ExamDetail() {
   };
 
   const handleSectionChange = (newSectionId: string) => {
+    // Check for unsaved question changes
+    if (isQuestionDirty()) {
+      setPendingSectionId(newSectionId);
+      setShowUnsavedSectionDialog(true);
+      return;
+    }
+
+    executeSectionChange(newSectionId);
+  };
+
+  const executeSectionChange = (newSectionId: string) => {
     const newSection = sections.find(s => s.id === newSectionId);
     if (newSection) {
       setSection(newSection);
       fetchQuestions(newSection.id);
+    }
+  };
+
+  const handleDiscardAndSwitchSection = () => {
+    // Reset form state
+    setEditingQuestionId(null);
+    setNewQuestionText("");
+    setNewQuestionType("single");
+    setNewQuestionOptions(["", "", "", ""]);
+    setNewQuestionImage(null);
+    setNewQuestionCorrect("");
+
+    if (pendingSectionId) {
+      executeSectionChange(pendingSectionId);
+    }
+    setPendingSectionId(null);
+    setShowUnsavedSectionDialog(false);
+  };
+
+  const handleSaveAndSwitchSection = async () => {
+    let success = false;
+    if (editingQuestionId) {
+      success = await handleUpdateQuestion();
+    } else {
+      success = await handleAddQuestion();
+    }
+
+    if (success && pendingSectionId) {
+      executeSectionChange(pendingSectionId);
+      setPendingSectionId(null);
+      setShowUnsavedSectionDialog(false);
     }
   };
 
@@ -641,6 +770,7 @@ export default function ExamDetail() {
         title: "Success",
         description: "Question added successfully",
       });
+      return true;
     } catch (error: any) {
       console.error("Error adding question:", error);
       toast({
@@ -648,6 +778,7 @@ export default function ExamDetail() {
         description: error.message || "Failed to add question",
         variant: "destructive",
       });
+      return false;
     }
   };
 
@@ -1003,6 +1134,10 @@ export default function ExamDetail() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => navigate(`/analytics?examId=${examId}&from=edit`)}>
+                <BarChart className="mr-2 h-4 w-4" />
+                Analytics
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={handleShare}>
                 <Share2 className="mr-2 h-4 w-4" />
                 Share
@@ -1635,6 +1770,67 @@ export default function ExamDetail() {
             <AlertDialogCancel onClick={() => { setShowDeleteQuestionDialog(false); setDeleteQuestionId(null); }}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmDeleteQuestion} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Delete Question
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={blocker.state === "blocked"}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved changes. Do you want to save them before leaving?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => blocker.reset?.()}>Cancel</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => blocker.proceed?.()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Discard Changes
+            </Button>
+            <AlertDialogAction onClick={async (e) => {
+              e.preventDefault(); // Keep dialog interaction controlled
+              const success = await handleSaveExam();
+              if (success) {
+                blocker.proceed?.();
+              }
+            }}>Save & Leave</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Unsaved Question Changes Dialog (Section Switch) */}
+      <AlertDialog open={showUnsavedSectionDialog} onOpenChange={setShowUnsavedSectionDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved changes in the current question. Switching sections will discard these changes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setShowUnsavedSectionDialog(false);
+                setPendingSectionId(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDiscardAndSwitchSection}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Discard Changes
+            </AlertDialogAction>
+            <AlertDialogAction
+              onClick={handleSaveAndSwitchSection}
+            >
+              Save & Leave
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

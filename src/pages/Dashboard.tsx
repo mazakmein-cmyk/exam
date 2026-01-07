@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { FileText, LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User } from "lucide-react";
+import { FileText, LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, BarChart } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
@@ -483,10 +483,10 @@ const Dashboard = () => {
                     <Button
                       variant="outline"
                       className="flex-1"
-                      onClick={() => handleTakeExam(exam.id)}
+                      onClick={() => navigate(`/analytics?examId=${exam.id}&from=dashboard`)}
                     >
-                      <BookOpen className="mr-2 h-4 w-4" />
-                      View Exam
+                      <BarChart className="mr-2 h-4 w-4" />
+                      Analytics
                     </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -502,6 +502,10 @@ const Dashboard = () => {
                         <DropdownMenuItem onClick={() => handleShare(exam)}>
                           <Share2 className="mr-2 h-4 w-4" />
                           Share
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
+                          <BookOpen className="mr-2 h-4 w-4" />
+                          View Exam
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleDuplicateExam(exam)}>
                           <Copy className="mr-2 h-4 w-4" />
