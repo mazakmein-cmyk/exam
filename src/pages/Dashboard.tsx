@@ -356,7 +356,59 @@ const Dashboard = () => {
     }
   };
 
-  const handleTogglePublishClick = (examId: string, examName: string, isPublishing: boolean) => {
+  const handleTogglePublishClick = async (examId: string, examName: string, isPublishing: boolean) => {
+    // If publishing, validate that all sections have at least one question
+    if (isPublishing) {
+      try {
+        // Fetch sections for this exam
+        const { data: sections, error: sectionsError } = await supabase
+          .from("sections")
+          .select("id, name")
+          .eq("exam_id", examId);
+
+        if (sectionsError) throw sectionsError;
+
+        if (!sections || sections.length === 0) {
+          toast({
+            title: "Cannot Publish Exam",
+            description: "This exam has no sections. Please add at least one section with questions.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Check each section for questions
+        const emptySections: string[] = [];
+        for (const section of sections) {
+          const { count, error: countError } = await supabase
+            .from("parsed_questions")
+            .select("id", { count: "exact", head: true })
+            .eq("section_id", section.id);
+
+          if (countError) throw countError;
+          if (count === 0) {
+            emptySections.push(section.name);
+          }
+        }
+
+        if (emptySections.length > 0) {
+          toast({
+            title: "Cannot Publish Exam",
+            description: `The following section(s) have no questions: ${emptySections.join(", ")}. Please add at least one question to each section.`,
+            variant: "destructive",
+          });
+          return;
+        }
+      } catch (error: any) {
+        toast({
+          title: "Validation Error",
+          description: error.message || "Failed to validate exam",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     setPublishAction({ examId, examName, isPublishing });
     setShowPublishDialog(true);
   };

@@ -341,8 +341,67 @@ export default function Analytics() {
   const validAttempts = examId ? completedAttempts : attempts;
 
   // Overview Metrics
-  const totalAttempts = attempts.length;
-  const submittedCount = completedAttempts.length;
+  // Calculate total attempts using Session Clustering (Time Gap + Duplicate Sections)
+  // This correctly counts retakes on the same day as separate attempts
+  const sortedAttempts = [...attempts].sort((a: any, b: any) =>
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+
+  const userSessions: Record<string, { lastTime: number, sectionIds: Set<string>, count: number, completedCount: number, currentSessionHasSubmission: boolean }> = {};
+  const SESSION_GAP_THRESHOLD = 6 * 60 * 60 * 1000; // 6 hours
+
+  sortedAttempts.forEach((attempt: any) => {
+    const userId = attempt.user_id;
+    const attemptTime = new Date(attempt.created_at).getTime();
+    const sectionId = attempt.section_id;
+    const isSubmitted = !!attempt.submitted_at;
+
+    if (!userSessions[userId]) {
+      userSessions[userId] = {
+        lastTime: attemptTime,
+        sectionIds: new Set([sectionId]),
+        count: 1,
+        completedCount: 0,
+        currentSessionHasSubmission: isSubmitted
+      };
+    } else {
+      const session = userSessions[userId];
+      const timeDiff = attemptTime - session.lastTime;
+      const isDuplicateSection = session.sectionIds.has(sectionId);
+
+      // If same section appears again (Retake) OR time gap is large -> New Session
+      if (isDuplicateSection || timeDiff > SESSION_GAP_THRESHOLD) {
+        // Finalize previous session's completion status
+        if (session.currentSessionHasSubmission) {
+          session.completedCount++;
+        }
+        // Start new session
+        session.count++;
+        session.lastTime = attemptTime;
+        session.sectionIds = new Set([sectionId]);
+        session.currentSessionHasSubmission = isSubmitted;
+      } else {
+        // Same session
+        session.lastTime = attemptTime;
+        session.sectionIds.add(sectionId);
+        if (isSubmitted) {
+          session.currentSessionHasSubmission = true;
+        }
+      }
+    }
+  });
+
+  // Finalize the last session for each user
+  Object.values(userSessions).forEach((session) => {
+    if (session.currentSessionHasSubmission) {
+      session.completedCount++;
+    }
+  });
+
+  const totalAttempts = Object.values(userSessions).reduce((acc, curr) => acc + curr.count, 0);
+  const submittedCount = Object.values(userSessions).reduce((acc, curr) => acc + curr.completedCount, 0);
+
+  // Completion rate now compares completed sessions to started sessions
   const completionRate = totalAttempts > 0 ? (submittedCount / totalAttempts) * 100 : 0;
 
   // Repeat Attempts (Creator Only)
@@ -501,7 +560,7 @@ export default function Analytics() {
               <Card className="p-6">
                 <div className="flex items-center gap-2 mb-2">
                   <Users className="w-5 h-5 text-purple-500" />
-                  <h3 className="font-semibold">Total Students</h3>
+                  <h3 className="font-semibold">Total Unique Students</h3>
                 </div>
                 <p className="text-3xl font-bold">{uniqueStudents}</p>
               </Card>
@@ -1031,36 +1090,63 @@ export default function Analytics() {
             <div className="space-y-3">
               {attempts.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No attempts recorded yet.</p>
-              ) : (
-                attempts.map((attempt) => (
+              ) : (() => {
+                // Group attempts by exam (based on exam name and date for simplicity)
+                const examGroups = attempts.reduce((groups: any, attempt) => {
+                  const examId = attempt.section.exam.name;
+                  const date = new Date(attempt.submitted_at).toLocaleDateString();
+                  const key = `${examId}_${date}`;
+
+                  if (!groups[key]) {
+                    groups[key] = {
+                      examName: attempt.section.exam.name,
+                      date: date,
+                      sections: [],
+                      totalScore: 0,
+                      totalQuestions: 0,
+                      totalTime: 0,
+                      firstAttemptId: attempt.id
+                    };
+                  }
+                  groups[key].sections.push(attempt.section.name);
+                  groups[key].totalScore += attempt.score;
+                  groups[key].totalQuestions += attempt.total_questions;
+                  groups[key].totalTime += (attempt.time_spent_seconds || 0);
+
+                  return groups;
+                }, {});
+
+                return Object.values(examGroups).map((group: any) => (
                   <div
-                    key={attempt.id}
+                    key={group.firstAttemptId}
                     className="flex items-center justify-between p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors"
-                    onClick={() => navigate(`/exam/review/${attempt.id}`)}
+                    onClick={() => navigate(`/exam/review/${group.firstAttemptId}`)}
                   >
                     <div>
-                      <p className="font-semibold">{attempt.section.exam.name}</p>
+                      <p className="font-semibold">{group.examName}</p>
                       <p className="text-sm text-muted-foreground">
-                        {attempt.section.name} • {new Date(attempt.submitted_at).toLocaleDateString()}
+                        {group.sections.length} section{group.sections.length > 1 ? 's' : ''} • {group.date}
                       </p>
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="text-right">
                         <p className="font-semibold">
-                          {attempt.score}/{attempt.total_questions}
+                          {group.totalScore}/{group.totalQuestions}
                         </p>
                         <Badge variant="secondary">
-                          {attempt.accuracy_percentage.toFixed(1)}%
+                          {group.totalQuestions > 0
+                            ? ((group.totalScore / group.totalQuestions) * 100).toFixed(1)
+                            : 0}%
                         </Badge>
                       </div>
                       <div className="text-sm text-muted-foreground">
                         <Clock className="w-4 h-4 inline mr-1" />
-                        {Math.floor(attempt.time_spent_seconds / 60)}m
+                        {Math.floor(group.totalTime / 60)}m
                       </div>
                     </div>
                   </div>
-                ))
-              )}
+                ));
+              })()}
             </div>
           </Card>
         )}

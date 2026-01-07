@@ -293,6 +293,23 @@ const ExamSimulator = () => {
   };
 
   const submitExam = async () => {
+    // Calculate time for current question synchronously (state updates are async)
+    const currentQuestion = questions[currentQuestionIndex];
+    const currentQuestionTimeSpent = currentQuestion
+      ? Math.floor((Date.now() - questionStartTime) / 1000)
+      : 0;
+
+    // Create updated questionStates with current question's time included
+    const updatedQuestionStates = currentQuestion
+      ? {
+        ...questionStates,
+        [currentQuestion.id]: {
+          ...questionStates[currentQuestion.id],
+          timeSpentSeconds: questionStates[currentQuestion.id].timeSpentSeconds + currentQuestionTimeSpent,
+        },
+      }
+      : questionStates;
+
     const totalTimeSpent = (section?.time_minutes || 0) * 60 - timeRemaining;
 
     // For anonymous users, store state and show dialog
@@ -301,7 +318,7 @@ const ExamSimulator = () => {
         sectionId,
         timeSpentSeconds: totalTimeSpent,
         questions: questions.map(q => ({ id: q.id })),
-        questionStates,
+        questionStates: updatedQuestionStates,
       };
 
       const existingSubmissionsStr = sessionStorage.getItem('pendingExamSubmissions');
@@ -325,7 +342,7 @@ const ExamSimulator = () => {
         attemptId,
         timeSpentSeconds: totalTimeSpent,
         questions,
-        questionStates,
+        questionStates: updatedQuestionStates,
       });
 
       toast({
