@@ -468,6 +468,7 @@ const Dashboard = () => {
                           <Switch
                             checked={exam.is_published}
                             onCheckedChange={(checked) => handleTogglePublishClick(exam.id, exam.name, checked)}
+                            className="aria-checked:!bg-blue-600 aria-[checked=false]:!bg-gray-400"
                           />
                         </TooltipTrigger>
                         <TooltipContent>

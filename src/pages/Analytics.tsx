@@ -18,10 +18,12 @@ interface Attempt {
   accuracy_percentage: number;
   avg_time_per_question: number;
   time_spent_seconds: number;
+  total_time_spent?: number; // Added for internal calculation
   updated_at: string;
   user_id: string; // Needed for creator view
   section: {
     name: string;
+    time_minutes?: number;
     exam: {
       name: string;
     };
@@ -847,7 +849,7 @@ export default function Analytics() {
                           </div>
                         </td>
                       </tr>
-                      {!collapsedSections.has(sectionName) && questions.map((q: QuestionStats, idx: number) => (
+                      {!collapsedSections.has(sectionName) && questions.sort((a: any, b: any) => a.q_no - b.q_no).map((q: QuestionStats, idx: number) => (
                         <tr key={q.id} className="hover:bg-muted/30">
                           <td className="px-2 py-3 font-medium text-center">{q.q_no}</td>
                           <td className="px-2 py-3 text-center">
