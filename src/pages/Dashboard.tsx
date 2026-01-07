@@ -26,6 +26,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import OnboardingModal from "@/components/OnboardingModal";
 import ProfileDialog from "@/components/ProfileDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type Exam = {
   id: string;
@@ -458,10 +463,17 @@ const Dashboard = () => {
                       <span className="text-xs text-muted-foreground hidden xs:inline">
                         {exam.is_published ? "Published" : "Unpublished"}
                       </span>
-                      <Switch
-                        checked={exam.is_published}
-                        onCheckedChange={(checked) => handleTogglePublishClick(exam.id, exam.name, checked)}
-                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Switch
+                            checked={exam.is_published}
+                            onCheckedChange={(checked) => handleTogglePublishClick(exam.id, exam.name, checked)}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{exam.is_published ? "Unpublish" : "Publish"}</p>
+                        </TooltipContent>
+                      </Tooltip>
                     </div>
                     {exam.exam_category && (
                       <Badge variant="secondary" className="text-xs font-normal">
