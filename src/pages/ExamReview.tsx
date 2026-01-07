@@ -503,6 +503,14 @@ export default function ExamReview() {
                     <span className="text-sm text-muted-foreground">
                       ({sectionResponses.length} questions)
                     </span>
+                    <div className="flex items-center text-sm text-muted-foreground ml-2 px-2 py-0.5 bg-muted rounded-md border">
+                      <Clock className="w-3 h-3 mr-1.5" />
+                      <span className="font-medium">
+                        {Math.floor(sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0) / 60)}m {sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0) % 60}s
+                      </span>
+                      <span className="mx-1 text-muted-foreground/50">/</span>
+                      <span>{section.time_minutes}m</span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
