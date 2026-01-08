@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 
 interface Attempt {
   id: string;
+  section_id: string;
   created_at: string;
   submitted_at: string;
   score: number;
@@ -24,6 +25,8 @@ interface Attempt {
   section: {
     name: string;
     time_minutes?: number;
+    sort_order?: number;
+    created_at?: string;
     exam: {
       name: string;
     };
@@ -59,6 +62,8 @@ export default function Analytics() {
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [loading, setLoading] = useState(true);
   const [examName, setExamName] = useState<string>("");
+  const [firstSectionId, setFirstSectionId] = useState<string | null>(null);
+  const [lastSectionId, setLastSectionId] = useState<string | null>(null);
   const [questionStats, setQuestionStats] = useState<QuestionStats[]>([]);
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionStats | null>(null);
   const [selectedSectionName, setSelectedSectionName] = useState<string | null>(null);
@@ -121,6 +126,21 @@ export default function Analytics() {
         if (examError) throw examError;
         setExamName(examData.name);
 
+        // 1.5 Get All Sections to determine First and Last (for analytics logic)
+        const { data: allSections, error: sectionsError } = await supabase
+          .from("sections")
+          .select("id, sort_order, created_at")
+          .eq("exam_id", examId)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true });
+
+        if (sectionsError) throw sectionsError;
+
+        if (allSections && allSections.length > 0) {
+          setFirstSectionId(allSections[0].id);
+          setLastSectionId(allSections[allSections.length - 1].id);
+        }
+
         // 2. Get attempts through sections
         const { data: sectionAttempts, error: attemptsError } = await supabase
           .from("attempts")
@@ -131,7 +151,6 @@ export default function Analytics() {
               time_minutes,
               sort_order,
               created_at,
-              exam_id,
               exam:exams(name)
             )
           `)
@@ -346,80 +365,17 @@ export default function Analytics() {
   const validAttempts = examId ? completedAttempts : attempts;
 
   // Overview Metrics
-  // Calculate total attempts using Session Clustering (Time Gap + Duplicate Sections)
-  // This correctly counts retakes on the same day as separate attempts
-  const sortedAttempts = [...attempts].sort((a: any, b: any) =>
-    new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
+  // Logic: Total Attempts = Starts of the First Section
+  // Logic: Completed = Submissions of the Last Section
 
-  const sessionStats: { correct: number; total: number; isSubmitted: boolean }[] = [];
-  const userActiveSession: Record<string, { lastTime: number; sectionIds: Set<string>; correct: number; total: number; isSubmitted: boolean; examId: string }> = {};
-  const SESSION_GAP_THRESHOLD = 6 * 60 * 60 * 1000; // 6 hours
+  const totalAttempts = (examId && firstSectionId)
+    ? attempts.filter(a => a.section_id === firstSectionId).length
+    : (examId ? 0 : attempts.length); // Fallback for student view (attempts.length is fine there)
 
-  sortedAttempts.forEach((attempt: any) => {
-    const userId = attempt.user_id;
-    const attemptTime = new Date(attempt.created_at).getTime();
-    const sectionId = attempt.section_id;
-    const isSubmitted = !!attempt.submitted_at;
-    const score = attempt.score || 0;
-    const total = attempt.total_questions || 1;
-    const examId = attempt.section?.exam_id;
+  const submittedCount = (examId && lastSectionId)
+    ? attempts.filter(a => a.section_id === lastSectionId && a.submitted_at).length
+    : (examId ? 0 : attempts.filter(a => a.submitted_at).length);
 
-    if (!userActiveSession[userId]) {
-      userActiveSession[userId] = {
-        lastTime: attemptTime,
-        sectionIds: new Set([sectionId]),
-        correct: score,
-        total: total,
-        isSubmitted: isSubmitted,
-        examId: examId
-      };
-    } else {
-      const session = userActiveSession[userId];
-      const timeDiff = attemptTime - session.lastTime;
-      const isDuplicateSection = session.sectionIds.has(sectionId);
-      const isDifferentExam = session.examId !== examId;
-
-      // New Session Trigger: Duplicate Section OR Time Gap OR Different Exam
-      if (isDuplicateSection || timeDiff > SESSION_GAP_THRESHOLD || isDifferentExam) {
-        // Finalize previous session
-        sessionStats.push({
-          correct: session.correct,
-          total: session.total,
-          isSubmitted: session.isSubmitted
-        });
-
-        // Start new session
-        userActiveSession[userId] = {
-          lastTime: attemptTime,
-          sectionIds: new Set([sectionId]),
-          correct: score,
-          total: total,
-          isSubmitted: isSubmitted,
-          examId: examId
-        };
-      } else {
-        // Same session - Accumulate
-        session.lastTime = attemptTime;
-        session.sectionIds.add(sectionId);
-        session.correct += score;
-        session.total += total;
-        if (isSubmitted) session.isSubmitted = true;
-      }
-    }
-  });
-
-  // Finalize the last session for each user
-  Object.values(userActiveSession).forEach((session) => {
-    sessionStats.push({
-      correct: session.correct,
-      total: session.total,
-      isSubmitted: session.isSubmitted
-    });
-  });
-
-  const totalAttempts = sessionStats.length;
-  const submittedCount = sessionStats.filter(s => s.isSubmitted).length;
   const completionRate = totalAttempts > 0 ? (submittedCount / totalAttempts) * 100 : 0;
 
   // Repeat Attempts (Creator Only)
@@ -510,14 +466,67 @@ export default function Analytics() {
     { range: '81-100%', count: 0 },
   ];
 
-  sessionStats.filter(s => s.isSubmitted).forEach(session => {
-    const acc = session.total > 0 ? (session.correct / session.total) * 100 : 0;
-    if (acc <= 20) scoreDistribution[0].count++;
-    else if (acc <= 40) scoreDistribution[1].count++;
-    else if (acc <= 60) scoreDistribution[2].count++;
-    else if (acc <= 80) scoreDistribution[3].count++;
-    else scoreDistribution[4].count++;
-  });
+  if (firstSectionId) {
+    // Group attempts by user
+    const attemptsByUser: Record<string, Attempt[]> = {};
+    attempts.forEach(a => {
+      if (!attemptsByUser[a.user_id]) attemptsByUser[a.user_id] = [];
+      attemptsByUser[a.user_id].push(a);
+    });
+
+    Object.values(attemptsByUser).forEach(userAttempts => {
+      // Sort by time
+      userAttempts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+      let currentSessionScores: number[] = [];
+      let sessionActive = false;
+
+      userAttempts.forEach(attempt => {
+        // Start of new session (delimited by First Section)
+        if (attempt.section_id === firstSectionId) {
+          // If previous session active, push its average
+          if (sessionActive && currentSessionScores.length > 0) {
+            const avg = currentSessionScores.reduce((a, b) => a + b, 0) / currentSessionScores.length;
+
+            if (avg <= 20) scoreDistribution[0].count++;
+            else if (avg <= 40) scoreDistribution[1].count++;
+            else if (avg <= 60) scoreDistribution[2].count++;
+            else if (avg <= 80) scoreDistribution[3].count++;
+            else scoreDistribution[4].count++;
+          }
+          // Start new session
+          sessionActive = true;
+          currentSessionScores = [attempt.accuracy_percentage];
+        } else {
+          // Continue session
+          if (sessionActive) {
+            currentSessionScores.push(attempt.accuracy_percentage);
+          }
+        }
+      });
+
+      // Push the last session
+      if (sessionActive && currentSessionScores.length > 0) {
+        const avg = currentSessionScores.reduce((a, b) => a + b, 0) / currentSessionScores.length;
+
+        if (avg <= 20) scoreDistribution[0].count++;
+        else if (avg <= 40) scoreDistribution[1].count++;
+        else if (avg <= 60) scoreDistribution[2].count++;
+        else if (avg <= 80) scoreDistribution[3].count++;
+        else scoreDistribution[4].count++;
+      }
+    });
+  } else {
+    // Fallback if no sections or not loaded (use individual attempts)
+    validAttempts.forEach(attempt => {
+      const acc = attempt.accuracy_percentage;
+      if (acc <= 20) scoreDistribution[0].count++;
+      else if (acc <= 40) scoreDistribution[1].count++;
+      else if (acc <= 60) scoreDistribution[2].count++;
+      else if (acc <= 80) scoreDistribution[3].count++;
+      else scoreDistribution[4].count++;
+    });
+  }
 
   // Insights Data
   const mostSkipped = [...questionStats].sort((a, b) => b.unansweredCount - a.unansweredCount).slice(0, 5).filter(a => a.unansweredCount > 0);
