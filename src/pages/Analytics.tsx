@@ -351,7 +351,8 @@ export default function Analytics() {
     new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
-  const userSessions: Record<string, { lastTime: number, sectionIds: Set<string>, count: number, completedCount: number, currentSessionHasSubmission: boolean }> = {};
+  const sessionStats: { correct: number; total: number; isSubmitted: boolean }[] = [];
+  const userActiveSession: Record<string, { lastTime: number; sectionIds: Set<string>; correct: number; total: number; isSubmitted: boolean }> = {};
   const SESSION_GAP_THRESHOLD = 6 * 60 * 60 * 1000; // 6 hours
 
   sortedAttempts.forEach((attempt: any) => {
@@ -359,53 +360,61 @@ export default function Analytics() {
     const attemptTime = new Date(attempt.created_at).getTime();
     const sectionId = attempt.section_id;
     const isSubmitted = !!attempt.submitted_at;
+    const score = attempt.score || 0;
+    const total = attempt.total_questions || 1;
 
-    if (!userSessions[userId]) {
-      userSessions[userId] = {
+    if (!userActiveSession[userId]) {
+      userActiveSession[userId] = {
         lastTime: attemptTime,
         sectionIds: new Set([sectionId]),
-        count: 1,
-        completedCount: 0,
-        currentSessionHasSubmission: isSubmitted
+        correct: score,
+        total: total,
+        isSubmitted: isSubmitted
       };
     } else {
-      const session = userSessions[userId];
+      const session = userActiveSession[userId];
       const timeDiff = attemptTime - session.lastTime;
       const isDuplicateSection = session.sectionIds.has(sectionId);
 
       // If same section appears again (Retake) OR time gap is large -> New Session
       if (isDuplicateSection || timeDiff > SESSION_GAP_THRESHOLD) {
-        // Finalize previous session's completion status
-        if (session.currentSessionHasSubmission) {
-          session.completedCount++;
-        }
+        // Finalize previous session
+        sessionStats.push({
+          correct: session.correct,
+          total: session.total,
+          isSubmitted: session.isSubmitted
+        });
+
         // Start new session
-        session.count++;
-        session.lastTime = attemptTime;
-        session.sectionIds = new Set([sectionId]);
-        session.currentSessionHasSubmission = isSubmitted;
+        userActiveSession[userId] = {
+          lastTime: attemptTime,
+          sectionIds: new Set([sectionId]),
+          correct: score,
+          total: total,
+          isSubmitted: isSubmitted
+        };
       } else {
-        // Same session
+        // Same session - Accumulate
         session.lastTime = attemptTime;
         session.sectionIds.add(sectionId);
-        if (isSubmitted) {
-          session.currentSessionHasSubmission = true;
-        }
+        session.correct += score;
+        session.total += total;
+        if (isSubmitted) session.isSubmitted = true;
       }
     }
   });
 
   // Finalize the last session for each user
-  Object.values(userSessions).forEach((session) => {
-    if (session.currentSessionHasSubmission) {
-      session.completedCount++;
-    }
+  Object.values(userActiveSession).forEach((session) => {
+    sessionStats.push({
+      correct: session.correct,
+      total: session.total,
+      isSubmitted: session.isSubmitted
+    });
   });
 
-  const totalAttempts = Object.values(userSessions).reduce((acc, curr) => acc + curr.count, 0);
-  const submittedCount = Object.values(userSessions).reduce((acc, curr) => acc + curr.completedCount, 0);
-
-  // Completion rate now compares completed sessions to started sessions
+  const totalAttempts = sessionStats.length;
+  const submittedCount = sessionStats.filter(s => s.isSubmitted).length;
   const completionRate = totalAttempts > 0 ? (submittedCount / totalAttempts) * 100 : 0;
 
   // Repeat Attempts (Creator Only)
@@ -496,8 +505,8 @@ export default function Analytics() {
     { range: '81-100%', count: 0 },
   ];
 
-  validAttempts.forEach(attempt => {
-    const acc = attempt.accuracy_percentage;
+  sessionStats.filter(s => s.isSubmitted).forEach(session => {
+    const acc = session.total > 0 ? (session.correct / session.total) * 100 : 0;
     if (acc <= 20) scoreDistribution[0].count++;
     else if (acc <= 40) scoreDistribution[1].count++;
     else if (acc <= 60) scoreDistribution[2].count++;
