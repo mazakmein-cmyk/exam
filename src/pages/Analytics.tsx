@@ -131,6 +131,7 @@ export default function Analytics() {
               time_minutes,
               sort_order,
               created_at,
+              exam_id,
               exam:exams(name)
             )
           `)
@@ -352,7 +353,7 @@ export default function Analytics() {
   );
 
   const sessionStats: { correct: number; total: number; isSubmitted: boolean }[] = [];
-  const userActiveSession: Record<string, { lastTime: number; sectionIds: Set<string>; correct: number; total: number; isSubmitted: boolean }> = {};
+  const userActiveSession: Record<string, { lastTime: number; sectionIds: Set<string>; correct: number; total: number; isSubmitted: boolean; examId: string }> = {};
   const SESSION_GAP_THRESHOLD = 6 * 60 * 60 * 1000; // 6 hours
 
   sortedAttempts.forEach((attempt: any) => {
@@ -362,6 +363,7 @@ export default function Analytics() {
     const isSubmitted = !!attempt.submitted_at;
     const score = attempt.score || 0;
     const total = attempt.total_questions || 1;
+    const examId = attempt.section?.exam_id;
 
     if (!userActiveSession[userId]) {
       userActiveSession[userId] = {
@@ -369,15 +371,17 @@ export default function Analytics() {
         sectionIds: new Set([sectionId]),
         correct: score,
         total: total,
-        isSubmitted: isSubmitted
+        isSubmitted: isSubmitted,
+        examId: examId
       };
     } else {
       const session = userActiveSession[userId];
       const timeDiff = attemptTime - session.lastTime;
       const isDuplicateSection = session.sectionIds.has(sectionId);
+      const isDifferentExam = session.examId !== examId;
 
-      // If same section appears again (Retake) OR time gap is large -> New Session
-      if (isDuplicateSection || timeDiff > SESSION_GAP_THRESHOLD) {
+      // New Session Trigger: Duplicate Section OR Time Gap OR Different Exam
+      if (isDuplicateSection || timeDiff > SESSION_GAP_THRESHOLD || isDifferentExam) {
         // Finalize previous session
         sessionStats.push({
           correct: session.correct,
@@ -391,7 +395,8 @@ export default function Analytics() {
           sectionIds: new Set([sectionId]),
           correct: score,
           total: total,
-          isSubmitted: isSubmitted
+          isSubmitted: isSubmitted,
+          examId: examId
         };
       } else {
         // Same session - Accumulate
