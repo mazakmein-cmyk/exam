@@ -40,6 +40,7 @@ import {
   verticalListSortingStrategy
 } from "@dnd-kit/sortable";
 import { SortableQuestionItem } from "@/components/SortableQuestionItem";
+import { SortableSectionItem } from "@/components/SortableSectionItem";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +65,7 @@ type Section = {
   name: string;
   time_minutes: number;
   pdf_url: string | null;
+  sort_order?: number;
 };
 
 type Question = {
@@ -231,6 +233,7 @@ export default function ExamDetail() {
         .from("sections")
         .select("*")
         .eq("exam_id", examId)
+        .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
 
       if (sectionsError) throw sectionsError;
@@ -637,6 +640,7 @@ export default function ExamDetail() {
           exam_id: exam.id,
           name: "New Section",
           time_minutes: 60,
+          sort_order: sections.length,
         })
         .select()
         .single();
@@ -922,6 +926,53 @@ export default function ExamDetail() {
         }));
 
         saveQuestionOrder(updatedItems);
+        return updatedItems;
+      });
+    }
+  };
+
+  const saveSectionOrder = async (updatedSections: Section[]) => {
+    try {
+      const updates = updatedSections.map((s, index) => ({
+        id: s.id,
+        exam_id: s.exam_id,
+        name: s.name,
+        time_minutes: s.time_minutes,
+        pdf_url: s.pdf_url,
+        sort_order: index,
+      }));
+
+      const { error } = await supabase.from('sections').upsert(updates);
+      if (error) {
+        console.error("Failed to save section order:", error);
+        toast({
+          title: "Warning",
+          description: "Visual order updated, but failed to save to server.",
+          variant: "destructive"
+        });
+      }
+    } catch (e) {
+      console.error("Error saving section order:", e);
+    }
+  };
+
+  const handleSectionDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setSections((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+
+        const newItems = arrayMove(items, oldIndex, newIndex);
+
+        // Update sort_order for all items
+        const updatedItems = newItems.map((item, index) => ({
+          ...item,
+          sort_order: index,
+        }));
+
+        saveSectionOrder(updatedItems);
         return updatedItems;
       });
     }
@@ -1363,53 +1414,65 @@ export default function ExamDetail() {
             </CardHeader>
             {!isSectionsCollapsed && (
               <CardContent className="space-y-3">
-                {sections.map((s) => (
-                  <div
-                    key={s.id}
-                    className={`p-3 rounded-lg border cursor-pointer transition-all ${section?.id === s.id
-                      ? "bg-primary/5 border-primary shadow-sm"
-                      : "hover:bg-muted border-transparent bg-slate-50"
-                      }`}
-                    onClick={() => handleSectionChange(s.id)}
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleSectionDragEnd}
+                >
+                  <SortableContext
+                    items={sections.map((s) => s.id)}
+                    strategy={verticalListSortingStrategy}
                   >
-                    <div className="flex justify-between items-start mb-2 gap-2">
-                      <Input
-                        className="h-7 text-sm font-medium border-transparent hover:border-input focus:border-input px-1 -ml-1"
-                        value={s.name}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => handleUpdateSection(s.id, { name: e.target.value })}
-                      />
-                      {sections.length > 1 && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            handleDeleteSectionClick(s.id);
-                          }}
+                    {sections.map((s) => (
+                      <SortableSectionItem key={s.id} id={s.id}>
+                        <div
+                          className={`p-3 rounded-lg border cursor-pointer transition-all ${section?.id === s.id
+                            ? "bg-primary/5 border-primary shadow-sm"
+                            : "hover:bg-muted border-transparent bg-slate-50"
+                            }`}
+                          onClick={() => handleSectionChange(s.id)}
                         >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      <Input
-                        className="h-6 w-16 text-xs"
-                        type="number"
-                        value={s.time_minutes}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) =>
-                          handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
-                        }
-                      />
-                      <span>min</span>
-                    </div>
-                  </div>
-                ))}
+                          <div className="flex justify-between items-start mb-2 gap-2">
+                            <Input
+                              className="h-7 text-sm font-medium border-transparent hover:border-input focus:border-input px-1 -ml-1"
+                              value={s.name}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => handleUpdateSection(s.id, { name: e.target.value })}
+                            />
+                            {sections.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  handleDeleteSectionClick(s.id);
+                                }}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Clock className="h-3 w-3" />
+                            <Input
+                              className="h-6 w-16 text-xs"
+                              type="number"
+                              value={s.time_minutes}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) =>
+                                handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
+                              }
+                            />
+                            <span>min</span>
+                          </div>
+                        </div>
+                      </SortableSectionItem>
+                    ))}
+                  </SortableContext>
+                </DndContext>
                 <div className="pt-2">
                   <Button
                     variant="outline"

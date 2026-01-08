@@ -125,6 +125,7 @@ const ExamSimulator = () => {
         .from("sections")
         .select("*")
         .eq("exam_id", examId)
+        .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
 
       setAllSections(allSectionsData || []);

@@ -49,6 +49,7 @@ const ExamIntro = () => {
                 .from("sections")
                 .select("id")
                 .eq("exam_id", examId)
+                .order("sort_order", { ascending: true })
                 .order("created_at", { ascending: true })
                 .limit(1);
 

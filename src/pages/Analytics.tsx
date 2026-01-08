@@ -791,9 +791,12 @@ export default function Analytics() {
                   <div className="space-y-4">
                     {mostSkipped.map(q => (
                       <div key={q.id} className="flex justify-between items-center text-sm border-b pb-2 last:border-0 last:pb-0">
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
                           <span className="font-medium">Q{q.q_no}</span>
-                          <span className="text-muted-foreground truncate max-w-[150px]" dangerouslySetInnerHTML={{ __html: q.text.substring(0, 30) + '...' }} />
+                          <Badge variant="outline" className="text-xs">{q.sectionName}</Badge>
+                          <Button variant="ghost" size="sm" onClick={() => setSelectedQuestion(q)}>
+                            <Eye className="w-4 h-4 text-primary" />
+                          </Button>
                         </div>
                         <Badge variant="secondary">{q.unansweredCount} skipped</Badge>
                       </div>

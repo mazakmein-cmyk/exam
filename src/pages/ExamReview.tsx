@@ -94,6 +94,7 @@ export default function ExamReview() {
         .from("sections")
         .select("*")
         .eq("exam_id", examId)
+        .order("sort_order", { ascending: true })
         .order("created_at");
 
       if (sectionsError) throw sectionsError;
