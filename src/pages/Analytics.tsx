@@ -716,8 +716,8 @@ export default function Analytics() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <Card className="p-6">
                 <div>
-                  <h3 className="text-lg font-semibold">Performance Over Time</h3>
-                  <p className="text-sm text-muted-foreground mb-4">Daily attempts and average scores</p>
+                  <h3 className="text-lg font-semibold">Daily Total Attempts Over Time</h3>
+
                 </div>
                 <div className="h-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
@@ -814,9 +814,12 @@ export default function Analytics() {
                   <div className="space-y-4">
                     {mostReviewed.map(q => (
                       <div key={q.id} className="flex justify-between items-center text-sm border-b pb-2 last:border-0 last:pb-0">
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
                           <span className="font-medium">Q{q.q_no}</span>
-                          <span className="text-muted-foreground truncate max-w-[150px]" dangerouslySetInnerHTML={{ __html: q.text.substring(0, 30) + '...' }} />
+                          <Badge variant="outline" className="text-xs">{q.sectionName}</Badge>
+                          <Button variant="ghost" size="sm" onClick={() => setSelectedQuestion(q)}>
+                            <Eye className="w-4 h-4 text-primary" />
+                          </Button>
                         </div>
                         <Badge variant="outline">{q.reviewedCount} times</Badge>
                       </div>
@@ -831,8 +834,14 @@ export default function Analytics() {
                   <div className="space-y-4">
                     {confusingQuestions.map(q => (
                       <div key={q.id} className="flex flex-col gap-1 text-sm border-b pb-2 last:border-0 last:pb-0">
-                        <div className="flex justify-between">
-                          <span className="font-medium">Q{q.q_no}</span>
+                        <div className="flex justify-between items-center">
+                          <div className="flex gap-2 items-center">
+                            <span className="font-medium">Q{q.q_no}</span>
+                            <Badge variant="outline" className="text-xs">{q.sectionName}</Badge>
+                            <Button variant="ghost" size="sm" onClick={() => setSelectedQuestion(q)}>
+                              <Eye className="w-4 h-4 text-primary" />
+                            </Button>
+                          </div>
                           <Badge variant="destructive" className="ml-auto text-xs">{q.wrongCount} wrongs</Badge>
                         </div>
                         <div className="text-xs text-muted-foreground">
@@ -1129,11 +1138,21 @@ export default function Analytics() {
                       return (
                         <div
                           key={idx}
-                          className={`flex items-center gap-3 p-3 rounded-md border ${isCorrect ? "bg-green-50 border-green-500 dark:bg-green-950" : "bg-background border-border"}`}
+                          className={`flex items-center gap-3 p-3 rounded-md border relative ${isCorrect
+                            ? "bg-green-50 border-green-500 dark:bg-green-950"
+                            : (selectedQuestion.mostCommonWrong && normalize(selectedQuestion.mostCommonWrong) === normalize(option))
+                              ? "bg-red-50 border-red-500 dark:bg-red-950"
+                              : "bg-background border-border"
+                            }`}
                         >
                           <span className="font-medium text-sm">{String.fromCharCode(65 + idx)})</span>
                           <span className="flex-1">{option}</span>
                           {isCorrect && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                          {!isCorrect && selectedQuestion.mostCommonWrong && normalize(selectedQuestion.mostCommonWrong) === normalize(option) && (
+                            <Badge variant="destructive" className="text-[10px] h-5 px-1.5 ml-2 whitespace-nowrap">
+                              Most Common Wrong Answer
+                            </Badge>
+                          )}
                         </div>
                       );
                     })}
