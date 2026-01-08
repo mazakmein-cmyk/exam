@@ -36,6 +36,7 @@ type Exam = {
   id: string;
   name: string;
   description: string | null;
+  instruction: string | null;
   created_at: string;
   is_published: boolean;
   exam_category: string | null;
@@ -167,6 +168,7 @@ const Dashboard = () => {
         .insert({
           name: `${exam.name} (Copy)`,
           description: exam.description,
+          instruction: exam.instruction,
           exam_category: exam.exam_category,
           user_id: user.id,
           is_published: false,

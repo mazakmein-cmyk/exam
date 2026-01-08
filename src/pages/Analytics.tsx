@@ -379,7 +379,12 @@ export default function Analytics() {
   const completionRate = totalAttempts > 0 ? (submittedCount / totalAttempts) * 100 : 0;
 
   // Repeat Attempts (Creator Only)
+  // Repeat Attempts (Creator Only)
   const studentAttempts = attempts.reduce((acc: any, attempt) => {
+    // Only count attempts for the first section to avoid counting section transitions as repeats
+    if (examId && firstSectionId && attempt.section_id !== firstSectionId) {
+      return acc;
+    }
     acc[attempt.user_id] = (acc[attempt.user_id] || 0) + 1;
     return acc;
   }, {});
@@ -424,7 +429,10 @@ export default function Analytics() {
   // Section-wise performance
   // Section-wise performance
   const sectionPerformance = validAttempts.reduce((acc: any, attempt) => {
-    const sectionName = attempt.section.name;
+    // Guard clause for missing section data
+    if (!attempt.section) return acc;
+
+    const sectionName = attempt.section.name || "Unknown Section";
     if (!acc[sectionName]) {
       acc[sectionName] = {
         name: sectionName,
@@ -435,8 +443,8 @@ export default function Analytics() {
         avgTime: 0,
         totalTimeSpent: 0,
         timeLimit: attempt.section.time_minutes || 0,
-        sortOrder: attempt.section.sort_order,
-        createdAt: attempt.section.created_at
+        sortOrder: attempt.section.sort_order || 0,
+        createdAt: attempt.section.created_at || new Date().toISOString()
       };
     }
     acc[sectionName].totalAttempts++;
@@ -1129,13 +1137,16 @@ export default function Analytics() {
               ) : (() => {
                 // Group attempts by exam (based on exam name and date for simplicity)
                 const examGroups = attempts.reduce((groups: any, attempt) => {
-                  const examId = attempt.section.exam.name;
+                  // Guard clause for missing section/exam data
+                  if (!attempt.section || !attempt.section.exam) return groups;
+
+                  const examId = attempt.section.exam.name || "Unknown Exam";
                   const date = new Date(attempt.submitted_at).toLocaleDateString();
                   const key = `${examId}_${date}`;
 
                   if (!groups[key]) {
                     groups[key] = {
-                      examName: attempt.section.exam.name,
+                      examName: attempt.section.exam.name || "Unknown Exam",
                       date: date,
                       sections: [],
                       totalScore: 0,
@@ -1144,7 +1155,7 @@ export default function Analytics() {
                       firstAttemptId: attempt.id
                     };
                   }
-                  groups[key].sections.push(attempt.section.name);
+                  groups[key].sections.push(attempt.section.name || "Unknown Section");
                   groups[key].totalScore += attempt.score;
                   groups[key].totalQuestions += attempt.total_questions;
                   groups[key].totalTime += (attempt.time_spent_seconds || 0);
