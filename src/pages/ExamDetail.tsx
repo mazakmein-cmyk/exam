@@ -25,6 +25,22 @@ import PdfSnipper from "@/components/PdfSnipper";
 import { QuestionForm } from "@/components/QuestionForm";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy
+} from "@dnd-kit/sortable";
+import { SortableQuestionItem } from "@/components/SortableQuestionItem";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -264,7 +280,7 @@ export default function ExamDetail() {
       .from("parsed_questions")
       .select("*")
       .eq("section_id", sectionId)
-      .order("created_at", { ascending: true });
+      .order("q_no", { ascending: true });
 
     if (questionsError) {
       console.error("Error fetching questions:", questionsError);
@@ -852,6 +868,65 @@ export default function ExamDetail() {
     }
   };
 
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const saveQuestionOrder = async (updatedQuestions: Question[]) => {
+    try {
+      const updates = updatedQuestions.map((q: any) => ({
+        id: q.id,
+        section_id: q.section_id,
+        q_no: q.q_no,
+        text: q.text,
+        options: q.options,
+        answer_type: q.answer_type,
+        image_url: q.image_url,
+        correct_answer: q.correct_answer,
+        requires_review: q.requires_review,
+        is_excluded: q.is_excluded,
+        is_finalized: q.is_finalized
+      }));
+
+      const { error } = await supabase.from('parsed_questions').upsert(updates);
+      if (error) {
+        console.error("Failed to save order:", error);
+        toast({
+          title: "Warning",
+          description: "Visual order updated, but failed to save to server.",
+          variant: "destructive"
+        });
+      }
+    } catch (e) {
+      console.error("Error saving order:", e);
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setQuestions((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+
+        const newItems = arrayMove(items, oldIndex, newIndex);
+
+        // Update q_no for all items
+        const updatedItems = newItems.map((item, index) => ({
+          ...item,
+          q_no: index + 1,
+        }));
+
+        saveQuestionOrder(updatedItems);
+        return updatedItems;
+      });
+    }
+  };
+
   const handleEditQuestion = (question: Question) => {
     setEditingQuestionId(question.id);
     setNewQuestionText(question.text || "");
@@ -1391,121 +1466,135 @@ export default function ExamDetail() {
                 {questions.length === 0 ? (
                   <p className="text-muted-foreground text-center py-4">No questions added yet.</p>
                 ) : (
-                  questions.map((q, idx) => {
-                    const isExpanded = expandedQuestionId === q.id;
-                    return (
-                      <div key={q.id} className="border rounded-lg bg-white">
-                        <div className="flex items-start gap-4 p-4 group">
-                          <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
-                            {idx + 1}
-                          </div>
-                          <div className="flex-1 space-y-2 min-w-0">
-                            {q.image_url && (
-                              <div className="flex items-center gap-2 text-sm text-blue-600">
-                                <ImageIcon className="h-4 w-4" />
-                                Has image
-                              </div>
-                            )}
-                            {q.text ? (
-                              <div className="font-medium truncate" dangerouslySetInnerHTML={{ __html: q.text }} />
-                            ) : (
-                              <p className="font-medium">Question with image</p>
-                            )}
-                            <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
-                            >
-                              {isExpanded ? (
-                                <ChevronUp className="h-4 w-4" />
-                              ) : (
-                                <ChevronDown className="h-4 w-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
-                              onClick={() => handleEditQuestion(q)}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
-                              onClick={() => handleDeleteQuestionClick(q.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-
-                        {isExpanded && (
-                          <div className="px-4 pb-4 pt-2 border-t space-y-4">
-                            {q.image_url && (
-                              <div className="border rounded-lg p-4 bg-slate-50">
-                                <Label className="mb-2 block font-semibold">Question Image</Label>
-                                <img
-                                  src={q.image_url}
-                                  alt="Question"
-                                  className="max-w-full h-auto rounded-md"
-                                />
-                              </div>
-                            )}
-
-                            {q.text && (
-                              <div>
-                                <Label className="mb-2 block font-semibold">Question Text</Label>
-                                <div className="text-sm p-3 bg-slate-50 rounded-md" dangerouslySetInnerHTML={{ __html: q.text }} />
-                              </div>
-                            )}
-
-                            <div>
-                              <Label className="mb-2 block font-semibold">Question Type</Label>
-                              <p className="text-sm p-3 bg-slate-50 rounded-md capitalize">
-                                {q.answer_type === "single" ? "Multiple Choice (Single)" :
-                                  q.answer_type === "multi" ? "Multiple Choice (Multiple)" :
-                                    q.answer_type === "numeric" ? "Numeric" : "Text"}
-                              </p>
-                            </div>
-
-                            {(q.answer_type === "single" || q.answer_type === "multi") && q.options && (
-                              <div>
-                                <Label className="mb-2 block font-semibold">Options</Label>
-                                <div className="space-y-2">
-                                  {(Array.isArray(q.options) ? q.options : []).map((opt: string, optIdx: number) => (
-                                    <div key={optIdx} className="flex items-center gap-2 p-2 bg-slate-50 rounded-md">
-                                      <span className="font-semibold text-sm">{String.fromCharCode(65 + optIdx)}.</span>
-                                      <span className="text-sm">{opt}</span>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragStart={() => setExpandedQuestionId(null)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext
+                      items={questions.map((q: any) => q.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {questions.map((q, idx) => {
+                        const isExpanded = expandedQuestionId === q.id;
+                        return (
+                          <SortableQuestionItem key={q.id} id={q.id}>
+                            <div className="border rounded-lg bg-white">
+                              <div className="flex items-start gap-4 p-4 group">
+                                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
+                                  {idx + 1}
+                                </div>
+                                <div className="flex-1 space-y-2 min-w-0">
+                                  {q.image_url && (
+                                    <div className="flex items-center gap-2 text-sm text-blue-600">
+                                      <ImageIcon className="h-4 w-4" />
+                                      Has image
                                     </div>
-                                  ))}
+                                  )}
+                                  {q.text ? (
+                                    <div className="font-medium truncate" dangerouslySetInnerHTML={{ __html: q.text }} />
+                                  ) : (
+                                    <p className="font-medium">Question with image</p>
+                                  )}
+                                  <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="h-4 w-4" />
+                                    ) : (
+                                      <ChevronDown className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                                    onClick={() => handleEditQuestion(q)}
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-destructive opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                                    onClick={() => handleDeleteQuestionClick(q.id)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
                                 </div>
                               </div>
-                            )}
 
-                            <div>
-                              <Label className="mb-2 block font-semibold">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
-                              <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                                {Array.isArray(q.correct_answer) ? (
-                                  <div className="space-y-1">
-                                    {q.correct_answer.map((ans: string, ansIdx: number) => (
-                                      <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
-                                    ))}
+                              {isExpanded && (
+                                <div className="px-4 pb-4 pt-2 border-t space-y-4">
+                                  {q.image_url && (
+                                    <div className="border rounded-lg p-4 bg-slate-50">
+                                      <Label className="mb-2 block font-semibold">Question Image</Label>
+                                      <img
+                                        src={q.image_url}
+                                        alt="Question"
+                                        className="max-w-full h-auto rounded-md"
+                                      />
+                                    </div>
+                                  )}
+
+                                  {q.text && (
+                                    <div>
+                                      <Label className="mb-2 block font-semibold">Question Text</Label>
+                                      <div className="text-sm p-3 bg-slate-50 rounded-md" dangerouslySetInnerHTML={{ __html: q.text }} />
+                                    </div>
+                                  )}
+
+                                  <div>
+                                    <Label className="mb-2 block font-semibold">Question Type</Label>
+                                    <p className="text-sm p-3 bg-slate-50 rounded-md capitalize">
+                                      {q.answer_type === "single" ? "Multiple Choice (Single)" :
+                                        q.answer_type === "multi" ? "Multiple Choice (Multiple)" :
+                                          q.answer_type === "numeric" ? "Numeric" : "Text"}
+                                    </p>
                                   </div>
-                                ) : (
-                                  <p className="text-sm font-medium text-green-700">{q.correct_answer || "Not specified"}</p>
-                                )}
-                              </div>
+
+                                  {(q.answer_type === "single" || q.answer_type === "multi") && q.options && (
+                                    <div>
+                                      <Label className="mb-2 block font-semibold">Options</Label>
+                                      <div className="space-y-2">
+                                        {(Array.isArray(q.options) ? q.options : []).map((opt: string, optIdx: number) => (
+                                          <div key={optIdx} className="flex items-center gap-2 p-2 bg-slate-50 rounded-md">
+                                            <span className="font-semibold text-sm">{String.fromCharCode(65 + optIdx)}.</span>
+                                            <span className="text-sm">{opt}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <div>
+                                    <Label className="mb-2 block font-semibold">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
+                                    <div className="p-3 bg-green-50 border border-green-200 rounded-md">
+                                      {Array.isArray(q.correct_answer) ? (
+                                        <div className="space-y-1">
+                                          {q.correct_answer.map((ans: string, ansIdx: number) => (
+                                            <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p className="text-sm font-medium text-green-700">{q.correct_answer || "Not specified"}</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
+                          </SortableQuestionItem>
+                        );
+                      })}
+                    </SortableContext>
+                  </DndContext>
                 )}
               </CardContent>
             )}
