@@ -404,17 +404,26 @@ export default function Analytics() {
       const grouped = validAttempts.reduce((acc: any, attempt) => {
         const date = new Date(attempt.submitted_at).toLocaleDateString();
         if (!acc[date]) {
-          acc[date] = { date, totalAccuracy: 0, count: 0 };
+          acc[date] = { date, totalAccuracy: 0, scoreCount: 0, attemptCount: 0 };
         }
+
+        // Always add to scoring metrics
         acc[date].totalAccuracy += attempt.accuracy_percentage;
-        acc[date].count++;
+        acc[date].scoreCount++;
+
+        // Only count as an "Exam Attempt" if it's the first section
+        // Fallback: If no firstSectionId is determined, counting everything is safer than counting nothing
+        if (!firstSectionId || attempt.section_id === firstSectionId) {
+          acc[date].attemptCount++;
+        }
+
         return acc;
       }, {});
 
       return Object.values(grouped).map((g: any) => ({
         date: g.date,
-        accuracy: parseFloat((g.totalAccuracy / g.count).toFixed(2)),
-        attempts: g.count
+        accuracy: parseFloat((g.totalAccuracy / g.scoreCount).toFixed(2)),
+        attempts: g.attemptCount
       })).reverse(); // Reverse to show chronological if fetched desc
     })()
     : validAttempts
@@ -724,13 +733,6 @@ export default function Analytics() {
                         tickLine={false}
                         tick={{ fontSize: 12 }}
                       />
-                      <YAxis
-                        yAxisId="right"
-                        orientation="right"
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: 12 }}
-                      />
                       <Tooltip />
                       <Legend />
                       <Line
@@ -739,16 +741,6 @@ export default function Analytics() {
                         dataKey="attempts"
                         stroke="#8884d8"
                         name="Attempts"
-                        strokeWidth={2}
-                        dot={{ r: 4, fill: "#fff", strokeWidth: 2 }}
-                        activeDot={{ r: 6 }}
-                      />
-                      <Line
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="accuracy"
-                        stroke="#82ca9d"
-                        name="Avg Score %"
                         strokeWidth={2}
                         dot={{ r: 4, fill: "#fff", strokeWidth: 2 }}
                         activeDot={{ r: 6 }}
