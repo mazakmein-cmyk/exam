@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -63,7 +63,7 @@ const ExamSimulator = () => {
   const [showTimeWarning, setShowTimeWarning] = useState(false);
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [showSectionCompleteDialog, setShowSectionCompleteDialog] = useState(false);
-  const [questionStartTime, setQuestionStartTime] = useState(Date.now());
+  const questionStartTimeRef = useRef(Date.now());
   const [isLoading, setIsLoading] = useState(true);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
@@ -91,7 +91,7 @@ const ExamSimulator = () => {
   }, [hasStarted, timeRemaining]);
 
   useEffect(() => {
-    setQuestionStartTime(Date.now());
+    questionStartTimeRef.current = Date.now();
   }, [currentQuestionIndex]);
 
   const fetchSectionAndQuestions = async () => {
@@ -208,7 +208,7 @@ const ExamSimulator = () => {
     const currentQuestion = questions[currentQuestionIndex];
     if (!currentQuestion) return;
 
-    const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+    const timeSpent = Math.floor((Date.now() - questionStartTimeRef.current) / 1000);
     setQuestionStates((prev) => ({
       ...prev,
       [currentQuestion.id]: {
@@ -296,7 +296,7 @@ const ExamSimulator = () => {
     // Calculate time for current question synchronously (state updates are async)
     const currentQuestion = questions[currentQuestionIndex];
     const currentQuestionTimeSpent = currentQuestion
-      ? Math.floor((Date.now() - questionStartTime) / 1000)
+      ? Math.floor((Date.now() - questionStartTimeRef.current) / 1000)
       : 0;
 
     // Create updated questionStates with current question's time included
@@ -347,7 +347,7 @@ const ExamSimulator = () => {
 
       toast({
         title: "Section Submitted",
-        description: "Your responses have been saved successfully",
+        description: `Your responses have been saved successfully (Last Q: ${currentQuestionTimeSpent}s)`,
       });
 
       setShowSectionCompleteDialog(true);
