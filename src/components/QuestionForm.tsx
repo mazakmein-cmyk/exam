@@ -26,7 +26,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, Search } from "lucide-react";
-import { OptionEditor } from "./OptionEditor";
 
 interface QuestionFormProps {
     text: string;
@@ -2406,23 +2405,20 @@ export function QuestionForm({
                 <div className="space-y-3">
                     <Label>Options</Label>
                     {options.map((opt, idx) => (
-                        <div key={idx} className="flex gap-2 items-start">
-                            <div className="flex-1">
-                                <OptionEditor
-                                    placeholder={`Option ${idx + 1}`}
-                                    value={opt}
-                                    onChange={(value) => {
-                                        const newOpts = [...options];
-                                        newOpts[idx] = value;
-                                        setOptions(newOpts);
-                                    }}
-                                />
-                            </div>
+                        <div key={idx} className="flex gap-2">
+                            <Input
+                                placeholder={`Option ${idx + 1}`}
+                                value={opt}
+                                onChange={(e) => {
+                                    const newOpts = [...options];
+                                    newOpts[idx] = e.target.value;
+                                    setOptions(newOpts);
+                                }}
+                            />
                             {idx > 1 && (
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="mt-1"
                                     onClick={() => {
                                         const newOpts = options.filter((_, i) => i !== idx);
                                         setOptions(newOpts);
