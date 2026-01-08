@@ -76,6 +76,7 @@ type Question = {
   options: any;
   answer_type: string;
   image_url?: string | null;
+  image_urls?: string[] | null;
   correct_answer: any;
 };
 
@@ -102,7 +103,7 @@ export default function ExamDetail() {
   const [newQuestionText, setNewQuestionText] = useState("");
   const [newQuestionType, setNewQuestionType] = useState("single");
   const [newQuestionOptions, setNewQuestionOptions] = useState<string[]>(["", "", "", ""]);
-  const [newQuestionImage, setNewQuestionImage] = useState<string | null>(null);
+  const [newQuestionImages, setNewQuestionImages] = useState<string[]>([]);
   const [newQuestionCorrect, setNewQuestionCorrect] = useState<string | string[]>("");
 
   // View Question State
@@ -154,14 +155,14 @@ export default function ExamDetail() {
     const isQuestionFormDirty =
       newQuestionText.trim() !== "" ||
       newQuestionOptions.some(opt => opt.trim() !== "") ||
-      newQuestionImage !== null ||
+      newQuestionImages.length > 0 ||
       newQuestionCorrect !== ""; // Simplified check
 
     // Check if editing existing question
     const isEditing = editingQuestionId !== null;
 
     setIsDirty(isExamChanged || isEditing || (isQuestionFormDirty && !editingQuestionId));
-  }, [examTitle, examCategory, examDescription, examInstruction, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImage, newQuestionCorrect]);
+  }, [examTitle, examCategory, examDescription, examInstruction, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImages, newQuestionCorrect]);
 
   // Section Switch Confirmation State
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
@@ -172,7 +173,7 @@ export default function ExamDetail() {
       editingQuestionId !== null ||
       newQuestionText.trim() !== "" ||
       newQuestionOptions.some((opt) => opt.trim() !== "") ||
-      newQuestionImage !== null ||
+      newQuestionImages.length > 0 ||
       newQuestionCorrect !== ""
     );
   };
@@ -604,11 +605,10 @@ export default function ExamDetail() {
     // Reset form state
     setEditingQuestionId(null);
     setNewQuestionText("");
-    setNewQuestionType("single");
     setNewQuestionOptions(["", "", "", ""]);
-    setNewQuestionImage(null);
     setNewQuestionCorrect("");
-
+    setNewQuestionImages([]);
+    setNewQuestionType("single");
     if (pendingSectionId) {
       executeSectionChange(pendingSectionId);
     }
@@ -746,15 +746,15 @@ export default function ExamDetail() {
   };
 
   const handleAddQuestion = async () => {
-    if (!section) return;
+    if (!section) return false;
 
     // Shared validation for Direct Upload and PDF Snipper
     // Validate that at least question text or image is provided
     // Strip HTML tags to check for actual text content (rich text editors may leave empty HTML)
     const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
     const hasQuestionText = strippedText !== '';
-    const hasQuestionImage = newQuestionImage !== null && newQuestionImage !== undefined && newQuestionImage.trim() !== "";
-    if (!hasQuestionText && !hasQuestionImage) {
+    const hasQuestionImages = newQuestionImages && newQuestionImages.length > 0;
+    if (!hasQuestionText && !hasQuestionImages) {
       toast({
         title: "Missing Question Content",
         description: "Please provide either question text or an image before saving.",
@@ -807,7 +807,7 @@ export default function ExamDetail() {
         q_no: questions.length + 1,
         text: newQuestionText || "", // Ensure text is never null
         answer_type: newQuestionType,
-        image_url: newQuestionImage,
+        image_urls: newQuestionImages, // Updated
         correct_answer: newQuestionCorrect,
         requires_review: false,
         is_excluded: false,
@@ -834,7 +834,7 @@ export default function ExamDetail() {
 
       // Reset form
       setNewQuestionText("");
-      setNewQuestionImage(null);
+      setNewQuestionImages([]); // Updated
       setNewQuestionCorrect("");
       setNewQuestionOptions(["", "", "", ""]);
 
@@ -904,6 +904,7 @@ export default function ExamDetail() {
         options: q.options,
         answer_type: q.answer_type,
         image_url: q.image_url,
+        image_urls: q.image_urls, // Added
         correct_answer: q.correct_answer,
         requires_review: q.requires_review,
         is_excluded: q.is_excluded,
@@ -997,7 +998,13 @@ export default function ExamDetail() {
     setEditingQuestionId(question.id);
     setNewQuestionText(question.text || "");
     setNewQuestionType(question.answer_type);
-    setNewQuestionImage(question.image_url);
+    if (question.image_urls && Array.isArray(question.image_urls)) {
+      setNewQuestionImages(question.image_urls);
+    } else if (question.image_url) {
+      setNewQuestionImages([question.image_url]);
+    } else {
+      setNewQuestionImages([]);
+    }
     setNewQuestionCorrect(question.correct_answer);
 
     if (question.answer_type === "single" || question.answer_type === "multi") {
@@ -1018,8 +1025,8 @@ export default function ExamDetail() {
     // Strip HTML tags to check for actual text content (rich text editors may leave empty HTML)
     const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
     const hasQuestionText = strippedText !== '';
-    const hasQuestionImage = newQuestionImage !== null && newQuestionImage !== undefined && newQuestionImage.trim() !== "";
-    if (!hasQuestionText && !hasQuestionImage) {
+    const hasQuestionImages = newQuestionImages && newQuestionImages.length > 0;
+    if (!hasQuestionText && !hasQuestionImages) {
       toast({
         title: "Missing Question Content",
         description: "Please provide either question text or an image before saving.",
@@ -1059,7 +1066,7 @@ export default function ExamDetail() {
       const updateData: any = {
         text: newQuestionText || "",
         answer_type: newQuestionType,
-        image_url: newQuestionImage,
+        image_urls: newQuestionImages, // Updated
         correct_answer: newQuestionCorrect,
       };
 
@@ -1086,7 +1093,7 @@ export default function ExamDetail() {
       setNewQuestionText("");
       setNewQuestionType("single");
       setNewQuestionOptions(["", "", "", ""]);
-      setNewQuestionImage(null);
+      setNewQuestionImages([]); // Updated
       setNewQuestionCorrect("");
 
       toast({
@@ -1110,7 +1117,7 @@ export default function ExamDetail() {
     setNewQuestionText("");
     setNewQuestionType("single");
     setNewQuestionOptions(["", "", "", ""]);
-    setNewQuestionImage(null);
+    setNewQuestionImages([]);
     setNewQuestionCorrect("");
   };
 
@@ -1284,7 +1291,7 @@ export default function ExamDetail() {
         .from("exam-pdfs")
         .getPublicUrl(fileName);
 
-      setNewQuestionImage(publicUrl);
+      setNewQuestionImages([...newQuestionImages, publicUrl]);
       toast({ title: "Snip Attached", description: "Image added to new question." });
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -1311,7 +1318,7 @@ export default function ExamDetail() {
         .from("exam-pdfs")
         .getPublicUrl(fileName);
 
-      setNewQuestionImage(publicUrl);
+      setNewQuestionImages([...newQuestionImages, publicUrl]);
       toast({ title: "Image Uploaded" });
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -1735,7 +1742,12 @@ export default function ExamDetail() {
                     setOptions={setNewQuestionOptions}
                     correct={newQuestionCorrect}
                     setCorrect={setNewQuestionCorrect}
-                    image={newQuestionImage}
+                    images={newQuestionImages}
+                    onImageRemove={(idx) => {
+                      const newImages = [...newQuestionImages];
+                      newImages.splice(idx, 1);
+                      setNewQuestionImages(newImages);
+                    }}
                     onImageUpload={handleImageUpload}
                     onAdd={editingQuestionId ? handleUpdateQuestion : handleAddQuestion}
                     showImageUpload={true}
@@ -1795,7 +1807,12 @@ export default function ExamDetail() {
                       setOptions={setNewQuestionOptions}
                       correct={newQuestionCorrect}
                       setCorrect={setNewQuestionCorrect}
-                      image={newQuestionImage}
+                      images={newQuestionImages}
+                      onImageRemove={(idx) => {
+                        const newImages = [...newQuestionImages];
+                        newImages.splice(idx, 1);
+                        setNewQuestionImages(newImages);
+                      }}
                       onImageUpload={handleImageUpload}
                       onAdd={editingQuestionId ? handleUpdateQuestion : handleAddQuestion}
                       showImageUpload={false}

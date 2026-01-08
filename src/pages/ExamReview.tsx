@@ -24,7 +24,9 @@ interface Response {
     correct_answer: any;
     q_no: number;
     section_id: string;
+
     image_url: string | null;
+    image_urls: string[] | null;
   };
 }
 
@@ -126,7 +128,7 @@ export default function ExamReview() {
         .from("responses")
         .select(`
           *,
-          question:parsed_questions(text, options, answer_type, correct_answer, q_no, section_id, image_url)
+          question:parsed_questions(text, options, answer_type, correct_answer, q_no, section_id, image_url, image_urls)
         `)
         .in("attempt_id", selectedAttemptIds);
 
@@ -561,14 +563,29 @@ export default function ExamReview() {
                           {isQuestionExpanded && (
                             <div className="p-4 border-t bg-background">
                               {/* Question Image */}
-                              {response.question.image_url && (
-                                <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
-                                  <img
-                                    src={response.question.image_url}
-                                    alt="Question"
-                                    className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
-                                  />
-                                </div>
+                              {/* Question Images */}
+                              {(
+                                (response.question.image_urls && response.question.image_urls.length > 0) ? (
+                                  <div className="mb-4 flex flex-wrap gap-4 justify-center">
+                                    {response.question.image_urls.map((url: string, idx: number) => (
+                                      <div key={idx} className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center w-full max-w-md">
+                                        <img
+                                          src={url}
+                                          alt={`Question Image ${idx + 1}`}
+                                          className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : response.question.image_url ? (
+                                  <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                                    <img
+                                      src={response.question.image_url}
+                                      alt="Question"
+                                      className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                                    />
+                                  </div>
+                                ) : null
                               )}
 
                               {/* Question Text - Rendered HTML */}

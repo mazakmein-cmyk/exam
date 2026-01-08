@@ -30,6 +30,7 @@ type Question = {
   options: any;
   section_label: string | null;
   image_url: string | null;
+  image_urls: string[] | null;
 };
 
 type Section = {
@@ -639,14 +640,28 @@ const ExamSimulator = () => {
 
             <Card className="border-t-4 border-t-primary">
               <CardContent className="pt-6 space-y-6">
-                {currentQuestion?.image_url && (
-                  <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
-                    <img
-                      src={currentQuestion.image_url}
-                      alt="Question"
-                      className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
-                    />
-                  </div>
+                {(
+                  (currentQuestion?.image_urls && currentQuestion.image_urls.length > 0) ? (
+                    <div className="mb-4 flex flex-col gap-4">
+                      {currentQuestion.image_urls.map((url, idx) => (
+                        <div key={idx} className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                          <img
+                            src={url}
+                            alt={`Question ${idx + 1}`}
+                            className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : currentQuestion?.image_url ? (
+                    <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                      <img
+                        src={currentQuestion.image_url}
+                        alt="Question"
+                        className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                      />
+                    </div>
+                  ) : null
                 )}
                 {currentQuestion?.text && (
                   <div

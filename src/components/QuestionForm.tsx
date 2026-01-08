@@ -35,12 +35,13 @@ interface QuestionFormProps {
     options: string[];
     setOptions: (options: string[]) => void;
     correct: string | string[];
-    setCorrect: (correct: string | string[]) => void;
-    image: string | null;
+    setCorrect: (value: string | string[]) => void;
+    images: string[];
     onImageUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onAdd: () => void;
     showImageUpload?: boolean;
     isEditing?: boolean;
+    onImageRemove?: (index: number) => void;
 }
 
 const ToolbarIcon = ({ icon: Icon, label, onClick, isActive }: { icon: any, label: string, onClick?: () => void, isActive?: boolean }) => (
@@ -87,10 +88,11 @@ export function QuestionForm({
     type, setType,
     options, setOptions,
     correct, setCorrect,
-    image, onImageUpload,
+    images, onImageUpload,
     onAdd,
     showImageUpload = true,
-    isEditing = false
+    isEditing = false,
+    onImageRemove
 }: QuestionFormProps) {
     const [isQuestionFocused, setIsQuestionFocused] = useState(false);
 
@@ -1505,16 +1507,29 @@ export function QuestionForm({
                                 onChange={onImageUpload}
                             />
                         </Button>
-                        {image && (
+                        {images.length > 0 && (
                             <span className="text-sm text-green-600 flex items-center">
-                                <Check className="mr-1 h-4 w-4" /> Image attached
+                                <Check className="mr-1 h-4 w-4" /> {images.length} Image{images.length !== 1 ? 's' : ''} attached
                             </span>
                         )}
                     </div>
                 )}
-                {image && (
-                    <div className="mt-2 border rounded-md p-2 bg-slate-50 w-fit">
-                        <img src={image} alt="Preview" className="h-32 object-contain" />
+                {images.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                        {images.map((img, idx) => (
+                            <div key={idx} className="border rounded-md p-2 bg-slate-50 w-fit relative group">
+                                <img src={img} alt={`Preview ${idx + 1}`} className="h-32 object-contain" />
+                                {onImageRemove && (
+                                    <button
+                                        onClick={() => onImageRemove(idx)}
+                                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                                        title="Remove image"
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                )}
+                            </div>
+                        ))}
                     </div>
                 )}
             </div>

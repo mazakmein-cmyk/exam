@@ -49,6 +49,7 @@ interface QuestionStats {
   answerType: string;
   options: any;
   imageUrl: string | null;
+  imageUrls: string[] | null;
   reviewedCount: number;
   commonWrongAnswers: Record<string, number>;
   mostCommonWrong?: string | null;
@@ -164,7 +165,7 @@ export default function Analytics() {
         const { data: questionsData, error: questionsError } = await supabase
           .from("parsed_questions")
           .select(`
-            id, text, q_no, correct_answer, answer_type, options, image_url,
+            id, text, q_no, correct_answer, answer_type, options, image_url, image_urls,
             section:sections!inner(id, name, exam_id, sort_order)
           `)
           .eq("section.exam_id", examId);
@@ -265,7 +266,9 @@ export default function Analytics() {
               correctAnswer: q.correct_answer,
               answerType: q.answer_type,
               options: q.options,
+
               imageUrl: q.image_url,
+              imageUrls: q.image_urls,
               reviewedCount: 0,
               commonWrongAnswers: {}
             });
@@ -991,14 +994,29 @@ export default function Analytics() {
                 .map((question, qIdx) => (
                   <div key={question.id} className="border rounded-lg p-6 bg-card">
                     <h4 className="font-semibold mb-4 text-primary">Question {qIdx + 1}</h4>
-                    {question.imageUrl && (
-                      <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
-                        <img
-                          src={question.imageUrl}
-                          alt={`Question ${question.q_no}`}
-                          className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
-                        />
-                      </div>
+                    {/* Images */}
+                    {(
+                      (question.imageUrls && question.imageUrls.length > 0) ? (
+                        <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {question.imageUrls.map((url, idx) => (
+                            <div key={idx} className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                              <img
+                                src={url}
+                                alt={`Question ${question.q_no} Image ${idx + 1}`}
+                                className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : question.imageUrl ? (
+                        <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                          <img
+                            src={question.imageUrl}
+                            alt={`Question ${question.q_no}`}
+                            className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
+                          />
+                        </div>
+                      ) : null
                     )}
                     <div
                       className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
@@ -1062,14 +1080,29 @@ export default function Analytics() {
             </DialogHeader>
             {selectedQuestion && (
               <div className="space-y-4">
-                {selectedQuestion.imageUrl && (
-                  <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
-                    <img
-                      src={selectedQuestion.imageUrl}
-                      alt="Question"
-                      className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
-                    />
-                  </div>
+                {/* Images */}
+                {(
+                  (selectedQuestion.imageUrls && selectedQuestion.imageUrls.length > 0) ? (
+                    <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {selectedQuestion.imageUrls.map((url, idx) => (
+                        <div key={idx} className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                          <img
+                            src={url}
+                            alt={`Question Image ${idx + 1}`}
+                            className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : selectedQuestion.imageUrl ? (
+                    <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                      <img
+                        src={selectedQuestion.imageUrl}
+                        alt="Question"
+                        className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                      />
+                    </div>
+                  ) : null
                 )}
                 <div
                   className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"

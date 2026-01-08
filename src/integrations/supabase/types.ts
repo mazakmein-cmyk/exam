@@ -104,6 +104,7 @@ export type Database = {
           final_order: number | null
           id: string
           image_url: string | null
+          image_urls: string[] | null
           is_excluded: boolean | null
           is_finalized: boolean | null
           options: Json | null
@@ -122,6 +123,7 @@ export type Database = {
           final_order?: number | null
           id?: string
           image_url?: string | null
+          image_urls?: string[] | null
           is_excluded?: boolean | null
           is_finalized?: boolean | null
           options?: Json | null
@@ -140,6 +142,7 @@ export type Database = {
           final_order?: number | null
           id?: string
           image_url?: string | null
+          image_urls?: string[] | null
           is_excluded?: boolean | null
           is_finalized?: boolean | null
           options?: Json | null

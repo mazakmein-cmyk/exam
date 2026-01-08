@@ -25,8 +25,10 @@ interface ParsedQuestion {
   requires_review: boolean | null;
   is_excluded: boolean;
   is_finalized: boolean;
+
   final_order: number | null;
   image_url: string | null;
+  image_urls: string[] | null;
   correct_answer: any;
 }
 
@@ -156,7 +158,13 @@ export default function ManualFixEditor() {
         .from("exam-pdfs")
         .getPublicUrl(fileName);
 
-      await updateQuestion(questionId, { image_url: publicUrl });
+
+      // Get current images
+      const question = questions.find(q => q.id === questionId);
+      const currentImages = question?.image_urls || (question?.image_url ? [question.image_url] : []);
+      const newImages = [...currentImages, publicUrl];
+
+      await updateQuestion(questionId, { image_urls: newImages, image_url: publicUrl });
 
       toast({
         title: "Image uploaded",
@@ -200,7 +208,12 @@ export default function ManualFixEditor() {
         .from("question-images")
         .getPublicUrl(fileName);
 
-      await updateQuestion(questionId, { image_url: publicUrl });
+
+      const question = questions.find(q => q.id === questionId);
+      const currentImages = question?.image_urls || (question?.image_url ? [question.image_url] : []);
+      const newImages = [...currentImages, publicUrl];
+
+      await updateQuestion(questionId, { image_urls: newImages, image_url: publicUrl });
     } catch (error: any) {
       toast({
         title: "Upload failed",
@@ -319,7 +332,12 @@ export default function ManualFixEditor() {
         .from("exam-pdfs")
         .getPublicUrl(fileName);
 
-      await updateQuestion(activeQuestionId, { image_url: publicUrl });
+
+      const question = questions.find(q => q.id === activeQuestionId);
+      const currentImages = question?.image_urls || (question?.image_url ? [question.image_url] : []);
+      const newImages = [...currentImages, publicUrl];
+
+      await updateQuestion(activeQuestionId, { image_urls: newImages, image_url: publicUrl });
 
       toast({
         title: "Snip attached",
@@ -516,28 +534,57 @@ export default function ManualFixEditor() {
                     </div>
                   </div>
 
-                  {question.image_url ? (
-                    <div className="relative group border rounded-md overflow-hidden bg-muted/50 mt-2">
-                      <img
-                        src={question.image_url}
-                        alt="Question"
-                        className="max-h-60 object-contain mx-auto"
-                      />
-                      <Button
-                        variant="destructive"
-                        size="icon"
-                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => updateQuestion(question.id, { image_url: null })}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="border-2 border-dashed rounded-md p-8 text-center text-muted-foreground hover:bg-muted/50 transition-colors mt-2">
-                      <ImageIcon className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">No image attached</p>
-                    </div>
-                  )}
+                  {/* Images Grid */}
+                  <div className="mt-2">
+                    {(question.image_urls && question.image_urls.length > 0) ? (
+                      <div className="grid grid-cols-2 gap-4">
+                        {question.image_urls.map((url, idx) => (
+                          <div key={idx} className="relative group border rounded-md overflow-hidden bg-muted/50">
+                            <img
+                              src={url}
+                              alt={`Question Image ${idx + 1}`}
+                              className="max-h-60 object-contain mx-auto"
+                            />
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => {
+                                const newImages = question.image_urls!.filter((_, i) => i !== idx);
+                                updateQuestion(question.id, {
+                                  image_urls: newImages,
+                                  image_url: newImages.length > 0 ? newImages[0] : null
+                                });
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : question.image_url ? (
+                      <div className="relative group border rounded-md overflow-hidden bg-muted/50">
+                        <img
+                          src={question.image_url}
+                          alt="Question"
+                          className="max-h-60 object-contain mx-auto"
+                        />
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => updateQuestion(question.id, { image_url: null, image_urls: [] })}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="border-2 border-dashed rounded-md p-8 text-center text-muted-foreground hover:bg-muted/50 transition-colors">
+                        <ImageIcon className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">No image attached</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
