@@ -35,6 +35,7 @@ interface QuestionStats {
   q_no: number;
   text: string;
   sectionName: string;
+  sectionSortOrder: number;
   totalAttempts: number;
   correctCount: number;
   wrongCount: number;
@@ -128,6 +129,8 @@ export default function Analytics() {
             section:sections!inner(
               name,
               time_minutes,
+              sort_order,
+              created_at,
               exam:exams(name)
             )
           `)
@@ -142,7 +145,7 @@ export default function Analytics() {
           .from("parsed_questions")
           .select(`
             id, text, q_no, correct_answer, answer_type, options, image_url,
-            section:sections!inner(id, name, exam_id)
+            section:sections!inner(id, name, exam_id, sort_order)
           `)
           .eq("section.exam_id", examId);
 
@@ -232,6 +235,7 @@ export default function Analytics() {
               q_no: q.q_no,
               text: q.text,
               sectionName: q.section.name,
+              sectionSortOrder: q.section.sort_order,
               totalAttempts: 0,
               correctCount: 0,
               wrongCount: 0,
@@ -460,7 +464,9 @@ export default function Analytics() {
         totalTime: 0,
         avgTime: 0,
         totalTimeSpent: 0,
-        timeLimit: attempt.section.time_minutes || 0
+        timeLimit: attempt.section.time_minutes || 0,
+        sortOrder: attempt.section.sort_order,
+        createdAt: attempt.section.created_at
       };
     }
     acc[sectionName].totalAttempts++;
@@ -476,7 +482,10 @@ export default function Analytics() {
     return acc;
   }, {});
 
-  const sectionData = Object.values(sectionPerformance);
+  const sectionData = Object.values(sectionPerformance).sort((a: any, b: any) => {
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
 
   // Score Distribution
   const scoreDistribution = [
@@ -888,7 +897,11 @@ export default function Analytics() {
                       groups[q.sectionName] = group;
                       return groups;
                     }, {})
-                  ).map(([sectionName, questions]: [string, any]) => (
+                  ).sort((a: any, b: any) => {
+                    const orderA = a[1][0]?.sectionSortOrder || 0;
+                    const orderB = b[1][0]?.sectionSortOrder || 0;
+                    return orderA - orderB;
+                  }).map(([sectionName, questions]: [string, any]) => (
                     <Fragment key={sectionName}>
                       <tr
                         className="bg-muted/20 cursor-pointer hover:bg-muted/30 transition-colors"
