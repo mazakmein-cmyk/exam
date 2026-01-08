@@ -748,6 +748,21 @@ export default function ExamDetail() {
   const handleAddQuestion = async () => {
     if (!section) return;
 
+    // Shared validation for Direct Upload and PDF Snipper
+    // Validate that at least question text or image is provided
+    // Strip HTML tags to check for actual text content (rich text editors may leave empty HTML)
+    const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
+    const hasQuestionText = strippedText !== '';
+    const hasQuestionImage = newQuestionImage !== null && newQuestionImage !== undefined && newQuestionImage.trim() !== "";
+    if (!hasQuestionText && !hasQuestionImage) {
+      toast({
+        title: "Missing Question Content",
+        description: "Please provide either question text or an image before saving.",
+        variant: "destructive",
+      });
+      return false;
+    }
+
     // Validate that correct answer is provided
     const hasCorrectAnswer = Array.isArray(newQuestionCorrect)
       ? newQuestionCorrect.length > 0
@@ -997,6 +1012,21 @@ export default function ExamDetail() {
 
   const handleUpdateQuestion = async () => {
     if (!editingQuestionId || !section) return false;
+
+    // Shared validation for Direct Upload and PDF Snipper
+    // Validate that at least question text or image is provided
+    // Strip HTML tags to check for actual text content (rich text editors may leave empty HTML)
+    const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
+    const hasQuestionText = strippedText !== '';
+    const hasQuestionImage = newQuestionImage !== null && newQuestionImage !== undefined && newQuestionImage.trim() !== "";
+    if (!hasQuestionText && !hasQuestionImage) {
+      toast({
+        title: "Missing Question Content",
+        description: "Please provide either question text or an image before saving.",
+        variant: "destructive",
+      });
+      return false;
+    }
 
     // Validate that correct answer is provided
     const hasCorrectAnswer = Array.isArray(newQuestionCorrect)
