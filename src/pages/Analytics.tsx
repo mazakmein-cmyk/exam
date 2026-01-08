@@ -819,7 +819,7 @@ export default function Analytics() {
                   <tr>
                     <th className="px-2 py-3 text-left w-[20%] rounded-tl-lg">Section Name</th>
                     <th className="px-2 py-3 text-center w-[15%]">Section Snippet</th>
-                    <th className="px-2 py-3 text-center w-[15%]">Total Attempts</th>
+
                     <th className="px-2 py-3 text-center w-[20%]">Avg Accuracy</th>
                     <th className="px-2 py-3 text-center w-[10%]">Avg Time/Q</th>
                     <th className="px-2 py-3 text-center w-[20%] rounded-tr-lg">Time (Avg / Total)</th>
@@ -834,7 +834,7 @@ export default function Analytics() {
                           <Eye className="w-4 h-4 text-primary" />
                         </Button>
                       </td>
-                      <td className="px-2 py-3 text-center">{section.totalAttempts}</td>
+
                       <td className="px-2 py-3">
                         <div className="flex items-center justify-center gap-2">
                           <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -875,7 +875,7 @@ export default function Analytics() {
                   <tr>
                     <th className="px-2 py-3 text-center w-[80px] rounded-tl-lg">Q. No</th>
                     <th className="px-2 py-3 text-center w-[150px]">Question Snippet</th>
-                    <th className="px-2 py-3 text-center w-[15%]">Attempts</th>
+
                     <th className="px-2 py-3 text-center w-[30%]">Accuracy</th>
                     <th className="px-2 py-3 text-center w-[15%] rounded-tr-lg">Avg Time</th>
                   </tr>
@@ -894,7 +894,7 @@ export default function Analytics() {
                         className="bg-muted/20 cursor-pointer hover:bg-muted/30 transition-colors"
                         onClick={() => toggleSection(sectionName)}
                       >
-                        <td colSpan={5} className="px-4 py-2 font-semibold text-primary">
+                        <td colSpan={4} className="px-4 py-2 font-semibold text-primary">
                           <div className="flex items-center gap-2">
                             {collapsedSections.has(sectionName) ? (
                               <ChevronRight className="w-4 h-4" />
@@ -916,7 +916,7 @@ export default function Analytics() {
                               <Eye className="w-4 h-4 text-primary" />
                             </Button>
                           </td>
-                          <td className="px-2 py-3 text-center">{q.totalAttempts}</td>
+
                           <td className="px-2 py-3">
                             <div className="flex items-center justify-center gap-2">
                               <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
