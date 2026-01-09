@@ -19,10 +19,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PdfSnipper from "@/components/PdfSnipper";
 import { QuestionForm } from "@/components/QuestionForm";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import {
   DndContext,
@@ -105,6 +106,10 @@ export default function ExamDetail() {
   const [newQuestionOptions, setNewQuestionOptions] = useState<string[]>(["", "", "", ""]);
   const [newQuestionImages, setNewQuestionImages] = useState<string[]>([]);
   const [newQuestionCorrect, setNewQuestionCorrect] = useState<string | string[]>("");
+  const [questionFormat, setQuestionFormat] = useState("standard");
+  const [passageText, setPassageText] = useState("");
+  const [passageImage, setPassageImage] = useState<string | null>(null);
+
 
   // View Question State
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(null);
@@ -607,6 +612,7 @@ export default function ExamDetail() {
     setNewQuestionText("");
     setNewQuestionOptions(["", "", "", ""]);
     setNewQuestionCorrect("");
+    setPassageText("");
     setNewQuestionImages([]);
     setNewQuestionType("single");
     if (pendingSectionId) {
@@ -805,7 +811,9 @@ export default function ExamDetail() {
       const newQuestion: any = {
         section_id: section.id,
         q_no: questions.length + 1,
-        text: newQuestionText || "", // Ensure text is never null
+        text: (questionFormat === "passage" && (passageText || passageImage))
+          ? `<div class="passage-section">${passageImage ? `<img src="${passageImage}" class="passage-image mb-4 w-full h-auto rounded-lg" />` : ""}${passageText}</div><div class="question-section">${newQuestionText || ""}</div>`
+          : (newQuestionText || ""),
         answer_type: newQuestionType,
         image_urls: newQuestionImages, // Updated
         correct_answer: newQuestionCorrect,
@@ -836,6 +844,9 @@ export default function ExamDetail() {
       setNewQuestionText("");
       setNewQuestionImages([]); // Updated
       setNewQuestionCorrect("");
+
+      setPassageText("");
+      setPassageImage(null);
       setNewQuestionOptions(["", "", "", ""]);
 
       toast({
@@ -996,7 +1007,29 @@ export default function ExamDetail() {
 
   const handleEditQuestion = (question: Question) => {
     setEditingQuestionId(question.id);
-    setNewQuestionText(question.text || "");
+    const text = question.text || "";
+    const passageMatch = text.match(/<div class="passage-section">([\s\S]*?)<\/div><div class="question-section">([\s\S]*?)<\/div>/);
+
+    if (passageMatch) {
+      setQuestionFormat("passage");
+      const fullPassageContent = passageMatch[1];
+      const imgMatch = fullPassageContent.match(/<img src="([^"]+)" class="passage-image[^>]*" \/>/);
+
+      if (imgMatch) {
+        setPassageImage(imgMatch[1]);
+        // Remove the image tag from the text displayed in the editor
+        setPassageText(fullPassageContent.replace(imgMatch[0], ""));
+      } else {
+        setPassageImage(null);
+        setPassageText(fullPassageContent);
+      }
+      setNewQuestionText(passageMatch[2]);
+    } else {
+      setQuestionFormat("standard");
+      setPassageText("");
+      setPassageImage(null);
+      setNewQuestionText(text);
+    }
     setNewQuestionType(question.answer_type);
     if (question.image_urls && Array.isArray(question.image_urls)) {
       setNewQuestionImages(question.image_urls);
@@ -1026,7 +1059,7 @@ export default function ExamDetail() {
     const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
     const hasQuestionText = strippedText !== '';
     const hasQuestionImages = newQuestionImages && newQuestionImages.length > 0;
-    if (!hasQuestionText && !hasQuestionImages) {
+    if (!hasQuestionText && !hasQuestionImages && questionFormat !== "passage") { // Added condition for passage format
       toast({
         title: "Missing Question Content",
         description: "Please provide either question text or an image before saving.",
@@ -1064,7 +1097,9 @@ export default function ExamDetail() {
 
     try {
       const updateData: any = {
-        text: newQuestionText || "",
+        text: (questionFormat === "passage" && (passageText || passageImage))
+          ? `<div class="passage-section">${passageImage ? `<img src="${passageImage}" class="passage-image mb-4 w-full h-auto rounded-lg" />` : ""}${passageText}</div><div class="question-section">${newQuestionText || ""}</div>`
+          : (newQuestionText || ""),
         answer_type: newQuestionType,
         image_urls: newQuestionImages, // Updated
         correct_answer: newQuestionCorrect,
@@ -1096,6 +1131,9 @@ export default function ExamDetail() {
       setNewQuestionImages([]); // Updated
       setNewQuestionCorrect("");
 
+      setPassageText("");
+      setPassageImage(null);
+
       toast({
         title: "Success",
         description: "Question updated successfully",
@@ -1119,6 +1157,9 @@ export default function ExamDetail() {
     setNewQuestionOptions(["", "", "", ""]);
     setNewQuestionImages([]);
     setNewQuestionCorrect("");
+    setNewQuestionCorrect("");
+    setPassageText("");
+    setPassageImage(null);
   };
 
 
@@ -1298,6 +1339,33 @@ export default function ExamDetail() {
     }
   };
 
+  const handleSnipPassage = async (blob: Blob) => {
+    if (!section) return;
+    try {
+      toast({ title: "Uploading passage snip..." });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const fileName = `${user.id}/${examId}/${section.id}/passage-snip-${Date.now()}.png`;
+      const file = new File([blob], "passage-snip.png", { type: "image/png" });
+
+      const { error: uploadError } = await supabase.storage
+        .from("exam-pdfs")
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("exam-pdfs")
+        .getPublicUrl(fileName);
+
+      setPassageImage(publicUrl);
+      toast({ title: "Passage Snip Attached", description: "Image added to passage." });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0 || !section) return;
     const file = e.target.files[0];
@@ -1323,6 +1391,37 @@ export default function ExamDetail() {
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
+  };
+
+  const handlePassageImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0 || !section) return;
+    const file = e.target.files[0];
+
+    try {
+      toast({ title: "Uploading passage image..." });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const fileName = `${user.id}/${examId}/${section.id}/passage-${Date.now()}.png`;
+      const { error: uploadError } = await supabase.storage
+        .from("exam-pdfs")
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("exam-pdfs")
+        .getPublicUrl(fileName);
+
+      setPassageImage(publicUrl);
+      toast({ title: "Passage Image Uploaded" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handlePassageImageRemove = () => {
+    setPassageImage(null);
   };
 
   if (loading) return <div className="p-8 text-center">Loading...</div>;
@@ -1702,14 +1801,35 @@ export default function ExamDetail() {
 
           {/* Add Question Form */}
           <Card ref={questionFormRef}>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
               <CardTitle>{editingQuestionId ? "Edit Question" : "Add Question"}</CardTitle>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-bold text-foreground hidden sm:inline-block">Question Format:</span>
+                <Select value={questionFormat} onValueChange={setQuestionFormat}>
+                  <SelectTrigger className="w-[280px] h-auto py-2">
+                    <SelectValue placeholder="Select format" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="standard" className="py-2 group">
+                      <div className="flex flex-col text-left">
+                        <span className="font-bold text-foreground group-focus:text-white">Standard Question</span>
+                        <span className="text-xs font-medium text-zinc-600 group-focus:text-white/80">Single question with options</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="passage" className="py-2 group">
+                      <div className="flex flex-col text-left">
+                        <span className="font-bold text-foreground group-focus:text-white">Passage-based Question</span>
+                        <span className="text-xs font-medium text-zinc-600 group-focus:text-white/80">Question linked to a shared passage</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardHeader>
             <CardContent>
-              <Tabs defaultValue="direct" className="w-full">
-                <TabsList className="grid w-full grid-cols-3 mb-6">
-                  <TabsTrigger value="direct">Direct Upload</TabsTrigger>
-                  <TabsTrigger value="pdf">PDF Snipping</TabsTrigger>
+              <Tabs defaultValue="pdf" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 mb-6">
+                  <TabsTrigger value="pdf">PDF Snipping/Direct Upload</TabsTrigger>
                   <TabsTrigger value="ai" className="gap-2">
                     AI Parse
                     <Badge variant="secondary" className="h-5 text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 hover:bg-blue-100 border-blue-200">
@@ -1718,42 +1838,6 @@ export default function ExamDetail() {
                   </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="direct" className="space-y-0">
-                  <div className="flex justify-between items-start mb-0">
-                    <h3 className="font-semibold">Question Details</h3>
-                    {editingQuestionId && (
-                      <div className="flex flex-col gap-2">
-                        <Button onClick={handleUpdateQuestion} size="sm">
-                          <Save className="mr-2 h-4 w-4" />
-                          Update
-                        </Button>
-                        <Button variant="outline" onClick={handleCancelEdit} size="sm">
-                          Cancel
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  <QuestionForm
-                    text={newQuestionText}
-                    setText={setNewQuestionText}
-                    type={newQuestionType}
-                    setType={setNewQuestionType}
-                    options={newQuestionOptions}
-                    setOptions={setNewQuestionOptions}
-                    correct={newQuestionCorrect}
-                    setCorrect={setNewQuestionCorrect}
-                    images={newQuestionImages}
-                    onImageRemove={(idx) => {
-                      const newImages = [...newQuestionImages];
-                      newImages.splice(idx, 1);
-                      setNewQuestionImages(newImages);
-                    }}
-                    onImageUpload={handleImageUpload}
-                    onAdd={editingQuestionId ? handleUpdateQuestion : handleAddQuestion}
-                    showImageUpload={true}
-                    isEditing={!!editingQuestionId}
-                  />
-                </TabsContent>
 
                 <TabsContent value="pdf" className="space-y-6">
                   <div className="space-y-2">
@@ -1775,11 +1859,67 @@ export default function ExamDetail() {
 
                   {section?.pdf_url ? (
                     <div className="border rounded-lg overflow-hidden h-[600px]">
-                      <PdfSnipper pdfUrl={section.pdf_url} onSnip={handleSnip} />
+                      <PdfSnipper
+                        pdfUrl={section.pdf_url}
+                        onSnip={handleSnip}
+                        onSnipPassage={questionFormat === "passage" ? handleSnipPassage : undefined}
+                      />
                     </div>
                   ) : (
                     <div className="text-center py-12 border rounded-lg bg-slate-50 text-muted-foreground">
                       Please upload a PDF to start snipping questions.
+                    </div>
+                  )}
+
+                  {questionFormat === "passage" && (
+                    <div className="pt-4 border-t">
+                      <h3 className="font-semibold mb-4">Passage Details</h3>
+                      <div className="space-y-4 mb-6">
+                        <div className="space-y-2 mb-4">
+                          <Label>Passage Image</Label>
+                          <div className="flex items-center gap-4">
+                            <Button variant="outline" className="h-10 border-dashed" onClick={() => document.getElementById('pdf-passage-image-upload')?.click()}>
+                              <Upload className="mr-2 h-4 w-4" />
+                              Upload Image
+                              <input
+                                id="pdf-passage-image-upload"
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={handlePassageImageUpload}
+                              />
+                            </Button>
+                            {passageImage && (
+                              <span className="text-sm text-green-600 flex items-center">
+                                <Check className="mr-1 h-4 w-4" /> 1 Image attached
+                              </span>
+                            )}
+                          </div>
+                          {passageImage && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <div className="border rounded-md p-2 bg-slate-50 w-fit relative group">
+                                <img src={passageImage} alt="Passage" className="h-32 object-contain" />
+                                <button
+                                  onClick={handlePassageImageRemove}
+                                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                                  title="Remove image"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Passage Text</Label>
+                          <RichTextEditor
+                            value={passageText}
+                            onChange={setPassageText}
+                            placeholder="Enter the passage text here..."
+                            className="min-h-[150px]"
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -1815,7 +1955,7 @@ export default function ExamDetail() {
                       }}
                       onImageUpload={handleImageUpload}
                       onAdd={editingQuestionId ? handleUpdateQuestion : handleAddQuestion}
-                      showImageUpload={false}
+                      showImageUpload={true}
                       isEditing={!!editingQuestionId}
                     />
                   </div>

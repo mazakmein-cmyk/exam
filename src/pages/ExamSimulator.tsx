@@ -621,7 +621,7 @@ const ExamSimulator = () => {
       <div className="flex-1 flex overflow-hidden">
         {/* Main Question Area */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-20 sm:pb-6">
-          <div className="max-w-3xl mx-auto space-y-6">
+          <div className="max-w-6xl mx-auto space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <h2 className="text-sm font-medium text-muted-foreground">
                 Question {currentQuestionIndex + 1} of {questions.length}
@@ -640,56 +640,144 @@ const ExamSimulator = () => {
 
             <Card className="border-t-4 border-t-primary">
               <CardContent className="pt-6 space-y-6">
-                {(
-                  (currentQuestion?.image_urls && currentQuestion.image_urls.length > 0) ? (
-                    <div className="mb-4 flex flex-col gap-4">
-                      {currentQuestion.image_urls.map((url, idx) => (
-                        <div key={idx} className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                {(() => {
+                  // Parse passage content from question text
+                  const questionText = currentQuestion?.text || "";
+
+                  // Check if this is a passage-based question
+                  const hasPassageSection = questionText.includes('class="passage-section"');
+
+                  // Extract passage image - handle both src before class and class before src
+                  const passageImageMatch = questionText.match(/<img[^>]*src="([^"]*)"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/) ||
+                    questionText.match(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*src="([^"]*)"[^>]*>/);
+
+                  if (hasPassageSection) {
+                    // Extract content between <div class="passage-section"> and </div><div class="question-section">
+                    const passageSectionMatch = questionText.match(/<div class="passage-section"[^>]*>([\s\S]*?)<\/div><div class="question-section"/);
+                    let passageContent = passageSectionMatch ? passageSectionMatch[1] : "";
+
+                    // Remove the passage image from passageContent (we'll render it separately)
+                    passageContent = passageContent.replace(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "")
+                      .replace(/<img[^>]*src="[^"]*"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "").trim();
+                    const passageImageUrl = passageImageMatch ? passageImageMatch[1] : null;
+
+                    // Extract question content from <div class="question-section">...</div>
+                    const questionSectionMatch = questionText.match(/<div class="question-section"[^>]*>([\s\S]*?)<\/div>$/);
+                    const questionContent = questionSectionMatch ? questionSectionMatch[1].trim() : "";
+
+                    return (
+                      <div className="flex flex-col lg:flex-row gap-6">
+                        {/* Left: Passage Section */}
+                        <div className="lg:w-1/2 space-y-4 border-r-0 lg:border-r lg:pr-6">
+                          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Passage</h3>
+                          {passageImageUrl && (
+                            <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                              <img
+                                src={passageImageUrl}
+                                alt="Passage"
+                                className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                              />
+                            </div>
+                          )}
+                          {passageContent && (
+                            <div
+                              className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
+                              dangerouslySetInnerHTML={{ __html: passageContent }}
+                            />
+                          )}
+                        </div>
+
+                        {/* Right: Question Section */}
+                        <div className="lg:w-1/2 space-y-4">
+                          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Question</h3>
+                          {/* Question Images */}
+                          {(currentQuestion?.image_urls && currentQuestion.image_urls.length > 0) ? (
+                            <div className="flex flex-col gap-4">
+                              {currentQuestion.image_urls.map((url, idx) => (
+                                <div key={idx} className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                                  <img
+                                    src={url}
+                                    alt={`Question ${idx + 1}`}
+                                    className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          ) : currentQuestion?.image_url ? (
+                            <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                              <img
+                                src={currentQuestion.image_url}
+                                alt="Question"
+                                className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
+                              />
+                            </div>
+                          ) : null}
+                          {/* Question Text */}
+                          {questionContent && (
+                            <div
+                              className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
+                              dangerouslySetInnerHTML={{
+                                __html: questionContent
+                                  .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
+                                  .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
+                                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                  .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                                  .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                              }}
+                            />
+                          )}
+                          {/* Answer Options */}
+                          <div className="mt-4 pt-4 border-t">
+                            {renderAnswerInput()}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Non-passage question: Original vertical layout
+                  return (
+                    <>
+                      {(currentQuestion?.image_urls && currentQuestion.image_urls.length > 0) ? (
+                        <div className="mb-4 flex flex-col gap-4">
+                          {currentQuestion.image_urls.map((url, idx) => (
+                            <div key={idx} className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                              <img
+                                src={url}
+                                alt={`Question ${idx + 1}`}
+                                className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : currentQuestion?.image_url ? (
+                        <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
                           <img
-                            src={url}
-                            alt={`Question ${idx + 1}`}
+                            src={currentQuestion.image_url}
+                            alt="Question"
                             className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
                           />
                         </div>
-                      ))}
-                    </div>
-                  ) : currentQuestion?.image_url ? (
-                    <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
-                      <img
-                        src={currentQuestion.image_url}
-                        alt="Question"
-                        className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
-                      />
-                    </div>
-                  ) : null
-                )}
-                {currentQuestion?.text && (
-                  <div
-                    className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
-                    dangerouslySetInnerHTML={{
-                      __html: currentQuestion.text
-                        // Parse markdown links [text](url) -> <a href="url">text</a>
-                        .replace(
-                          /\[([^\]]+)\]\(([^)]+)\)/g,
-                          '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>'
-                        )
-                        // Ensure existing HTML links have proper styling if they don't already
-                        .replace(
-                          /<a href/g,
-                          '<a class="text-primary underline hover:text-primary/80" href'
-                        )
-                        // Bold: **text** -> <strong>text</strong>
-                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                        // Italic: *text* -> <em>text</em>
-                        .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                        // Strikethrough: ~~text~~ -> <del>text</del>
-                        .replace(/~~(.*?)~~/g, '<del>$1</del>')
-                    }}
-                  />
-                )}
-                <div className="mt-6 pt-6 border-t">
-                  {renderAnswerInput()}
-                </div>
+                      ) : null}
+                      {currentQuestion?.text && (
+                        <div
+                          className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
+                          dangerouslySetInnerHTML={{
+                            __html: currentQuestion.text
+                              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
+                              .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
+                              .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                              .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                              .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                          }}
+                        />
+                      )}
+                      <div className="mt-6 pt-6 border-t">
+                        {renderAnswerInput()}
+                      </div>
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
 

@@ -11,9 +11,10 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 interface PdfSnipperProps {
     pdfUrl: string;
     onSnip: (blob: Blob) => void;
+    onSnipPassage?: (blob: Blob) => void;
 }
 
-export default function PdfSnipper({ pdfUrl, onSnip }: PdfSnipperProps) {
+export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipperProps) {
     const [numPages, setNumPages] = useState<number>(0);
     const [pageNumber, setPageNumber] = useState<number>(1);
     const [scale, setScale] = useState<number>(1.0);
@@ -28,13 +29,13 @@ export default function PdfSnipper({ pdfUrl, onSnip }: PdfSnipperProps) {
         setNumPages(numPages);
     }
 
-    const handleSnip = async () => {
+    const processSnip = async (callback: (blob: Blob) => void) => {
         if (!completedCrop || !canvasRef.current) return;
 
         const canvas = canvasRef.current;
         const crop = completedCrop;
 
-        const scaleX = canvas.width / canvas.offsetWidth; // Should be 1 if we use the canvas directly
+        const scaleX = canvas.width / canvas.offsetWidth;
         const scaleY = canvas.height / canvas.offsetHeight;
 
         const snipCanvas = document.createElement('canvas');
@@ -43,12 +44,6 @@ export default function PdfSnipper({ pdfUrl, onSnip }: PdfSnipperProps) {
         const ctx = snipCanvas.getContext('2d');
 
         if (!ctx) return;
-
-        // The react-pdf Page renders onto a canvas. We can draw from that canvas.
-        // However, react-pdf might render multiple canvases for text layers etc. 
-        // We need to target the main canvas. 
-        // Actually, react-pdf's <Page> component renders a canvas internally. 
-        // We can use the `canvasRef` prop on <Page> to get access to it.
 
         ctx.drawImage(
             canvas,
@@ -64,11 +59,14 @@ export default function PdfSnipper({ pdfUrl, onSnip }: PdfSnipperProps) {
 
         snipCanvas.toBlob((blob) => {
             if (blob) {
-                onSnip(blob);
+                callback(blob);
                 setCrop(undefined); // Clear crop after snip
             }
         }, 'image/png');
     };
+
+    const handleSnip = () => processSnip(onSnip);
+    const handleSnipPassage = () => onSnipPassage && processSnip(onSnipPassage);
 
     return (
         <div className="flex flex-col h-full bg-slate-100 rounded-lg border overflow-hidden">
@@ -114,14 +112,27 @@ export default function PdfSnipper({ pdfUrl, onSnip }: PdfSnipperProps) {
                     </Button>
                 </div>
 
-                <Button
-                    onClick={handleSnip}
-                    disabled={!completedCrop?.width || !completedCrop?.height}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                    <Scissors className="mr-2 h-4 w-4" />
-                    Snip & Attach
-                </Button>
+                <div className="flex items-center gap-2">
+                    {onSnipPassage && (
+                        <Button
+                            onClick={handleSnipPassage}
+                            disabled={!completedCrop?.width || !completedCrop?.height}
+                            variant="outline"
+                            className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                        >
+                            <Scissors className="mr-2 h-4 w-4" />
+                            Snip & Attach Passage
+                        </Button>
+                    )}
+                    <Button
+                        onClick={handleSnip}
+                        disabled={!completedCrop?.width || !completedCrop?.height}
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                        <Scissors className="mr-2 h-4 w-4" />
+                        Snip & Attach
+                    </Button>
+                </div>
             </div>
 
             {/* PDF Viewer Area */}

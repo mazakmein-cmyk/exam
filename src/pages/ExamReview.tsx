@@ -562,72 +562,181 @@ export default function ExamReview() {
                           {/* Question Content - Expanded View */}
                           {isQuestionExpanded && (
                             <div className="p-4 border-t bg-background">
-                              {/* Question Image */}
-                              {/* Question Images */}
-                              {(
-                                (response.question.image_urls && response.question.image_urls.length > 0) ? (
-                                  <div className="mb-4 flex flex-wrap gap-4 justify-center">
-                                    {response.question.image_urls.map((url: string, idx: number) => (
-                                      <div key={idx} className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center w-full max-w-md">
+                              {(() => {
+                                // Parse passage content from question text
+                                const questionText = response.question.text || "";
+
+                                // Check if this is a passage-based question
+                                const hasPassageSection = questionText.includes('class="passage-section"');
+
+                                // Extract passage image - handle both src before class and class before src
+                                const passageImageMatch = questionText.match(/<img[^>]*src="([^"]*)"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/) ||
+                                  questionText.match(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*src="([^"]*)"[^>]*>/);
+
+                                if (hasPassageSection) {
+                                  // Extract content between <div class="passage-section"> and </div><div class="question-section">
+                                  const passageSectionMatch = questionText.match(/<div class="passage-section"[^>]*>([\s\S]*?)<\/div><div class="question-section"/);
+                                  let passageContent = passageSectionMatch ? passageSectionMatch[1] : "";
+
+                                  // Remove the passage image from passageContent (we'll render it separately)
+                                  passageContent = passageContent.replace(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "")
+                                    .replace(/<img[^>]*src="[^"]*"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "").trim();
+                                  const passageImageUrl = passageImageMatch ? passageImageMatch[1] : null;
+
+                                  // Extract question content from <div class="question-section">...</div>
+                                  const questionSectionMatch = questionText.match(/<div class="question-section"[^>]*>([\s\S]*?)<\/div>$/);
+                                  const questionContent = questionSectionMatch ? questionSectionMatch[1].trim() : "";
+
+                                  return (
+                                    <div className="flex flex-col lg:flex-row gap-6">
+                                      {/* Left: Passage Section */}
+                                      <div className="lg:w-1/2 space-y-4 border-r-0 lg:border-r lg:pr-6">
+                                        <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Passage</h4>
+                                        {passageImageUrl && (
+                                          <div className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                                            <img
+                                              src={passageImageUrl}
+                                              alt="Passage"
+                                              className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                                            />
+                                          </div>
+                                        )}
+                                        {passageContent && (
+                                          <div
+                                            className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
+                                            dangerouslySetInnerHTML={{ __html: passageContent }}
+                                          />
+                                        )}
+                                      </div>
+
+                                      {/* Right: Question Section */}
+                                      <div className="lg:w-1/2 space-y-4">
+                                        <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Question</h4>
+                                        {/* Question Images */}
+                                        {(response.question.image_urls && response.question.image_urls.length > 0) ? (
+                                          <div className="flex flex-wrap gap-4 justify-center">
+                                            {response.question.image_urls.map((url: string, idx: number) => (
+                                              <div key={idx} className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center w-full max-w-md">
+                                                <img
+                                                  src={url}
+                                                  alt={`Question Image ${idx + 1}`}
+                                                  className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
+                                                />
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : response.question.image_url ? (
+                                          <div className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
+                                            <img
+                                              src={response.question.image_url}
+                                              alt="Question"
+                                              className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
+                                            />
+                                          </div>
+                                        ) : null}
+                                        {/* Question Text */}
+                                        {questionContent && (
+                                          <div
+                                            className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
+                                            dangerouslySetInnerHTML={{
+                                              __html: questionContent
+                                                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
+                                                .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
+                                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                                .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                                                .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                                            }}
+                                          />
+                                        )}
+                                        {/* Options Display */}
+                                        {renderOptions(response)}
+
+                                        {/* Answer Summary */}
+                                        <div className="space-y-2 bg-muted/50 p-4 rounded-md mt-4">
+                                          <div>
+                                            <span className="font-semibold">Your Answer: </span>
+                                            <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
+                                              {formatAnswer(response.selected_answer, response.question.answer_type)}
+                                            </span>
+                                          </div>
+
+                                          {response.question.correct_answer && (
+                                            <div>
+                                              <span className="font-semibold">Correct Answer: </span>
+                                              <span className="text-green-600 font-medium">
+                                                {formatAnswer(response.question.correct_answer, response.question.answer_type)}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                // Non-passage question: Original vertical layout
+                                return (
+                                  <>
+                                    {/* Question Images */}
+                                    {(response.question.image_urls && response.question.image_urls.length > 0) ? (
+                                      <div className="mb-4 flex flex-wrap gap-4 justify-center">
+                                        {response.question.image_urls.map((url: string, idx: number) => (
+                                          <div key={idx} className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center w-full max-w-md">
+                                            <img
+                                              src={url}
+                                              alt={`Question Image ${idx + 1}`}
+                                              className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : response.question.image_url ? (
+                                      <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
                                         <img
-                                          src={url}
-                                          alt={`Question Image ${idx + 1}`}
+                                          src={response.question.image_url}
+                                          alt="Question"
                                           className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
                                         />
                                       </div>
-                                    ))}
-                                  </div>
-                                ) : response.question.image_url ? (
-                                  <div className="mb-4 border rounded-lg p-4 bg-slate-50 dark:bg-slate-900 flex justify-center">
-                                    <img
-                                      src={response.question.image_url}
-                                      alt="Question"
-                                      className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                                    ) : null}
+
+                                    {/* Question Text - Rendered HTML */}
+                                    <div
+                                      className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
+                                      dangerouslySetInnerHTML={{
+                                        __html: response.question.text
+                                          .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
+                                          .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
+                                          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                          .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+                                          .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                                      }}
                                     />
-                                  </div>
-                                ) : null
-                              )}
 
-                              {/* Question Text - Rendered HTML */}
-                              <div
-                                className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
-                                dangerouslySetInnerHTML={{
-                                  __html: response.question.text
-                                    .replace(
-                                      /\[([^\]]+)\]\(([^)]+)\)/g,
-                                      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>'
-                                    )
-                                    .replace(
-                                      /<a href/g,
-                                      '<a class="text-primary underline hover:text-primary/80" href'
-                                    )
-                                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                                    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                                    .replace(/~~(.*?)~~/g, '<del>$1</del>')
-                                }}
-                              />
+                                    {/* Options Display */}
+                                    {renderOptions(response)}
 
-                              {/* Options Display */}
-                              {renderOptions(response)}
+                                    {/* Answer Summary */}
+                                    <div className="space-y-2 bg-muted/50 p-4 rounded-md mt-4">
+                                      <div>
+                                        <span className="font-semibold">Your Answer: </span>
+                                        <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
+                                          {formatAnswer(response.selected_answer, response.question.answer_type)}
+                                        </span>
+                                      </div>
 
-                              {/* Answer Summary */}
-                              <div className="space-y-2 bg-muted/50 p-4 rounded-md mt-4">
-                                <div>
-                                  <span className="font-semibold">Your Answer: </span>
-                                  <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
-                                    {formatAnswer(response.selected_answer, response.question.answer_type)}
-                                  </span>
-                                </div>
-
-                                {response.question.correct_answer && (
-                                  <div>
-                                    <span className="font-semibold">Correct Answer: </span>
-                                    <span className="text-green-600 font-medium">
-                                      {formatAnswer(response.question.correct_answer, response.question.answer_type)}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
+                                      {response.question.correct_answer && (
+                                        <div>
+                                          <span className="font-semibold">Correct Answer: </span>
+                                          <span className="text-green-600 font-medium">
+                                            {formatAnswer(response.question.correct_answer, response.question.answer_type)}
+                                          </span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>

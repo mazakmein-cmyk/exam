@@ -1493,7 +1493,7 @@ export function QuestionForm({
     return (
         <div className="space-y-6">
             <div className="space-y-2">
-                <Label>Question Image {showImageUpload ? "(Ctrl+V to paste)" : "(Snipped from PDF)"}</Label>
+                <Label>Question Image {showImageUpload ? "" : "(Snipped from PDF)"}</Label>
                 {showImageUpload && (
                     <div className="flex items-center gap-4">
                         <Button variant="outline" className="relative" onClick={() => document.getElementById('img-upload')?.click()}>
@@ -1535,7 +1535,7 @@ export function QuestionForm({
             </div>
 
             <div className="space-y-2">
-                <Label>Question Text (Optional)</Label>
+                <Label>Question Text</Label>
                 <div
                     className={`border rounded-md transition-colors ${isQuestionFocused || isLinkPopoverOpen || isFormatMenuOpen || isTextDirectionOpen || isTablePopoverOpen || isTableMenuOpen || isAlignMenuOpen || isColorPopoverOpen || isFormulaPopoverOpen ? 'border-primary ring-1 ring-primary' : 'border-input'}`}
                     onBlur={(e) => {
