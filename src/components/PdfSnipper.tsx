@@ -17,7 +17,7 @@ interface PdfSnipperProps {
 export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipperProps) {
     const [numPages, setNumPages] = useState<number>(0);
     const [pageNumber, setPageNumber] = useState<number>(1);
-    const [scale, setScale] = useState<number>(1.0);
+    const [scale, setScale] = useState<number>(1.1);
     const [crop, setCrop] = useState<Crop>();
     const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
     const [imageRef, setImageRef] = useState<HTMLCanvasElement | null>(null);
@@ -61,6 +61,7 @@ export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipper
             if (blob) {
                 callback(blob);
                 setCrop(undefined); // Clear crop after snip
+                setCompletedCrop(undefined); // Clear completedCrop to disable buttons
             }
         }, 'image/png');
     };
@@ -98,7 +99,7 @@ export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipper
                     <Button
                         variant="outline"
                         size="icon"
-                        onClick={() => setScale(s => Math.max(0.5, s - 0.1))}
+                        onClick={() => setScale(s => Math.max(1.1, s - 0.1))}
                     >
                         <ZoomOut className="h-4 w-4" />
                     </Button>
@@ -118,7 +119,7 @@ export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipper
                             onClick={handleSnipPassage}
                             disabled={!completedCrop?.width || !completedCrop?.height}
                             variant="outline"
-                            className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                            className="border-blue-600 text-blue-600 hover:bg-blue-600 hover:text-white"
                         >
                             <Scissors className="mr-2 h-4 w-4" />
                             Snip & Attach Passage
@@ -130,7 +131,7 @@ export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipper
                         className="bg-blue-600 hover:bg-blue-700 text-white"
                     >
                         <Scissors className="mr-2 h-4 w-4" />
-                        Snip & Attach
+                        Snip & Attach Question
                     </Button>
                 </div>
             </div>

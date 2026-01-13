@@ -375,11 +375,46 @@ export default function ExamDetail() {
     return true;
   };
 
-  const handleShare = () => {
-    toast({
-      title: "Share",
-      description: "Sharing functionality coming soon!",
-    });
+  const handleShare = async () => {
+    const shareUrl = `${window.location.origin}/exam/${examId}/intro`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast({
+        title: "Link Copied!",
+        description: "Exam link has been copied to your clipboard.",
+      });
+    } catch (error) {
+      // Fallback for browsers that don't support clipboard API
+      toast({
+        title: "Share Link",
+        description: shareUrl,
+      });
+    }
+  };
+
+  // Handler to save both question (if in progress) and exam
+  const handleSaveAll = async () => {
+    // Check if there's a question in progress (has text or images)
+    const strippedQuestionText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
+    const hasQuestionContent = strippedQuestionText !== '' || (newQuestionImages && newQuestionImages.length > 0);
+
+    // For passage format, also check passage content
+    const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
+    const hasPassageContent = strippedPassageText !== '' || (passageImage !== null && passageImage !== '');
+
+    const hasQuestionInProgress = hasQuestionContent || (questionFormat === "passage" && hasPassageContent);
+
+    if (hasQuestionInProgress) {
+      // Try to save the question first
+      if (editingQuestionId) {
+        await handleUpdateQuestion();
+      } else {
+        await handleAddQuestion();
+      }
+    }
+
+    // Then save the exam
+    await handleSaveExam();
   };
 
   const handleDuplicateExam = async () => {
@@ -754,6 +789,22 @@ export default function ExamDetail() {
   const handleAddQuestion = async () => {
     if (!section) return false;
 
+    // Validate passage content for passage-based questions
+    if (questionFormat === "passage") {
+      const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
+      const hasPassageText = strippedPassageText !== '';
+      const hasPassageImage = passageImage !== null && passageImage !== '';
+
+      if (!hasPassageText && !hasPassageImage) {
+        toast({
+          title: "Missing Passage Content",
+          description: "For passage-based questions, please provide either passage text or a passage image.",
+          variant: "destructive",
+        });
+        return false;
+      }
+    }
+
     // Shared validation for Direct Upload and PDF Snipper
     // Validate that at least question text or image is provided
     // Strip HTML tags to check for actual text content (rich text editors may leave empty HTML)
@@ -1052,6 +1103,22 @@ export default function ExamDetail() {
 
   const handleUpdateQuestion = async () => {
     if (!editingQuestionId || !section) return false;
+
+    // Validate passage content for passage-based questions
+    if (questionFormat === "passage") {
+      const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
+      const hasPassageText = strippedPassageText !== '';
+      const hasPassageImage = passageImage !== null && passageImage !== '';
+
+      if (!hasPassageText && !hasPassageImage) {
+        toast({
+          title: "Missing Passage Content",
+          description: "For passage-based questions, please provide either passage text or a passage image.",
+          variant: "destructive",
+        });
+        return false;
+      }
+    }
 
     // Shared validation for Direct Upload and PDF Snipper
     // Validate that at least question text or image is provided
@@ -1445,11 +1512,11 @@ export default function ExamDetail() {
             <BookOpen className="h-4 w-4" />
           </Button>
 
-          <Button onClick={handleSaveExam} disabled={saving} size="sm" className="hidden sm:flex">
+          <Button onClick={handleSaveAll} disabled={saving} size="sm" className="hidden sm:flex">
             <Save className="mr-2 h-4 w-4" />
             Save
           </Button>
-          <Button onClick={handleSaveExam} disabled={saving} size="icon" className="sm:hidden">
+          <Button onClick={handleSaveAll} disabled={saving} size="icon" className="sm:hidden">
             <Save className="h-4 w-4" />
           </Button>
 
@@ -1691,9 +1758,14 @@ export default function ExamDetail() {
                                       Has image
                                     </div>
                                   )}
-                                  {q.text ? (
-                                    <div className="font-medium truncate" dangerouslySetInnerHTML={{ __html: q.text }} />
-                                  ) : (
+                                  {q.text ? (() => {
+                                    // Extract only question-section content for collapsed view, stripping passage-section and images
+                                    const questionSectionMatch = q.text.match(/<div class="question-section">([\s\S]*?)<\/div>/);
+                                    const displayText = questionSectionMatch
+                                      ? questionSectionMatch[1].replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim()
+                                      : q.text.replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim();
+                                    return <p className="font-medium truncate">{displayText || 'Question with passage'}</p>;
+                                  })() : (
                                     <p className="font-medium">Question with image</p>
                                   )}
                                   <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
@@ -1742,12 +1814,31 @@ export default function ExamDetail() {
                                     </div>
                                   )}
 
-                                  {q.text && (
-                                    <div>
-                                      <Label className="mb-2 block font-semibold">Question Text</Label>
-                                      <div className="text-sm p-3 bg-slate-50 rounded-md" dangerouslySetInnerHTML={{ __html: q.text }} />
-                                    </div>
-                                  )}
+                                  {q.text && (() => {
+                                    // Extract passage section if present
+                                    const passageSectionMatch = q.text.match(/<div class="passage-section">([\s\S]*?)<\/div>\s*<div class="question-section">/);
+                                    const questionSectionMatch = q.text.match(/<div class="question-section">([\s\S]*?)<\/div>$/);
+                                    const hasPassageSection = passageSectionMatch !== null;
+
+                                    return (
+                                      <>
+                                        {hasPassageSection && passageSectionMatch && (
+                                          <div className="border rounded-lg p-4 bg-amber-50">
+                                            <Label className="mb-2 block font-semibold">Passage</Label>
+                                            <div className="text-sm" dangerouslySetInnerHTML={{ __html: passageSectionMatch[1] }} />
+                                          </div>
+                                        )}
+                                        <div>
+                                          <Label className="mb-2 block font-semibold">Question Text</Label>
+                                          <div className="text-sm p-3 bg-slate-50 rounded-md" dangerouslySetInnerHTML={{
+                                            __html: hasPassageSection && questionSectionMatch
+                                              ? questionSectionMatch[1]
+                                              : q.text
+                                          }} />
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
 
                                   <div>
                                     <Label className="mb-2 block font-semibold">Question Type</Label>
