@@ -117,15 +117,16 @@ export default function Analytics() {
         // We can do this by filtering on the joined column, but JS client requires specific syntax or embedded resource filtering.
         // Easier approach: Get sections for this exam first, then get attempts for those sections.
 
-        // 1. Get Exam Name
+        // 1. Get Exam Name and Creator ID
         const { data: examData, error: examError } = await supabase
           .from("exams")
-          .select("name")
+          .select("name, user_id")
           .eq("id", examId)
           .single();
 
         if (examError) throw examError;
         setExamName(examData.name);
+        const examCreatorId = examData.user_id; // Store creator ID to filter out their attempts
 
         // 1.5 Get All Sections to determine First and Last (for analytics logic)
         const { data: allSections, error: sectionsError } = await supabase
@@ -159,6 +160,11 @@ export default function Analytics() {
           .order("submitted_at", { ascending: false });
 
         if (attemptsError) throw attemptsError;
+
+        // Filter out the creator's own attempts from analytics
+        const filteredAttempts = (sectionAttempts || []).filter(
+          (attempt: any) => attempt.user_id !== examCreatorId
+        );
         // NOTE: We do NOT setAttempts here yet. We need to correct them first.
 
         // 3. Get all questions for this exam to build stats
@@ -173,7 +179,7 @@ export default function Analytics() {
         if (questionsError) throw questionsError;
 
         // 4. Get all responses for these attempts
-        const attemptIds = (sectionAttempts || []).map(a => a.id);
+        const attemptIds = filteredAttempts.map((a: any) => a.id);
         let responsesData: any[] = [];
 
         if (attemptIds.length > 0) {
@@ -190,7 +196,7 @@ export default function Analytics() {
         const normalize = (val: any) => String(val).trim().toLowerCase();
 
         // 5. Correct Attempts Data (Re-grade on fly)
-        const correctedAttempts = (sectionAttempts || []).map((attempt: any) => {
+        const correctedAttempts = filteredAttempts.map((attempt: any) => {
           const attemptResponses = responsesData.filter(r => r.attempt_id === attempt.id);
           let correctCount = 0;
           let totalTime = 0;
