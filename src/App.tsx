@@ -15,6 +15,7 @@ import ExamReview from "./pages/ExamReview";
 import Analytics from "./pages/Analytics";
 import ExamIntro from "./pages/ExamIntro";
 import NotFound from "./pages/NotFound";
+import AdminDashboard from "./pages/AdminDashboard";
 import AuthStateListener from "./components/AuthStateListener";
 
 const queryClient = new QueryClient();
@@ -45,6 +46,7 @@ const router = createBrowserRouter([
       { path: "/exam/:examId/section/:sectionId/simulator", element: <ExamSimulator /> },
       { path: "/exam/review/:attemptId", element: <ExamReview /> },
       { path: "/analytics", element: <Analytics /> },
+      { path: "/barnwal3008-admin", element: <AdminDashboard /> },
       { path: "*", element: <NotFound /> },
     ],
   },
