@@ -138,3 +138,49 @@ All colors MUST be HSL.
     @apply border-l-4 border-primary pl-4 italic text-muted-foreground my-4;
   }
 }
+
+/* Image loading optimizations */
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+.img-skeleton {
+  background: linear-gradient(
+    90deg,
+    hsl(220 15% 92%) 0%,
+    hsl(220 15% 96%) 40%,
+    hsl(220 15% 92%) 80%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.dark .img-skeleton {
+  background: linear-gradient(
+    90deg,
+    hsl(234 20% 16%) 0%,
+    hsl(234 20% 22%) 40%,
+    hsl(234 20% 16%) 80%
+  );
+  background-size: 800px 100%;
+}
+
+.img-fade-in {
+  animation: imgFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes imgFadeIn {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}

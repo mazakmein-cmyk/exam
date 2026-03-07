@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import OptimizedImage from "@/components/OptimizedImage";
 
 type Question = {
   id: string;
@@ -94,6 +95,28 @@ const ExamSimulator = () => {
   useEffect(() => {
     questionStartTimeRef.current = Date.now();
   }, [currentQuestionIndex]);
+
+  // Preload all question images into browser cache when questions load
+  const preloadImages = useCallback((questionsList: Question[]) => {
+    const urls = new Set<string>();
+    for (const q of questionsList) {
+      if (q.image_url) urls.add(q.image_url);
+      if (q.image_urls) q.image_urls.forEach(u => urls.add(u));
+      // Also extract passage images embedded in question text
+      const passageMatch = q.text?.match(/<img[^>]*src="([^"]+)"[^>]*class="[^"]*passage-image/);
+      if (passageMatch?.[1]) urls.add(passageMatch[1]);
+    }
+    urls.forEach(url => {
+      const img = new Image();
+      img.src = url;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (questions.length > 0) {
+      preloadImages(questions);
+    }
+  }, [questions, preloadImages]);
 
   const fetchSectionAndQuestions = async () => {
     if (!sectionId || !examId) return;
@@ -672,7 +695,7 @@ const ExamSimulator = () => {
                           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Passage</h3>
                           {passageImageUrl && (
                             <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
-                              <img
+                              <OptimizedImage
                                 src={passageImageUrl}
                                 alt="Passage"
                                 className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
@@ -695,7 +718,7 @@ const ExamSimulator = () => {
                             <div className="flex flex-col gap-4">
                               {currentQuestion.image_urls.map((url, idx) => (
                                 <div key={idx} className="border rounded-lg p-4 bg-slate-50 flex justify-center">
-                                  <img
+                                  <OptimizedImage
                                     src={url}
                                     alt={`Question ${idx + 1}`}
                                     className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
@@ -705,7 +728,7 @@ const ExamSimulator = () => {
                             </div>
                           ) : currentQuestion?.image_url ? (
                             <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
-                              <img
+                              <OptimizedImage
                                 src={currentQuestion.image_url}
                                 alt="Question"
                                 className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
@@ -742,7 +765,7 @@ const ExamSimulator = () => {
                         <div className="mb-4 flex flex-col gap-4">
                           {currentQuestion.image_urls.map((url, idx) => (
                             <div key={idx} className="border rounded-lg p-4 bg-slate-50 flex justify-center">
-                              <img
+                              <OptimizedImage
                                 src={url}
                                 alt={`Question ${idx + 1}`}
                                 className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
@@ -752,7 +775,7 @@ const ExamSimulator = () => {
                         </div>
                       ) : currentQuestion?.image_url ? (
                         <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
-                          <img
+                          <OptimizedImage
                             src={currentQuestion.image_url}
                             alt="Question"
                             className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
