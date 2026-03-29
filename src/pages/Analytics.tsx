@@ -184,63 +184,87 @@ export default function Analytics() {
 
         if (questionsError) throw questionsError;
 
-        // 4. Get all responses for these attempts
+        // 4. Get all responses for these attempts (chunked to avoid URL length limits)
         const attemptIds = filteredAttempts.map((a: any) => a.id);
         let responsesData: any[] = [];
 
         if (attemptIds.length > 0) {
-          const { data: respData, error: responsesError } = await supabase
-            .from("responses")
-            .select("question_id, is_correct, time_spent_seconds, selected_answer, attempt_id, is_marked_for_review")
-            .in("attempt_id", attemptIds);
+          // Chunk attemptIds into batches of 200 to stay within Supabase URL limits
+          const CHUNK_SIZE = 200;
+          for (let i = 0; i < attemptIds.length; i += CHUNK_SIZE) {
+            const chunk = attemptIds.slice(i, i + CHUNK_SIZE);
+            const { data: respData, error: responsesError } = await supabase
+              .from("responses")
+              .select("question_id, is_correct, time_spent_seconds, selected_answer, attempt_id, is_marked_for_review")
+              .in("attempt_id", chunk);
 
-          if (responsesError) throw responsesError;
-          responsesData = respData || [];
+            if (responsesError) throw responsesError;
+            if (respData) responsesData.push(...respData);
+          }
         }
 
         // Helper for normalization
         const normalize = (val: any) => String(val).trim().toLowerCase();
 
-        // 5. Correct Attempts Data (Re-grade on fly)
+        // Pre-build Maps for O(1) lookups (eliminates O(N²) .find()/.filter() inside loops)
+        const responsesByAttempt = new Map<string, typeof responsesData>();
+        responsesData.forEach(r => {
+          if (!responsesByAttempt.has(r.attempt_id)) responsesByAttempt.set(r.attempt_id, []);
+          responsesByAttempt.get(r.attempt_id)!.push(r);
+        });
+
+        const questionsById = new Map<string, any>();
+        questionsData?.forEach((q: any) => questionsById.set(q.id, q));
+
+        // Pre-compute question count per section (avoids .filter() inside every attempt loop)
+        const questionCountBySection = new Map<string, number>();
+        questionsData?.forEach((q: any) => {
+          questionCountBySection.set(q.section.id, (questionCountBySection.get(q.section.id) || 0) + 1);
+        });
+
+        // 5. Compute attempt scores from DB-stored is_correct (set by examService on submit)
+        // Fallback to re-grading only for legacy responses where is_correct is null
         const correctedAttempts = filteredAttempts.map((attempt: any) => {
-          const attemptResponses = responsesData.filter(r => r.attempt_id === attempt.id);
+          const attemptResponses = responsesByAttempt.get(attempt.id) || [];
           let correctCount = 0;
           let totalTime = 0;
 
           attemptResponses.forEach(r => {
             totalTime += (r.time_spent_seconds || 0);
 
-            // Find question to get correct answer
-            const question = questionsData?.find(q => q.id === r.question_id);
-            if (question && question.correct_answer) {
-              const selected = r.selected_answer;
-              const correct = question.correct_answer;
-              let isCorrect = false;
-
-              if (selected !== null && selected !== undefined) {
-                if (Array.isArray(correct)) {
-                  const selectedArray = Array.isArray(selected) ? selected : [selected];
-                  if (selectedArray.length === correct.length) {
-                    const sortedSelected = [...selectedArray].map(normalize).sort();
-                    const sortedCorrect = [...correct].map(normalize).sort();
-                    isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
-                  }
-                } else if (typeof correct === 'object' && correct !== null) {
-                  const val = (correct as any).answer || (correct as any).value;
-                  isCorrect = normalize(val) === normalize(selected);
-                } else {
-                  isCorrect = normalize(selected) === normalize(correct);
-                }
-              }
-
-              if (isCorrect) correctCount++;
-            } else {
-              // Fallback if no correct_answer found, trust DB (though DB might be wrong if 0)
+            if (r.is_correct !== null && r.is_correct !== undefined) {
+              // Trust the DB value (set by examService.ts on submit)
               if (r.is_correct) correctCount++;
+            } else {
+              // Fallback: re-grade only for legacy responses with null is_correct
+              const question = questionsById.get(r.question_id);
+              if (question && question.correct_answer) {
+                const selected = r.selected_answer;
+                const correct = question.correct_answer;
+                let isCorrect = false;
+
+                if (selected !== null && selected !== undefined) {
+                  if (Array.isArray(correct)) {
+                    const selectedArray = Array.isArray(selected) ? selected : [selected];
+                    if (selectedArray.length === correct.length) {
+                      const sortedSelected = [...selectedArray].map(normalize).sort();
+                      const sortedCorrect = [...correct].map(normalize).sort();
+                      isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
+                    }
+                  } else if (typeof correct === 'object' && correct !== null) {
+                    const val = (correct as any).answer || (correct as any).value;
+                    isCorrect = normalize(val) === normalize(selected);
+                  } else {
+                    isCorrect = normalize(selected) === normalize(correct);
+                  }
+                }
+
+                if (isCorrect) correctCount++;
+              }
             }
           });
 
-          const totalQuestions = questionsData?.filter(q => q.section.id === attempt.section_id).length || attempt.total_questions || 1;
+          const totalQuestions = questionCountBySection.get(attempt.section_id) || attempt.total_questions || 1;
           const accuracy = totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
 
           return {
@@ -252,6 +276,10 @@ export default function Analytics() {
             total_time_spent: totalTime
           };
         });
+
+        // Build attempt lookup Map for O(1) access in question stats aggregation
+        const correctedAttemptsById = new Map<string, any>();
+        correctedAttempts.forEach((a: any) => correctedAttemptsById.set(a.id, a));
 
         setAttempts(correctedAttempts);
 
@@ -386,21 +414,22 @@ export default function Analytics() {
           responsesData?.forEach((r: any) => {
             const stat = statsMap.get(r.question_id);
             if (stat) {
-              // Only count stats for submitted attempts generally? 
-              const attempt = correctedAttempts.find(a => a.id === r.attempt_id);
-              if (!attempt || !attempt.submitted_at) return; // Skip incomplete attempts for question stats to maintain accuracy relevance
+              // Only count stats for submitted attempts
+              const attempt = correctedAttemptsById.get(r.attempt_id);
+              if (!attempt || !attempt.submitted_at) return;
 
               stat.totalAttempts++;
               stat.avgTime += r.time_spent_seconds || 0;
               if (r.is_marked_for_review) stat.reviewedCount++;
 
-              // Check correctness dynamically if DB says false/null, or just trust dynamic?
-              // Let's perform robust check if DB flag is not explicitly true (or always to be safe)
-              // But relying on DB is faster. Let's do hybrid: if DB true, take it. If not, check robustly.
+              // Trust is_correct from DB (set by examService on submit)
+              // Only re-grade for legacy responses where is_correct is null
+              let isCorrect = false;
 
-              let isCorrect = r.is_correct === true;
-
-              if (!isCorrect && stat.correctAnswer) {
+              if (r.is_correct !== null && r.is_correct !== undefined) {
+                isCorrect = r.is_correct === true;
+              } else if (stat.correctAnswer) {
+                // Fallback: re-grade only for null is_correct (legacy data)
                 const selected = r.selected_answer;
                 const correct = stat.correctAnswer;
 
@@ -463,92 +492,121 @@ export default function Analytics() {
                 .map(a => a.section.exam_id)
             )] as string[];
 
-            // For each exam, get all sections and all attempts (all users)
+            // Batch-fetch all sections for all exams in ONE query (eliminates N+1 loop)
             const rankMap: Record<string, { rank: number; total: number }> = {};
             const firstSectionsMap: Record<string, string> = {};
 
-            for (const eid of examIds) {
-              // Get sections for this exam (ordered)
-              const { data: examSections } = await supabase
-                .from("sections")
-                .select("id")
-                .eq("exam_id", eid)
-                .order("sort_order", { ascending: true })
-                .order("created_at");
+            const { data: allExamSections } = await supabase
+              .from("sections")
+              .select("id, exam_id, sort_order, created_at")
+              .in("exam_id", examIds)
+              .order("sort_order", { ascending: true })
+              .order("created_at", { ascending: true });
 
-              if (!examSections || examSections.length === 0) continue;
+            if (allExamSections && allExamSections.length > 0) {
+              // Group sections by exam_id and determine first section per exam
+              const sectionsByExam: Record<string, typeof allExamSections> = {};
+              allExamSections.forEach(s => {
+                if (!sectionsByExam[s.exam_id]) sectionsByExam[s.exam_id] = [];
+                sectionsByExam[s.exam_id].push(s);
+              });
 
-              const sectionIds = examSections.map(s => s.id);
-              const firstSectionId = sectionIds[0];
-              firstSectionsMap[eid] = firstSectionId; // Store for history grouping
+              // Build firstSectionsMap (first section per exam, already sorted)
+              const allSectionIds: string[] = [];
+              Object.entries(sectionsByExam).forEach(([eid, sections]) => {
+                firstSectionsMap[eid] = sections[0].id;
+                sections.forEach(s => allSectionIds.push(s.id));
+              });
 
-              // Get all attempts for this exam (all users)
-              const { data: allAttempts } = await supabase
+              // Batch-fetch ALL attempts for ALL sections in ONE query
+              const { data: allAttemptsBatch } = await supabase
                 .from("attempts")
                 .select("id, user_id, section_id, score, created_at")
-                .in("section_id", sectionIds)
+                .in("section_id", allSectionIds)
                 .order("created_at", { ascending: true });
 
-              if (!allAttempts || allAttempts.length === 0) continue;
+              if (allAttemptsBatch && allAttemptsBatch.length > 0) {
+                // Build a reverse lookup: section_id -> exam_id
+                const sectionToExam: Record<string, string> = {};
+                allExamSections.forEach(s => { sectionToExam[s.id] = s.exam_id; });
 
-              // Group by user
-              const byUser: Record<string, any[]> = {};
-              allAttempts.forEach(a => {
-                if (!byUser[a.user_id]) byUser[a.user_id] = [];
-                byUser[a.user_id].push(a);
-              });
-
-              // Build sessions
-              const sessions: { attemptIds: string[]; totalScore: number }[] = [];
-
-              Object.values(byUser).forEach(userAtts => {
-                userAtts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                let cur: { attemptIds: string[]; totalScore: number } | null = null;
-                const orphanAttempts: any[] = [];
-
-                userAtts.forEach(att => {
-                  if (att.section_id === firstSectionId) {
-                    if (cur) sessions.push(cur);
-                    cur = { attemptIds: [att.id], totalScore: att.score || 0 };
-                  } else if (cur) {
-                    cur.attemptIds.push(att.id);
-                    cur.totalScore += (att.score || 0);
-                  } else {
-                    // Orphan attempt (no first-section start) — collect it
-                    orphanAttempts.push(att);
-                  }
+                // Group attempts by exam_id
+                const attemptsByExam: Record<string, typeof allAttemptsBatch> = {};
+                allAttemptsBatch.forEach(a => {
+                  const eid = sectionToExam[a.section_id];
+                  if (!eid) return;
+                  if (!attemptsByExam[eid]) attemptsByExam[eid] = [];
+                  attemptsByExam[eid].push(a);
                 });
-                if (cur) sessions.push(cur);
 
-                // Group orphan attempts into their own session so they still get ranked
-                if (orphanAttempts.length > 0) {
-                  sessions.push({
-                    attemptIds: orphanAttempts.map(a => a.id),
-                    totalScore: orphanAttempts.reduce((sum, a) => sum + (a.score || 0), 0),
+                // Process each exam's ranking (same logic as before, now without DB calls)
+                for (const eid of examIds) {
+                  const examAttempts = attemptsByExam[eid];
+                  if (!examAttempts || examAttempts.length === 0) continue;
+
+                  const firstSectionId = firstSectionsMap[eid];
+                  if (!firstSectionId) continue;
+
+                  // Group by user
+                  const byUser: Record<string, any[]> = {};
+                  examAttempts.forEach(a => {
+                    if (!byUser[a.user_id]) byUser[a.user_id] = [];
+                    byUser[a.user_id].push(a);
+                  });
+
+                  // Build sessions
+                  const sessions: { attemptIds: string[]; totalScore: number }[] = [];
+
+                  Object.values(byUser).forEach(userAtts => {
+                    userAtts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                    let cur: { attemptIds: string[]; totalScore: number } | null = null;
+                    const orphanAttempts: any[] = [];
+
+                    userAtts.forEach(att => {
+                      if (att.section_id === firstSectionId) {
+                        if (cur) sessions.push(cur);
+                        cur = { attemptIds: [att.id], totalScore: att.score || 0 };
+                      } else if (cur) {
+                        cur.attemptIds.push(att.id);
+                        cur.totalScore += (att.score || 0);
+                      } else {
+                        // Orphan attempt (no first-section start) — collect it
+                        orphanAttempts.push(att);
+                      }
+                    });
+                    if (cur) sessions.push(cur);
+
+                    // Group orphan attempts into their own session so they still get ranked
+                    if (orphanAttempts.length > 0) {
+                      sessions.push({
+                        attemptIds: orphanAttempts.map(a => a.id),
+                        totalScore: orphanAttempts.reduce((sum, a) => sum + (a.score || 0), 0),
+                      });
+                    }
+                  });
+
+                  // Sort by score descending and apply competition ranking (in-place)
+                  sessions.sort((a, b) => b.totalScore - a.totalScore);
+                  sessions.forEach((session, index) => {
+                    if (index === 0) {
+                      (session as any).rank = 1;
+                    } else {
+                      (session as any).rank = session.totalScore === sessions[index - 1].totalScore
+                        ? (sessions[index - 1] as any).rank
+                        : index + 1;
+                    }
+                  });
+
+                  const totalSessions = sessions.length;
+
+                  // Map each attemptId to its rank
+                  sessions.forEach((s: any) => {
+                    s.attemptIds.forEach((aid: string) => {
+                      rankMap[aid] = { rank: s.rank, total: totalSessions };
+                    });
                   });
                 }
-              });
-
-              // Sort by score descending and apply competition ranking (in-place)
-              sessions.sort((a, b) => b.totalScore - a.totalScore);
-              sessions.forEach((session, index) => {
-                if (index === 0) {
-                  (session as any).rank = 1;
-                } else {
-                  (session as any).rank = session.totalScore === sessions[index - 1].totalScore
-                    ? (sessions[index - 1] as any).rank
-                    : index + 1;
-                }
-              });
-
-              const totalSessions = sessions.length;
-
-              // Map each attemptId to its rank
-              sessions.forEach((s: any) => {
-                s.attemptIds.forEach((aid: string) => {
-                  rankMap[aid] = { rank: s.rank, total: totalSessions };
-                });
-              });
+              }
             }
 
             setExamRanks(rankMap);

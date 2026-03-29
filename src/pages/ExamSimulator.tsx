@@ -178,44 +178,9 @@ const ExamSimulator = () => {
       if (sectionData) {
         setSection(sectionData);
         setQuestions(sortedQuestions as unknown as Question[]);
-        setQuestionStates(
-          sortedQuestions.reduce((acc, q) => ({
-            ...acc,
-            [q.id]: {
-              selectedAnswer: null,
-              isMarkedForReview: false,
-              timeSpentSeconds: 0,
-              status: "untouched",
-            },
-          }), {})
-        );
-
-        // Only create attempt if user is logged in
-        if (user) {
-          const { data, error } = await supabase
-            .from("attempts")
-            .insert({
-              user_id: user.id,
-              section_id: sectionId,
-              started_at: new Date().toISOString(),
-            })
-            .select()
-            .single();
-
-          if (error) {
-            toast({
-              title: "Error",
-              description: "Failed to start exam attempt",
-              variant: "destructive",
-            });
-            return;
-          }
-
-          setAttemptId(data.id);
-        }
-
+        // Only set time — do NOT create attempt yet (wait for user to click "Start Section")
+        // This prevents orphan attempt records from page loads, previews, and bot visits
         setTimeRemaining(sectionData.time_minutes * 60);
-        setHasStarted(true);
       }
     } catch (error) {
       console.error("Error fetching section:", error);
@@ -226,6 +191,59 @@ const ExamSimulator = () => {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Create attempt and start exam only when user explicitly clicks "Start Section"
+  const handleStartSection = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      // Initialize question states
+      setQuestionStates(
+        questions.reduce((acc, q) => ({
+          ...acc,
+          [q.id]: {
+            selectedAnswer: null,
+            isMarkedForReview: false,
+            timeSpentSeconds: 0,
+            status: "untouched",
+          },
+        }), {})
+      );
+
+      // Create attempt record only now (not on page load)
+      if (user) {
+        const { data, error } = await supabase
+          .from("attempts")
+          .insert({
+            user_id: user.id,
+            section_id: sectionId,
+            started_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (error) {
+          toast({
+            title: "Error",
+            description: "Failed to start exam attempt",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        setAttemptId(data.id);
+      }
+
+      setHasStarted(true);
+    } catch (error) {
+      console.error("Error starting section:", error);
+      toast({
+        title: "Error",
+        description: "Failed to start section",
+        variant: "destructive",
+      });
     }
   };
 
@@ -561,7 +579,7 @@ const ExamSimulator = () => {
                 Total Questions: {questions.length}
               </p>
             </div>
-            <Button onClick={() => setHasStarted(true)} className="w-full" size="lg">
+            <Button onClick={handleStartSection} className="w-full" size="lg">
               Start Section
             </Button>
           </CardContent>

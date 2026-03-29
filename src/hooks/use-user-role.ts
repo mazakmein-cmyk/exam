@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 export type UserRole = "student" | "creator" | null;
@@ -8,7 +8,6 @@ export const useUserRole = () => {
     const [role, setRole] = useState<UserRole>(null);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
-    const location = useLocation();
 
     useEffect(() => {
         const checkUser = async () => {
@@ -26,16 +25,19 @@ export const useUserRole = () => {
 
                 setRole(effectiveRole);
 
+                // Read current path dynamically at redirect time (not captured in closure)
+                // This matches the pattern already used in AuthStateListener.tsx
+                const currentPath = window.location.pathname;
+
                 // Handle Redirections
                 if (effectiveRole === "student") {
                     // Students shouldn't be on Dashboard
-                    if (location.pathname.startsWith("/dashboard")) {
+                    if (currentPath.startsWith("/dashboard")) {
                         navigate("/marketplace");
                     }
                 } else {
-                    // Creators (or legacy) shouldn't be on Marketplace? 
-                    // User said "cannot do all the stuff that students can like giving exams in marketplace or acessing marketplace all together"
-                    if (location.pathname.startsWith("/marketplace")) {
+                    // Creators (or legacy) shouldn't be on Marketplace
+                    if (currentPath.startsWith("/marketplace")) {
                         navigate("/dashboard");
                     }
                 }
@@ -48,7 +50,10 @@ export const useUserRole = () => {
 
         checkUser();
 
-        // Subscribe to auth changes to re-run
+        // Subscribe ONCE on mount — re-check role on any real auth event (login, logout, token refresh).
+        // Previously, location.pathname was in the dep array, which caused the entire effect (including
+        // this subscription) to teardown and recreate on EVERY URL change — leaking subscriptions.
+        // Now the subscription lives for the component's entire lifetime, not per-navigation.
         const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
             checkUser();
         });
@@ -56,7 +61,7 @@ export const useUserRole = () => {
         return () => {
             subscription.unsubscribe();
         };
-    }, [navigate, location.pathname]);
+    }, [navigate]); // navigate is stable (never changes) — this effect runs exactly once per mount
 
     return { role, loading };
 };
