@@ -52,6 +52,8 @@ export default function ExamReview() {
 
   const [isCreator, setIsCreator] = useState(false);
   const [examName, setExamName] = useState<string>("");
+  const [rank, setRank] = useState<number | null>(null);
+  const [totalExamAttempts, setTotalExamAttempts] = useState<number>(0);
 
   // Expand/collapse state for sections and questions
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
@@ -203,6 +205,113 @@ export default function ExamReview() {
 
       setStats(aggregatedStats);
       setResponses(gradedResponses);
+
+      // 7. Compute Rank across ALL users for this exam
+      try {
+        const sectionIds = sections.map((s: any) => s.id);
+        const firstSectionId = sectionIds[0];
+
+        // Fetch all attempts for this exam (all users)
+        const { data: allExamAttempts, error: rankError } = await supabase
+          .from("attempts")
+          .select("id, user_id, section_id, score, total_questions, created_at")
+          .in("section_id", sectionIds)
+          .order("created_at", { ascending: true });
+
+        if (!rankError && allExamAttempts && allExamAttempts.length > 0) {
+          // Group attempts into sessions
+          // A session starts when a user creates an attempt for the first section
+          const userAttempts: Record<string, any[]> = {};
+          allExamAttempts.forEach(a => {
+            if (!userAttempts[a.user_id]) userAttempts[a.user_id] = [];
+            userAttempts[a.user_id].push(a);
+          });
+
+          // Build sessions: each first-section attempt starts a new session
+          interface ExamSession {
+            sessionKey: string;
+            userId: string;
+            totalScore: number;
+            totalQuestions: number;
+            attemptIds: string[];
+          }
+
+          const sessions: ExamSession[] = [];
+
+          Object.entries(userAttempts).forEach(([uid, attempts]) => {
+            // Sort by created_at
+            attempts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+            let currentSession: ExamSession | null = null;
+
+            attempts.forEach(attempt => {
+              if (attempt.section_id === firstSectionId) {
+                // Save previous session if exists
+                if (currentSession) {
+                  sessions.push(currentSession);
+                }
+                // Start new session
+                currentSession = {
+                  sessionKey: `${uid}_${attempt.id}`,
+                  userId: uid,
+                  totalScore: attempt.score || 0,
+                  totalQuestions: attempt.total_questions || 0,
+                  attemptIds: [attempt.id],
+                };
+              } else if (currentSession) {
+                // Add to current session
+                currentSession.totalScore += (attempt.score || 0);
+                currentSession.totalQuestions += (attempt.total_questions || 0);
+                currentSession.attemptIds.push(attempt.id);
+              }
+            });
+
+            // Push last session
+            if (currentSession) {
+              sessions.push(currentSession);
+            }
+          });
+
+          // Sort sessions by totalScore descending
+          sessions.sort((a, b) => b.totalScore - a.totalScore);
+
+          // Apply competition ranking (1, 2, 2, 4)
+          let currentRank = 1;
+          sessions.forEach((session, index) => {
+            if (index === 0) {
+              (session as any).rank = currentRank;
+            } else {
+              if (session.totalScore === sessions[index - 1].totalScore) {
+                (session as any).rank = (sessions[index - 1] as any).rank;
+              } else {
+                (session as any).rank = index + 1;
+              }
+            }
+          });
+
+          setTotalExamAttempts(sessions.length);
+
+          // Find current user's session that contains the current attemptId
+          const currentSession = sessions.find(s =>
+            s.attemptIds.includes(attemptId!)
+          );
+
+          if (currentSession) {
+            setRank((currentSession as any).rank);
+          } else {
+            // Fallback: find session by matching score for this user
+            const userSessions = sessions.filter(s => s.userId === userId);
+            if (userSessions.length > 0) {
+              // Pick the one with matching score
+              const matchingSession = userSessions.find(s => s.totalScore === aggregatedStats.score);
+              setRank(matchingSession ? (matchingSession as any).rank : (userSessions[0] as any).rank);
+            }
+          }
+        }
+      } catch (rankErr) {
+        console.error("Error computing rank:", rankErr);
+        // Non-critical: don't block the page if ranking fails
+      }
 
     } catch (error: any) {
       console.error("Error fetching review data:", error);
@@ -455,17 +564,29 @@ export default function ExamReview() {
         {/* Stats Summary */}
         {stats && (
           <Card className="p-6 mb-6 bg-card">
-            <div className="mb-4">
-              {examName ? (
-                <>
-                  <h2 className="text-2xl font-bold">{examName}</h2>
-                  <p className="text-muted-foreground">Exam Summary</p>
-                </>
-              ) : (
-                <h2 className="text-2xl font-bold">Exam Summary</h2>
+            {/* Header: Exam Name + Rank badge */}
+            <div className="flex items-start justify-between mb-6">
+              <div>
+                {examName ? (
+                  <>
+                    <h2 className="text-2xl font-bold">{examName}</h2>
+                    <p className="text-sm text-muted-foreground">Exam Summary</p>
+                  </>
+                ) : (
+                  <h2 className="text-2xl font-bold">Exam Summary</h2>
+                )}
+              </div>
+              {rank !== null && (
+                <div className="text-center bg-primary/10 rounded-xl px-5 py-3">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Rank</p>
+                  <p className="text-3xl font-bold text-primary">#{rank}</p>
+                  <p className="text-xs text-muted-foreground">out of {totalExamAttempts}</p>
+                </div>
               )}
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+            {/* Stats Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               <div>
                 <p className="text-sm text-muted-foreground">Score</p>
                 <p className="text-2xl font-bold">

@@ -69,6 +69,8 @@ export default function Analytics() {
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionStats | null>(null);
   const [selectedSectionName, setSelectedSectionName] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  // Rank data for student history: maps attemptId -> { rank, total }
+  const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
 
   const toggleSection = (sectionName: string) => {
     const newCollapsed = new Set(collapsedSections);
@@ -351,6 +353,109 @@ export default function Analytics() {
         const { data, error } = await query.eq("user_id", user.id);
         if (error) throw error;
         setAttempts(data as any);
+
+        // Compute ranks for each exam the student has attempted
+        try {
+          const studentAttempts = data as any[];
+          if (studentAttempts && studentAttempts.length > 0) {
+            // Get unique exam IDs from the student's attempts
+            const examIds = [...new Set(
+              studentAttempts
+                .filter(a => a.section?.exam_id)
+                .map(a => a.section.exam_id)
+            )] as string[];
+
+            // For each exam, get all sections and all attempts (all users)
+            const rankMap: Record<string, { rank: number; total: number }> = {};
+
+            for (const eid of examIds) {
+              // Get sections for this exam (ordered)
+              const { data: examSections } = await supabase
+                .from("sections")
+                .select("id")
+                .eq("exam_id", eid)
+                .order("sort_order", { ascending: true })
+                .order("created_at");
+
+              if (!examSections || examSections.length === 0) continue;
+
+              const sectionIds = examSections.map(s => s.id);
+              const firstSectionId = sectionIds[0];
+
+              // Get all attempts for this exam (all users)
+              const { data: allAttempts } = await supabase
+                .from("attempts")
+                .select("id, user_id, section_id, score, created_at")
+                .in("section_id", sectionIds)
+                .order("created_at", { ascending: true });
+
+              if (!allAttempts || allAttempts.length === 0) continue;
+
+              // Group by user
+              const byUser: Record<string, any[]> = {};
+              allAttempts.forEach(a => {
+                if (!byUser[a.user_id]) byUser[a.user_id] = [];
+                byUser[a.user_id].push(a);
+              });
+
+              // Build sessions
+              const sessions: { attemptIds: string[]; totalScore: number }[] = [];
+
+              Object.values(byUser).forEach(userAtts => {
+                userAtts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                let cur: { attemptIds: string[]; totalScore: number } | null = null;
+                const orphanAttempts: any[] = [];
+
+                userAtts.forEach(att => {
+                  if (att.section_id === firstSectionId) {
+                    if (cur) sessions.push(cur);
+                    cur = { attemptIds: [att.id], totalScore: att.score || 0 };
+                  } else if (cur) {
+                    cur.attemptIds.push(att.id);
+                    cur.totalScore += (att.score || 0);
+                  } else {
+                    // Orphan attempt (no first-section start) — collect it
+                    orphanAttempts.push(att);
+                  }
+                });
+                if (cur) sessions.push(cur);
+
+                // Group orphan attempts into their own session so they still get ranked
+                if (orphanAttempts.length > 0) {
+                  sessions.push({
+                    attemptIds: orphanAttempts.map(a => a.id),
+                    totalScore: orphanAttempts.reduce((sum, a) => sum + (a.score || 0), 0),
+                  });
+                }
+              });
+
+              // Sort by score descending and apply competition ranking (in-place)
+              sessions.sort((a, b) => b.totalScore - a.totalScore);
+              sessions.forEach((session, index) => {
+                if (index === 0) {
+                  (session as any).rank = 1;
+                } else {
+                  (session as any).rank = session.totalScore === sessions[index - 1].totalScore
+                    ? (sessions[index - 1] as any).rank
+                    : index + 1;
+                }
+              });
+
+              const totalSessions = sessions.length;
+
+              // Map each attemptId to its rank
+              sessions.forEach((s: any) => {
+                s.attemptIds.forEach((aid: string) => {
+                  rankMap[aid] = { rank: s.rank, total: totalSessions };
+                });
+              });
+            }
+
+            setExamRanks(rankMap);
+          }
+        } catch (rankErr) {
+          console.error("Error computing history ranks:", rankErr);
+        }
       }
 
     } catch (error: any) {
@@ -667,15 +772,7 @@ export default function Analytics() {
             </p>
           </Card>
 
-          {!examId && (
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="w-5 h-5 text-amber-500" />
-                <h3 className="font-semibold">Best Score</h3>
-              </div>
-              <p className="text-3xl font-bold">{bestScore.toFixed(2)}%</p>
-            </Card>
-          )}
+
         </div>
 
 
@@ -1170,16 +1267,26 @@ export default function Analytics() {
                       totalScore: 0,
                       totalQuestions: 0,
                       totalTime: 0,
-                      firstAttemptId: attempt.id
+                      firstAttemptId: attempt.id,
+                      allAttemptIds: [] // Track all IDs for rank lookup
                     };
                   }
                   groups[key].sections.push(attempt.section.name || "Unknown Section");
                   groups[key].totalScore += attempt.score;
                   groups[key].totalQuestions += attempt.total_questions;
                   groups[key].totalTime += (attempt.time_spent_seconds || 0);
+                  groups[key].allAttemptIds.push(attempt.id);
 
                   return groups;
                 }, {});
+
+                // Helper to find rank for a group using any of its attempt IDs
+                const getRankForGroup = (group: any) => {
+                  for (const id of group.allAttemptIds) {
+                    if (examRanks[id]) return examRanks[id];
+                  }
+                  return null;
+                };
 
                 return Object.values(examGroups).map((group: any) => (
                   <div
@@ -1187,8 +1294,26 @@ export default function Analytics() {
                     className="flex items-center justify-between p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors"
                     onClick={() => navigate(`/exam/review/${group.firstAttemptId}`)}
                   >
-                    <div>
-                      <p className="font-semibold">{group.examName}</p>
+                  <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold">{group.examName}</p>
+                        {(() => {
+                          const rankInfo = getRankForGroup(group);
+                          return rankInfo ? (
+                            <span className={`text-sm font-bold px-3 py-0.5 rounded-full flex items-center border ${
+                              rankInfo.rank === 1
+                                ? "bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800 shadow-sm"
+                                : "bg-primary/10 text-primary border-primary/20"
+                            }`}>
+                              {rankInfo.rank === 1 && <span className="mr-1">🏆</span>}
+                              Rank #{rankInfo.rank}
+                              <span className="text-xs font-medium opacity-70 ml-1">
+                                / {rankInfo.total}
+                              </span>
+                            </span>
+                          ) : null;
+                        })()}
+                      </div>
                       <p className="text-sm text-muted-foreground">
                         {group.sections.length} section{group.sections.length > 1 ? 's' : ''} • Attempted on {group.date}
                       </p>
