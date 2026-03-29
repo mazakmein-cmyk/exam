@@ -68,20 +68,26 @@ export default {
       },
       backgroundImage: {
         "gradient-hero": "var(--gradient-hero)",
+        "gradient-brand": "var(--gradient-brand)",
         "gradient-card": "var(--gradient-card)",
+        "gradient-surface": "var(--gradient-surface)",
       },
       boxShadow: {
+        xs: "var(--shadow-xs)",
         sm: "var(--shadow-sm)",
         md: "var(--shadow-md)",
         lg: "var(--shadow-lg)",
+        xl: "var(--shadow-xl)",
         glow: "var(--shadow-glow)",
+        "glow-lg": "var(--shadow-glow-lg)",
       },
       transitionTimingFunction: {
         base: "var(--transition-base)",
         slow: "var(--transition-slow)",
       },
       fontFamily: {
-        sans: ["Inter", "sans-serif"],
+        sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
+        display: ["Plus Jakarta Sans", "Inter", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],
       },
       borderRadius: {

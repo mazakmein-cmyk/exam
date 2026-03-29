@@ -385,7 +385,7 @@ const StudentAuth = () => {
                 className="absolute top-6 left-6 text-foreground hover:bg-white/20"
             >
                 <ArrowLeft className="h-5 w-5 mr-2" />
-                {(searchParams.get("from") === "marketplace" || isExamSubmit) ? "Back to Marketplace" : "Back to Home"}
+                {(searchParams.get("from") === "marketplace" || isExamSubmit) ? "Back to Exam Library" : "Back to Home"}
             </Button>
 
             <AlertDialog open={showExitDialog} onOpenChange={setShowExitDialog}>
@@ -426,7 +426,7 @@ const StudentAuth = () => {
                     <CardContent>
                         <Tabs defaultValue={defaultTab} className="w-full">
                             <TabsList className="grid w-full grid-cols-2">
-                                <TabsTrigger value="signin">Sign In</TabsTrigger>
+                                <TabsTrigger value="signin">Login</TabsTrigger>
                                 <TabsTrigger value="signup">Sign Up</TabsTrigger>
                             </TabsList>
 
@@ -454,7 +454,7 @@ const StudentAuth = () => {
                                         />
                                     </div>
                                     <Button type="submit" className="w-full" disabled={loading}>
-                                        {loading ? "Signing in..." : "Sign In"}
+                                        {loading ? "Logging in..." : "Login"}
                                     </Button>
                                     <div className="text-center mt-2">
                                         <Button

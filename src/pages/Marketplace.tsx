@@ -135,7 +135,7 @@ const Marketplace = () => {
                     <div>
                         <div className="flex items-center gap-3 mb-2">
                             <Store className="h-8 w-8 text-primary" />
-                            <h1 className="text-3xl font-bold text-foreground">Marketplace</h1>
+                            <h1 className="text-3xl font-bold text-foreground">Exam Library</h1>
                         </div>
                         <p className="text-muted-foreground">Browse and take public exams shared by the community</p>
                     </div>
