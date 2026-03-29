@@ -1387,7 +1387,9 @@ export default function Analytics() {
                       </div>
                       <div className="text-sm text-muted-foreground">
                         <Clock className="w-4 h-4 inline mr-1" />
-                        {Math.floor(group.totalTime / 60)}m
+                        {Math.floor(group.totalTime / 60) > 0 
+                          ? `${Math.floor(group.totalTime / 60)}m ${Math.floor(group.totalTime % 60)}s`
+                          : `${Math.floor(group.totalTime % 60)}s`}
                       </div>
                     </div>
                   </div>
