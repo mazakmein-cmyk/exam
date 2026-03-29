@@ -118,15 +118,60 @@ export default function ExamReview() {
 
       if (allAttemptsError) throw allAttemptsError;
 
-      // 4. Group by section_id and pick latest attempt for each section
-      const latestAttemptsBySection = new Map();
+      // 4. Find the session that contains the clicked attemptId
+      // Attempts are fetched ordered by created_at DESC, so reverse to get ascending order
+      const attemptsAsc = [...allAttempts].reverse();
+
+      // Identify the first section of this exam (lowest sort_order)
+      const firstSection = sections[0];
+      const firstSectionId = firstSection?.id;
+
+      // Walk through attempts in chronological order, building sessions.
+      // Each time we see firstSectionId, a new session starts.
+      // Find the session whose attemptIds includes our clicked attemptId.
+      let sessionAttemptIds: string[] = [];
+      let currentSessionIds: string[] = [];
+      let found = false;
+
+      for (const attempt of attemptsAsc) {
+        if (firstSectionId && attempt.section_id === firstSectionId) {
+          // Starting a new session — if previous session had our target, we're done
+          if (currentSessionIds.includes(attemptId!)) {
+            sessionAttemptIds = currentSessionIds;
+            found = true;
+            break;
+          }
+          currentSessionIds = [attempt.id];
+        } else {
+          currentSessionIds.push(attempt.id);
+        }
+      }
+
+      // Check the last session if not yet found
+      if (!found) {
+        if (currentSessionIds.includes(attemptId!)) {
+          sessionAttemptIds = currentSessionIds;
+        } else {
+          // Fallback: if attemptId wasn't found in any session (orphan/edge case),
+          // just use the attemptId itself
+          sessionAttemptIds = [attemptId!];
+        }
+      }
+
+      // From the session's attempt IDs, pick one attempt per section
+      // (the one that belongs to the session, not the latest overall)
+      const sessionAttemptSet = new Set(sessionAttemptIds);
+      const attemptsBySection = new Map<string, any>();
       allAttempts.forEach(attempt => {
-        if (!latestAttemptsBySection.has(attempt.section_id)) {
-          latestAttemptsBySection.set(attempt.section_id, attempt);
+        if (sessionAttemptSet.has(attempt.id)) {
+          // Each section should appear once per session; take whichever is in the set
+          if (!attemptsBySection.has(attempt.section_id)) {
+            attemptsBySection.set(attempt.section_id, attempt);
+          }
         }
       });
 
-      const selectedAttempts = Array.from(latestAttemptsBySection.values());
+      const selectedAttempts = Array.from(attemptsBySection.values());
       const selectedAttemptIds = selectedAttempts.map(a => a.id);
 
       // 5. Fetch Responses for ALL selected attempts

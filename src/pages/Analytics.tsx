@@ -73,6 +73,8 @@ export default function Analytics() {
   const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
   // Maps examId -> firstSectionId (used for session-based history grouping)
   const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, string>>({}); 
+  // Creator leaderboard: top 3 sessions ranked by total score
+  const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; username: string; displayName: string; totalScore: number; totalQuestions: number }[]>([]);
 
   const toggleSection = (sectionName: string) => {
     const newCollapsed = new Set(collapsedSections);
@@ -252,6 +254,100 @@ export default function Analytics() {
         });
 
         setAttempts(correctedAttempts);
+
+        // --- Compute Top 3 Leaderboard for Creator View ---
+        try {
+          if (allSections && allSections.length > 0 && correctedAttempts.length > 0) {
+            const firstSectionId = allSections[0].id;
+
+            // Sort all corrected attempts chronologically
+            const sortedAttempts = [...correctedAttempts].sort(
+              (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            );
+
+            // Group by user
+            const byUser: Record<string, any[]> = {};
+            sortedAttempts.forEach(att => {
+              if (!byUser[att.user_id]) byUser[att.user_id] = [];
+              byUser[att.user_id].push(att);
+            });
+
+            // Build sessions using same boundary logic as student ranking
+            const sessions: { userId: string; totalScore: number; totalQuestions: number }[] = [];
+
+            Object.entries(byUser).forEach(([uid, userAtts]) => {
+              let cur: { userId: string; totalScore: number; totalQuestions: number } | null = null;
+              const orphans: any[] = [];
+
+              userAtts.forEach(att => {
+                if (att.section_id === firstSectionId) {
+                  if (cur) sessions.push(cur);
+                  cur = { userId: uid, totalScore: att.score || 0, totalQuestions: att.total_questions || 0 };
+                } else if (cur) {
+                  cur.totalScore += att.score || 0;
+                  cur.totalQuestions += att.total_questions || 0;
+                } else {
+                  orphans.push(att);
+                }
+              });
+              if (cur) sessions.push(cur);
+
+              if (orphans.length > 0) {
+                sessions.push({
+                  userId: uid,
+                  totalScore: orphans.reduce((s, a) => s + (a.score || 0), 0),
+                  totalQuestions: orphans.reduce((s, a) => s + (a.total_questions || 0), 0),
+                });
+              }
+            });
+
+            // Sort by accuracy % descending, then by raw score descending
+            sessions.sort((a, b) => {
+              const pctA = a.totalQuestions > 0 ? a.totalScore / a.totalQuestions : 0;
+              const pctB = b.totalQuestions > 0 ? b.totalScore / b.totalQuestions : 0;
+              if (pctB !== pctA) return pctB - pctA;
+              return b.totalScore - a.totalScore;
+            });
+
+            // Competition-style ranking (use for-loop to avoid self-referencing issue)
+            const rankedSessions: (typeof sessions[0] & { rank: number })[] = [];
+            for (let i = 0; i < sessions.length; i++) {
+              const s = sessions[i];
+              let rank = i + 1;
+              if (i > 0) {
+                const prevPct = sessions[i - 1].totalQuestions > 0
+                  ? sessions[i - 1].totalScore / sessions[i - 1].totalQuestions : 0;
+                const curPct = s.totalQuestions > 0 ? s.totalScore / s.totalQuestions : 0;
+                if (curPct === prevPct) rank = rankedSessions[i - 1].rank;
+              }
+              rankedSessions.push({ ...s, rank });
+            }
+
+            // Take top 3
+            const top3 = rankedSessions.slice(0, 3);
+
+            if (top3.length > 0) {
+              // Fetch profiles for top 3 unique user IDs
+              const userIds = [...new Set(top3.map(s => s.userId))];
+              const { data: profilesData } = await supabase
+                .from('profiles')
+                .select('id, username, full_name')
+                .in('id', userIds);
+
+              const profileMap = new Map((profilesData || []).map((p: any) => [p.id, p]));
+
+              setLeaderboard(top3.map(s => {
+                const profile = profileMap.get(s.userId) as any;
+                const displayName = profile?.full_name || profile?.username || 'Unknown';
+                const username = profile?.username || s.userId;
+                return { rank: s.rank, userId: s.userId, username, displayName, totalScore: s.totalScore, totalQuestions: s.totalQuestions };
+              }));
+            }
+          }
+        } catch (lbErr) {
+          console.error('Error computing leaderboard:', lbErr);
+        }
+        // --- End Leaderboard ---
 
         if (attemptIds.length > 0) {
           // ... Question stats calculation ...
@@ -778,92 +874,143 @@ export default function Analytics() {
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              onClick={() => navigate(getBackPath())}
-              className="gap-2"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </Button>
-            <div>
-              <h1 className="text-3xl font-bold">{examId ? "Exam Analytics" : "My Performance"}</h1>
-              {examId && <p className="text-muted-foreground">{examName}</p>}
-            </div>
+        <div className="flex items-center gap-3 mb-8">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(getBackPath())}
+            className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </Button>
+          <div className="h-5 w-px bg-border" />
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">{examId ? "Exam Analytics" : "My Performance"}</h1>
+            {examId && <p className="text-sm text-muted-foreground">{examName}</p>}
           </div>
-
-
         </div>
 
         {/* Overall Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-5 h-5 text-primary" />
-              <h3 className="font-semibold">{examId ? "Total Attempts" : "Total Exams Given"}</h3>
+        {!examId ? (
+          <div className="grid grid-cols-3 divide-x divide-border border rounded-xl mb-6 bg-card">
+            <div className="flex flex-col items-center justify-center py-5 px-4 gap-1">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Exams Given</span>
+              <span className="text-3xl font-bold">{totalAttempts}</span>
             </div>
-            <p className="text-3xl font-bold">{totalAttempts}</p>
-          </Card>
-
-          {examId && (
-            <>
-              <Card className="p-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <Users className="w-5 h-5 text-purple-500" />
-                  <h3 className="font-semibold">Total Unique Students</h3>
-                </div>
-                <p className="text-3xl font-bold">{uniqueStudents}</p>
-              </Card>
-
-              <Card className="p-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle2 className="w-5 h-5 text-indigo-500" />
-                  <h3 className="font-semibold">Completion</h3>
-                </div>
-                <div className="flex flex-col">
-                  <p className="text-3xl font-bold">{Math.round(completionRate)}%</p>
-                  <p className="text-xs text-muted-foreground mt-1">{submittedCount} / {totalAttempts} started</p>
-                </div>
-              </Card>
-
-              <Card className="p-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <Users className="w-5 h-5 text-pink-500" />
-                  <h3 className="font-semibold">Repeaters</h3>
-                </div>
-                <div className="flex flex-col">
-                  <p className="text-3xl font-bold">{repeatersCount}</p>
-                  <p className="text-xs text-muted-foreground mt-1">students retook</p>
-                </div>
-              </Card>
-            </>
-          )}
-
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-2">
-              <Target className="w-5 h-5 text-green-500" />
-              <h3 className="font-semibold">Overall Accuracy/Q</h3>
+            <div className="flex flex-col items-center justify-center py-5 px-4 gap-1">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Overall Accuracy/Q</span>
+              <span className="text-3xl font-bold">{overallAccuracy.toFixed(1)}%</span>
             </div>
-            <p className="text-3xl font-bold">
-              {overallAccuracy.toFixed(2)}%
-            </p>
-          </Card>
-
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-2">
-              <Clock className="w-5 h-5 text-blue-500" />
-              <h3 className="font-semibold">Avg Time/Q</h3>
+            <div className="flex flex-col items-center justify-center py-5 px-4 gap-1">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Avg Time/Q</span>
+              <span className="text-3xl font-bold">{avgTimePerQuestion.toFixed(1)}s</span>
             </div>
-            <p className="text-3xl font-bold">
-              {avgTimePerQuestion.toFixed(2)}s
-            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="w-5 h-5 text-primary" />
+                <h3 className="font-semibold">Total Attempts</h3>
+              </div>
+              <p className="text-3xl font-bold">{totalAttempts}</p>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-5 h-5 text-purple-500" />
+                <h3 className="font-semibold">Total Unique Students</h3>
+              </div>
+              <p className="text-3xl font-bold">{uniqueStudents}</p>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-5 h-5 text-indigo-500" />
+                <h3 className="font-semibold">Completion</h3>
+              </div>
+              <div className="flex flex-col">
+                <p className="text-3xl font-bold">{Math.round(completionRate)}%</p>
+                <p className="text-xs text-muted-foreground mt-1">{submittedCount} / {totalAttempts} started</p>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-5 h-5 text-pink-500" />
+                <h3 className="font-semibold">Repeaters</h3>
+              </div>
+              <div className="flex flex-col">
+                <p className="text-3xl font-bold">{repeatersCount}</p>
+                <p className="text-xs text-muted-foreground mt-1">students retook</p>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Target className="w-5 h-5 text-green-500" />
+                <h3 className="font-semibold">Overall Accuracy/Q</h3>
+              </div>
+              <p className="text-3xl font-bold">
+                {overallAccuracy.toFixed(2)}%
+              </p>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-5 h-5 text-blue-500" />
+                <h3 className="font-semibold">Avg Time/Q</h3>
+              </div>
+              <p className="text-3xl font-bold">
+                {avgTimePerQuestion.toFixed(2)}s
+              </p>
+            </Card>
+          </div>
+        )}
+
+        {/* Top Students Leaderboard (Creator Only) */}
+        {examId && (
+          <Card className="p-6 mb-6">
+            <h3 className="text-lg font-semibold mb-4">🏅 Top Students</h3>
+            {leaderboard.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No student data available yet.</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {leaderboard.map((entry, idx) => {
+                  const medals = ['🏆', '🥈', '🥉'];
+                  const medal = medals[idx] ?? `#${entry.rank}`;
+                  const pct = entry.totalQuestions > 0
+                    ? ((entry.totalScore / entry.totalQuestions) * 100).toFixed(1)
+                    : '0.0';
+                  const bgColors = [
+                    'bg-amber-50 dark:bg-amber-950/30',
+                    'bg-slate-50 dark:bg-slate-900/30',
+                    'bg-orange-50 dark:bg-orange-950/20',
+                  ];
+                  return (
+                    <div
+                      key={`${entry.userId}-${idx}`}
+                      className={`flex items-center justify-between px-4 py-3 rounded-lg mb-1 last:mb-0 ${bgColors[idx] ?? ''}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl leading-none">{medal}</span>
+                        <div>
+                          <p className="font-semibold text-sm leading-snug">{entry.displayName}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{entry.username}</p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 ml-4">
+                        <p className="font-bold text-base leading-snug">{entry.totalScore}/{entry.totalQuestions}</p>
+                        <p className="text-xs text-muted-foreground">{pct}%</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Card>
-
-
-        </div>
-
+        )}
 
 
 
@@ -1333,15 +1480,14 @@ export default function Analytics() {
 
         {/* Recent Attempts List (Student Only) */}
         {!examId && (
-          <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4">History</h3>
-            <div className="space-y-3">
+          <div className="mt-2">
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">History</h3>
+            <div className="border rounded-xl overflow-hidden bg-card">
               {attempts.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No attempts recorded yet.</p>
+                <p className="text-muted-foreground text-center py-8">No attempts recorded yet.</p>
               ) : Object.keys(firstSectionsByExamId).length === 0 ? (
-                <p className="text-muted-foreground text-center py-4 text-sm">Loading history...</p>
+                <p className="text-muted-foreground text-center py-8 text-sm">Loading history...</p>
               ) : (() => {
-                // Helper to find rank for a group using any of its attempt IDs
                 const getRankForGroup = (group: any) => {
                   for (const id of group.allAttemptIds) {
                     if (examRanks[id]) return examRanks[id];
@@ -1349,53 +1495,50 @@ export default function Analytics() {
                   return null;
                 };
 
-                return studentSessionsList.map((group: any) => (
+                return studentSessionsList.map((group: any, idx: number) => (
                   <div
                     key={group.firstAttemptId}
-                    className="flex items-center justify-between p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors"
+                    className={`flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-muted/50 transition-colors ${
+                      idx !== 0 ? 'border-t border-border' : ''
+                    }`}
                     onClick={() => navigate(`/exam/review/${group.firstAttemptId}`)}
                   >
-                  <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold">{group.examName}</p>
-                        {(() => {
-                          const rankInfo = getRankForGroup(group);
-                          return rankInfo ? (
-                            <span className={`text-sm font-bold px-3 py-0.5 rounded-full flex items-center border ${
-                              rankInfo.rank === 1
-                                ? "bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800 shadow-sm"
-                                : "bg-primary/10 text-primary border-primary/20"
-                            }`}>
-                              {rankInfo.rank === 1 && <span className="mr-1">🏆</span>}
-                              Rank #{rankInfo.rank}
-                              <span className="text-xs font-medium opacity-70 ml-1">
-                                / {rankInfo.total}
-                              </span>
-                            </span>
-                          ) : null;
-                        })()}
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {group.sections.length} section{group.sections.length > 1 ? 's' : ''} • Attempted on {group.date}
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <p className="font-semibold text-[15px] leading-snug truncate">{group.examName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {group.sections.length} section{group.sections.length > 1 ? 's' : ''}&nbsp;&bull;&nbsp;{group.date}&nbsp;&bull;&nbsp;{Math.floor((group.totalTime || 0) / 60)}m {(group.totalTime || 0) % 60}s
                       </p>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 ml-4 shrink-0">
+                      {(() => {
+                        const rankInfo = getRankForGroup(group);
+                        return rankInfo ? (
+                          <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 border ${
+                            rankInfo.rank === 1
+                              ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800'
+                              : 'bg-primary/10 text-primary border-primary/20'
+                          }`}>
+                            {rankInfo.rank === 1 && <span>🏆</span>}
+                            #{rankInfo.rank}<span className="opacity-60">/{rankInfo.total}</span>
+                          </span>
+                        ) : null;
+                      })()}
                       <div className="text-right">
-                        <p className="font-semibold">
+                        <p className="font-semibold text-[15px] leading-snug">
                           {group.totalScore}/{group.totalQuestions}
                         </p>
-                        <Badge variant="secondary">
+                        <p className="text-xs text-muted-foreground">
                           {group.totalQuestions > 0
                             ? ((group.totalScore / group.totalQuestions) * 100).toFixed(1)
                             : 0}%
-                        </Badge>
+                        </p>
                       </div>
                     </div>
                   </div>
                 ));
               })()}
             </div>
-          </Card>
+          </div>
         )}
 
       </div>
