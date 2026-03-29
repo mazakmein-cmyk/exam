@@ -521,7 +521,7 @@ export default function Analytics() {
             sections: [att.section.name || 'Unknown Section'],
             totalScore: att.score || 0,
             totalQuestions: att.total_questions || 0,
-            totalTime: att.time_spent_seconds || 0,
+            totalTime: Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0)),
             firstAttemptId: att.id,
             allAttemptIds: [att.id],
           };
@@ -530,7 +530,7 @@ export default function Analytics() {
           cur.sections.push(att.section.name || 'Unknown Section');
           cur.totalScore += att.score || 0;
           cur.totalQuestions += att.total_questions || 0;
-          cur.totalTime += att.time_spent_seconds || 0;
+          cur.totalTime += Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0));
           cur.allAttemptIds.push(att.id);
         } else {
           // Orphan: no first section seen yet — treat as its own session
@@ -547,7 +547,7 @@ export default function Analytics() {
           sections: [att.section.name || 'Unknown Section'],
           totalScore: att.score || 0,
           totalQuestions: att.total_questions || 0,
-          totalTime: att.time_spent_seconds || 0,
+          totalTime: Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0)),
           firstAttemptId: att.id,
           allAttemptIds: [att.id],
         });
