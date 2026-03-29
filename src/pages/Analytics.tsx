@@ -1,4 +1,4 @@
-import { useEffect, useState, Fragment } from "react";
+import { useEffect, useState, Fragment, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -484,13 +484,91 @@ export default function Analytics() {
   const completedAttempts = attempts.filter(a => a.submitted_at);
   const validAttempts = examId ? completedAttempts : attempts;
 
+  // Compute student history ranking sessions globally
+  const studentSessionsList = useMemo(() => {
+    if (examId || attempts.length === 0 || Object.keys(firstSectionsByExamId).length === 0) return [];
+    
+    // Session-based grouping: a new session starts each time the user
+    // hits the first section of an exam. Sorted by created_at ascending
+    // so sessions are detected in chronological order.
+    const sortedAttempts = [...attempts]
+      .filter(a => a.section && a.section.exam)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    // Group by exam_id first, then detect sessions within each exam
+    const sessionsList: any[] = [];
+
+    // Get attempts per exam
+    const byExam: Record<string, any[]> = {};
+    sortedAttempts.forEach(att => {
+      const eid = (att.section as any)?.exam_id || att.section_id || 'unknown';
+      if (!byExam[eid]) byExam[eid] = [];
+      byExam[eid].push(att);
+    });
+
+    Object.entries(byExam).forEach(([eid, examAtts]) => {
+      const firstSectionId = firstSectionsByExamId[eid];
+      let cur: any = null;
+      const orphans: any[] = [];
+
+      examAtts.forEach(att => {
+        if (firstSectionId && att.section_id === firstSectionId) {
+          // Start a new session
+          if (cur) sessionsList.push(cur);
+          cur = {
+            examName: att.section.exam.name || 'Unknown Exam',
+            date: new Date(att.submitted_at).toLocaleDateString(),
+            sections: [att.section.name || 'Unknown Section'],
+            totalScore: att.score || 0,
+            totalQuestions: att.total_questions || 0,
+            totalTime: att.time_spent_seconds || 0,
+            firstAttemptId: att.id,
+            allAttemptIds: [att.id],
+          };
+        } else if (cur) {
+          // Continue current session
+          cur.sections.push(att.section.name || 'Unknown Section');
+          cur.totalScore += att.score || 0;
+          cur.totalQuestions += att.total_questions || 0;
+          cur.totalTime += att.time_spent_seconds || 0;
+          cur.allAttemptIds.push(att.id);
+        } else {
+          // Orphan: no first section seen yet — treat as its own session
+          orphans.push(att);
+        }
+      });
+      if (cur) sessionsList.push(cur);
+
+      // Each orphan attempt → individual session row
+      orphans.forEach(att => {
+        sessionsList.push({
+          examName: att.section.exam.name || 'Unknown Exam',
+          date: new Date(att.submitted_at).toLocaleDateString(),
+          sections: [att.section.name || 'Unknown Section'],
+          totalScore: att.score || 0,
+          totalQuestions: att.total_questions || 0,
+          totalTime: att.time_spent_seconds || 0,
+          firstAttemptId: att.id,
+          allAttemptIds: [att.id],
+        });
+      });
+    });
+
+    // Sort most recent first
+    sessionsList.sort((a, b) =>
+      new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    return sessionsList;
+  }, [attempts, examId, firstSectionsByExamId]);
+
   // Overview Metrics
   // Logic: Total Attempts = Starts of the First Section
   // Logic: Completed = Submissions of the Last Section
 
-  const totalAttempts = (examId && firstSectionId)
-    ? attempts.filter(a => a.section_id === firstSectionId).length
-    : (examId ? 0 : attempts.length); // Fallback for student view (attempts.length is fine there)
+  const totalAttempts = examId 
+    ? (firstSectionId ? attempts.filter(a => a.section_id === firstSectionId).length : 0)
+    : studentSessionsList.length;
 
   const submittedCount = (examId && lastSectionId)
     ? attempts.filter(a => a.section_id === lastSectionId && a.submitted_at).length
@@ -719,7 +797,7 @@ export default function Analytics() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-2">
               <TrendingUp className="w-5 h-5 text-primary" />
-              <h3 className="font-semibold">Total Attempts</h3>
+              <h3 className="font-semibold">{examId ? "Total Attempts" : "Total Exams Given"}</h3>
             </div>
             <p className="text-3xl font-bold">{totalAttempts}</p>
           </Card>
@@ -1258,77 +1336,6 @@ export default function Analytics() {
               ) : Object.keys(firstSectionsByExamId).length === 0 ? (
                 <p className="text-muted-foreground text-center py-4 text-sm">Loading history...</p>
               ) : (() => {
-                // Session-based grouping: a new session starts each time the user
-                // hits the first section of an exam. Sorted by created_at ascending
-                // so sessions are detected in chronological order.
-                const sortedAttempts = [...attempts]
-                  .filter(a => a.section && a.section.exam)
-                  .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-                // Group by exam_id first, then detect sessions within each exam
-                const sessionsList: any[] = [];
-
-                // Get attempts per exam
-                const byExam: Record<string, any[]> = {};
-                sortedAttempts.forEach(att => {
-                  const eid = (att.section as any)?.exam_id || att.section_id || 'unknown';
-                  if (!byExam[eid]) byExam[eid] = [];
-                  byExam[eid].push(att);
-                });
-
-                Object.entries(byExam).forEach(([eid, examAtts]) => {
-                  const firstSectionId = firstSectionsByExamId[eid];
-                  let cur: any = null;
-                  const orphans: any[] = [];
-
-                  examAtts.forEach(att => {
-                    if (firstSectionId && att.section_id === firstSectionId) {
-                      // Start a new session
-                      if (cur) sessionsList.push(cur);
-                      cur = {
-                        examName: att.section.exam.name || 'Unknown Exam',
-                        date: new Date(att.submitted_at).toLocaleDateString(),
-                        sections: [att.section.name || 'Unknown Section'],
-                        totalScore: att.score || 0,
-                        totalQuestions: att.total_questions || 0,
-                        totalTime: att.time_spent_seconds || 0,
-                        firstAttemptId: att.id,
-                        allAttemptIds: [att.id],
-                      };
-                    } else if (cur) {
-                      // Continue current session
-                      cur.sections.push(att.section.name || 'Unknown Section');
-                      cur.totalScore += att.score || 0;
-                      cur.totalQuestions += att.total_questions || 0;
-                      cur.totalTime += att.time_spent_seconds || 0;
-                      cur.allAttemptIds.push(att.id);
-                    } else {
-                      // Orphan: no first section seen yet — treat as its own session
-                      orphans.push(att);
-                    }
-                  });
-                  if (cur) sessionsList.push(cur);
-
-                  // Each orphan attempt → individual session row
-                  orphans.forEach(att => {
-                    sessionsList.push({
-                      examName: att.section.exam.name || 'Unknown Exam',
-                      date: new Date(att.submitted_at).toLocaleDateString(),
-                      sections: [att.section.name || 'Unknown Section'],
-                      totalScore: att.score || 0,
-                      totalQuestions: att.total_questions || 0,
-                      totalTime: att.time_spent_seconds || 0,
-                      firstAttemptId: att.id,
-                      allAttemptIds: [att.id],
-                    });
-                  });
-                });
-
-                // Sort most recent first
-                sessionsList.sort((a, b) =>
-                  new Date(b.date).getTime() - new Date(a.date).getTime()
-                );
-
                 // Helper to find rank for a group using any of its attempt IDs
                 const getRankForGroup = (group: any) => {
                   for (const id of group.allAttemptIds) {
@@ -1337,7 +1344,7 @@ export default function Analytics() {
                   return null;
                 };
 
-                return sessionsList.map((group: any) => (
+                return studentSessionsList.map((group: any) => (
                   <div
                     key={group.firstAttemptId}
                     className="flex items-center justify-between p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors"
