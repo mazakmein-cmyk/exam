@@ -590,8 +590,13 @@ export default function Analytics() {
 
   const uniqueStudents = new Set(attempts.map(a => a.user_id)).size;
 
-  const avgAccuracy = validAttempts.reduce((sum, a) => sum + a.accuracy_percentage, 0) / (validAttempts.length || 1);
-  const avgTimePerQuestion = validAttempts.reduce((sum, a) => sum + a.avg_time_per_question, 0) / (validAttempts.length || 1);
+  const totalCorrectQs = validAttempts.reduce((sum, a) => sum + (a.score || 0), 0);
+  const totalAttemptedQs = validAttempts.reduce((sum, a) => sum + (a.total_questions || 0), 0);
+  const overallAccuracy = totalAttemptedQs > 0 ? (totalCorrectQs / totalAttemptedQs) * 100 : 0;
+  
+  const totalTimeSpentQs = validAttempts.reduce((sum, a) => sum + (Math.round((a.avg_time_per_question || 0) * (a.total_questions || 0))), 0);
+  const avgTimePerQuestion = totalAttemptedQs > 0 ? totalTimeSpentQs / totalAttemptedQs : 0;
+  
   const bestScore = Math.max(...validAttempts.map((a) => a.accuracy_percentage), 0);
 
   // For Student View: Trend of accuracy over attempts
@@ -839,10 +844,10 @@ export default function Analytics() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-2">
               <Target className="w-5 h-5 text-green-500" />
-              <h3 className="font-semibold">Avg Accuracy</h3>
+              <h3 className="font-semibold">Overall Accuracy/Q</h3>
             </div>
             <p className="text-3xl font-bold">
-              {avgAccuracy.toFixed(2)}%
+              {overallAccuracy.toFixed(2)}%
             </p>
           </Card>
 
@@ -1384,12 +1389,6 @@ export default function Analytics() {
                             ? ((group.totalScore / group.totalQuestions) * 100).toFixed(1)
                             : 0}%
                         </Badge>
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        <Clock className="w-4 h-4 inline mr-1" />
-                        {Math.floor(group.totalTime / 60) > 0 
-                          ? `${Math.floor(group.totalTime / 60)}m ${Math.floor(group.totalTime % 60)}s`
-                          : `${Math.floor(group.totalTime % 60)}s`}
                       </div>
                     </div>
                   </div>
