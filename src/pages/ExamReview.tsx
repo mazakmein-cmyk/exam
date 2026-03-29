@@ -51,6 +51,7 @@ export default function ExamReview() {
   const [uploadingAnswerKey, setUploadingAnswerKey] = useState(false);
 
   const [isCreator, setIsCreator] = useState(false);
+  const [examName, setExamName] = useState<string>("");
 
   // Expand/collapse state for sections and questions
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
@@ -77,18 +78,21 @@ export default function ExamReview() {
       const userId = currentAttempt.user_id;
       setSectionId(currentAttempt.sections.id); // Default to current section for uploads
 
+      // Fetch exam data to get name and check creator
+      const { data: examData, error: examError } = await supabase
+        .from("exams")
+        .select("name, user_id")
+        .eq("id", examId)
+        .single();
+
+      if (!examError && examData) {
+        setExamName(examData.name);
+      }
+
       // 1b. Check if current user is the creator
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: examData, error: examError } = await supabase
-          .from("exams")
-          .select("user_id")
-          .eq("id", examId)
-          .single();
-
-        if (!examError && examData) {
-          setIsCreator(user.id === examData.user_id);
-        }
+      if (user && examData) {
+        setIsCreator(user.id === examData.user_id);
       }
 
       // 2. Fetch all sections for this exam
@@ -451,7 +455,16 @@ export default function ExamReview() {
         {/* Stats Summary */}
         {stats && (
           <Card className="p-6 mb-6 bg-card">
-            <h2 className="text-2xl font-bold mb-4">Exam Summary</h2>
+            <div className="mb-4">
+              {examName ? (
+                <>
+                  <h2 className="text-2xl font-bold">{examName}</h2>
+                  <p className="text-muted-foreground">Exam Summary</p>
+                </>
+              ) : (
+                <h2 className="text-2xl font-bold">Exam Summary</h2>
+              )}
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <p className="text-sm text-muted-foreground">Score</p>
