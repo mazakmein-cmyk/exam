@@ -71,6 +71,8 @@ export default function Analytics() {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   // Rank data for student history: maps attemptId -> { rank, total }
   const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
+  // Maps examId -> firstSectionId (used for session-based history grouping)
+  const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, string>>({}); 
 
   const toggleSection = (sectionName: string) => {
     const newCollapsed = new Set(collapsedSections);
@@ -367,6 +369,7 @@ export default function Analytics() {
 
             // For each exam, get all sections and all attempts (all users)
             const rankMap: Record<string, { rank: number; total: number }> = {};
+            const firstSectionsMap: Record<string, string> = {};
 
             for (const eid of examIds) {
               // Get sections for this exam (ordered)
@@ -381,6 +384,7 @@ export default function Analytics() {
 
               const sectionIds = examSections.map(s => s.id);
               const firstSectionId = sectionIds[0];
+              firstSectionsMap[eid] = firstSectionId; // Store for history grouping
 
               // Get all attempts for this exam (all users)
               const { data: allAttempts } = await supabase
@@ -452,6 +456,8 @@ export default function Analytics() {
             }
 
             setExamRanks(rankMap);
+            setFirstSectionsByExamId(firstSectionsMap);
+
           }
         } catch (rankErr) {
           console.error("Error computing history ranks:", rankErr);
@@ -1249,74 +1255,79 @@ export default function Analytics() {
             <div className="space-y-3">
               {attempts.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No attempts recorded yet.</p>
+              ) : Object.keys(firstSectionsByExamId).length === 0 ? (
+                <p className="text-muted-foreground text-center py-4 text-sm">Loading history...</p>
               ) : (() => {
-                // Group attempts into distinct examination sessions
-                const sessions: any[] = [];
-                
-                // First, group by exam ID to isolate attempts per exam
-                const attemptsByExam = attempts.reduce((acc: any, att) => {
-                  if (!att.section || !att.section.exam) return acc;
-                  const eId = att.section.exam_id || att.section.exam.name;
-                  if (!acc[eId]) acc[eId] = [];
-                  acc[eId].push(att);
-                  return acc;
-                }, {});
+                // Session-based grouping: a new session starts each time the user
+                // hits the first section of an exam. Sorted by created_at ascending
+                // so sessions are detected in chronological order.
+                const sortedAttempts = [...attempts]
+                  .filter(a => a.section && a.section.exam)
+                  .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-                // For each exam, sort chronologically and chunk into sessions
-                Object.values(attemptsByExam).forEach((examAttempts: any) => {
-                  // Sort ascending to group adjacent attempts easily
-                  examAttempts.sort((a: any, b: any) => 
-                    new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime()
-                  );
+                // Group by exam_id first, then detect sessions within each exam
+                const sessionsList: any[] = [];
 
-                  let currentSession: any = null;
-
-                  examAttempts.forEach((attempt: any) => {
-                    const attemptTime = new Date(attempt.submitted_at).getTime();
-
-                    // If we have a current session, check if this attempt belongs to it.
-                    // A simple heuristic: if the attempt is within a few hours of the last one in the session,
-                    // we consider it part of the same sit-down session. Let's use 4 hours as a max gap.
-                    let isSameSession = false;
-                    if (currentSession && currentSession.lastAttemptTime) {
-                       const gapHours = (attemptTime - currentSession.lastAttemptTime) / (1000 * 60 * 60);
-                       if (gapHours < 4) {
-                         isSameSession = true;
-                       }
-                    }
-
-                    if (!isSameSession) {
-                      if (currentSession) sessions.push(currentSession);
-                      const examName = attempt.section.exam.name || "Unknown Exam";
-                      currentSession = {
-                        examName,
-                        date: new Date(attempt.submitted_at).toLocaleDateString(),
-                        sections: [],
-                        totalScore: 0,
-                        totalQuestions: 0,
-                        totalTime: 0,
-                        firstAttemptId: attempt.id,
-                        allAttemptIds: [],
-                        lastAttemptTime: attemptTime,
-                        // Store the earliest time for reverse chronological sorting later
-                        startTime: attemptTime 
-                      };
-                    }
-
-                    currentSession.sections.push(attempt.section.name || "Unknown Section");
-                    currentSession.totalScore += attempt.score;
-                    currentSession.totalQuestions += attempt.total_questions;
-                    currentSession.totalTime += (attempt.time_spent_seconds || 0);
-                    currentSession.allAttemptIds.push(attempt.id);
-                    currentSession.lastAttemptTime = Math.max(currentSession.lastAttemptTime, attemptTime);
-                  });
-
-                  if (currentSession) sessions.push(currentSession);
+                // Get attempts per exam
+                const byExam: Record<string, any[]> = {};
+                sortedAttempts.forEach(att => {
+                  const eid = (att.section as any)?.exam_id || att.section_id || 'unknown';
+                  if (!byExam[eid]) byExam[eid] = [];
+                  byExam[eid].push(att);
                 });
 
-                // Sort all sessions globally: most recent first
-                sessions.sort((a, b) => b.startTime - a.startTime);
-                const examGroups = sessions;
+                Object.entries(byExam).forEach(([eid, examAtts]) => {
+                  const firstSectionId = firstSectionsByExamId[eid];
+                  let cur: any = null;
+                  const orphans: any[] = [];
+
+                  examAtts.forEach(att => {
+                    if (firstSectionId && att.section_id === firstSectionId) {
+                      // Start a new session
+                      if (cur) sessionsList.push(cur);
+                      cur = {
+                        examName: att.section.exam.name || 'Unknown Exam',
+                        date: new Date(att.submitted_at).toLocaleDateString(),
+                        sections: [att.section.name || 'Unknown Section'],
+                        totalScore: att.score || 0,
+                        totalQuestions: att.total_questions || 0,
+                        totalTime: att.time_spent_seconds || 0,
+                        firstAttemptId: att.id,
+                        allAttemptIds: [att.id],
+                      };
+                    } else if (cur) {
+                      // Continue current session
+                      cur.sections.push(att.section.name || 'Unknown Section');
+                      cur.totalScore += att.score || 0;
+                      cur.totalQuestions += att.total_questions || 0;
+                      cur.totalTime += att.time_spent_seconds || 0;
+                      cur.allAttemptIds.push(att.id);
+                    } else {
+                      // Orphan: no first section seen yet — treat as its own session
+                      orphans.push(att);
+                    }
+                  });
+                  if (cur) sessionsList.push(cur);
+
+                  // Each orphan attempt → individual session row
+                  orphans.forEach(att => {
+                    sessionsList.push({
+                      examName: att.section.exam.name || 'Unknown Exam',
+                      date: new Date(att.submitted_at).toLocaleDateString(),
+                      sections: [att.section.name || 'Unknown Section'],
+                      totalScore: att.score || 0,
+                      totalQuestions: att.total_questions || 0,
+                      totalTime: att.time_spent_seconds || 0,
+                      firstAttemptId: att.id,
+                      allAttemptIds: [att.id],
+                    });
+                  });
+                });
+
+                // Sort most recent first
+                sessionsList.sort((a, b) =>
+                  new Date(b.date).getTime() - new Date(a.date).getTime()
+                );
 
                 // Helper to find rank for a group using any of its attempt IDs
                 const getRankForGroup = (group: any) => {
@@ -1326,7 +1337,7 @@ export default function Analytics() {
                   return null;
                 };
 
-                return Object.values(examGroups).map((group: any) => (
+                return sessionsList.map((group: any) => (
                   <div
                     key={group.firstAttemptId}
                     className="flex items-center justify-between p-4 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors"
