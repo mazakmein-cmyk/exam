@@ -1250,35 +1250,73 @@ export default function Analytics() {
               {attempts.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No attempts recorded yet.</p>
               ) : (() => {
-                // Group attempts by exam (based on exam name and date for simplicity)
-                const examGroups = attempts.reduce((groups: any, attempt) => {
-                  // Guard clause for missing section/exam data
-                  if (!attempt.section || !attempt.section.exam) return groups;
-
-                  const examId = attempt.section.exam.name || "Unknown Exam";
-                  const date = new Date(attempt.submitted_at).toLocaleDateString();
-                  const key = `${examId}_${date}`;
-
-                  if (!groups[key]) {
-                    groups[key] = {
-                      examName: attempt.section.exam.name || "Unknown Exam",
-                      date: date,
-                      sections: [],
-                      totalScore: 0,
-                      totalQuestions: 0,
-                      totalTime: 0,
-                      firstAttemptId: attempt.id,
-                      allAttemptIds: [] // Track all IDs for rank lookup
-                    };
-                  }
-                  groups[key].sections.push(attempt.section.name || "Unknown Section");
-                  groups[key].totalScore += attempt.score;
-                  groups[key].totalQuestions += attempt.total_questions;
-                  groups[key].totalTime += (attempt.time_spent_seconds || 0);
-                  groups[key].allAttemptIds.push(attempt.id);
-
-                  return groups;
+                // Group attempts into distinct examination sessions
+                const sessions: any[] = [];
+                
+                // First, group by exam ID to isolate attempts per exam
+                const attemptsByExam = attempts.reduce((acc: any, att) => {
+                  if (!att.section || !att.section.exam) return acc;
+                  const eId = att.section.exam_id || att.section.exam.name;
+                  if (!acc[eId]) acc[eId] = [];
+                  acc[eId].push(att);
+                  return acc;
                 }, {});
+
+                // For each exam, sort chronologically and chunk into sessions
+                Object.values(attemptsByExam).forEach((examAttempts: any) => {
+                  // Sort ascending to group adjacent attempts easily
+                  examAttempts.sort((a: any, b: any) => 
+                    new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime()
+                  );
+
+                  let currentSession: any = null;
+
+                  examAttempts.forEach((attempt: any) => {
+                    const attemptTime = new Date(attempt.submitted_at).getTime();
+
+                    // If we have a current session, check if this attempt belongs to it.
+                    // A simple heuristic: if the attempt is within a few hours of the last one in the session,
+                    // we consider it part of the same sit-down session. Let's use 4 hours as a max gap.
+                    let isSameSession = false;
+                    if (currentSession && currentSession.lastAttemptTime) {
+                       const gapHours = (attemptTime - currentSession.lastAttemptTime) / (1000 * 60 * 60);
+                       if (gapHours < 4) {
+                         isSameSession = true;
+                       }
+                    }
+
+                    if (!isSameSession) {
+                      if (currentSession) sessions.push(currentSession);
+                      const examName = attempt.section.exam.name || "Unknown Exam";
+                      currentSession = {
+                        examName,
+                        date: new Date(attempt.submitted_at).toLocaleDateString(),
+                        sections: [],
+                        totalScore: 0,
+                        totalQuestions: 0,
+                        totalTime: 0,
+                        firstAttemptId: attempt.id,
+                        allAttemptIds: [],
+                        lastAttemptTime: attemptTime,
+                        // Store the earliest time for reverse chronological sorting later
+                        startTime: attemptTime 
+                      };
+                    }
+
+                    currentSession.sections.push(attempt.section.name || "Unknown Section");
+                    currentSession.totalScore += attempt.score;
+                    currentSession.totalQuestions += attempt.total_questions;
+                    currentSession.totalTime += (attempt.time_spent_seconds || 0);
+                    currentSession.allAttemptIds.push(attempt.id);
+                    currentSession.lastAttemptTime = Math.max(currentSession.lastAttemptTime, attemptTime);
+                  });
+
+                  if (currentSession) sessions.push(currentSession);
+                });
+
+                // Sort all sessions globally: most recent first
+                sessions.sort((a, b) => b.startTime - a.startTime);
+                const examGroups = sessions;
 
                 // Helper to find rank for a group using any of its attempt IDs
                 const getRankForGroup = (group: any) => {
