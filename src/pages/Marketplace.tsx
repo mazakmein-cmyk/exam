@@ -100,7 +100,7 @@ const Marketplace = () => {
     };
 
     const handleTakeExam = (examId: string) => {
-        navigate(`/exam/${examId}/intro?from=marketplace`);
+        window.open(`/exam/${examId}/intro?from=marketplace`, '_blank');
     };
 
     const handleShare = (examId: string) => {

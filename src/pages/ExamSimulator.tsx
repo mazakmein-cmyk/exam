@@ -545,7 +545,7 @@ const ExamSimulator = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="absolute top-6 left-6">
-          <Button variant="ghost" onClick={() => navigate("/dashboard")}>
+          <Button variant="ghost" onClick={() => navigate("/analytics")}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Dashboard
           </Button>

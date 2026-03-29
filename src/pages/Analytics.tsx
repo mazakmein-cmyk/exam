@@ -678,42 +678,7 @@ export default function Analytics() {
           )}
         </div>
 
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4">{examId ? "Accuracy Trend (Daily Avg)" : "Accuracy Trend"}</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={accuracyTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey={examId ? "date" : "attempt"} />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="accuracy"
-                  stroke="hsl(var(--primary))"
-                  name="Accuracy %"
-                  strokeWidth={2}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </Card>
 
-          <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Section-wise Performance</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={sectionData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="avgAccuracy" fill="#8884d8" name="Avg Accuracy %" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-        </div>
 
 
         {/* Advanced Analytics Charts (Creator Only) */}
@@ -1225,7 +1190,7 @@ export default function Analytics() {
                     <div>
                       <p className="font-semibold">{group.examName}</p>
                       <p className="text-sm text-muted-foreground">
-                        {group.sections.length} section{group.sections.length > 1 ? 's' : ''} • {group.date}
+                        {group.sections.length} section{group.sections.length > 1 ? 's' : ''} • Attempted on {group.date}
                       </p>
                     </div>
                     <div className="flex items-center gap-4">

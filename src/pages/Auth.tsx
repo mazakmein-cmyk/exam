@@ -193,11 +193,19 @@ const Auth = () => {
     });
 
     if (error) {
-      toast({
-        title: "Sign in failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      if (error.message === "Invalid login credentials") {
+        toast({
+          title: "Account not found",
+          description: "No account exists with these credentials. Please sign up to create one.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Sign in failed",
+          description: error.message,
+          variant: "destructive",
+        });
+      }
     } else {
       // Check for email verification strictly
       if (!data.user?.email_confirmed_at) {

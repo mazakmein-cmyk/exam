@@ -216,11 +216,19 @@ const StudentAuth = () => {
         });
 
         if (signInError) {
-            toast({
-                title: "Sign in failed",
-                description: signInError.message,
-                variant: "destructive",
-            });
+            if (signInError.message === "Invalid login credentials") {
+                toast({
+                    title: "Account not found",
+                    description: "No account exists with these credentials. Please sign up to create one.",
+                    variant: "destructive",
+                });
+            } else {
+                toast({
+                    title: "Sign in failed",
+                    description: signInError.message,
+                    variant: "destructive",
+                });
+            }
         } else {
             // Fetch fresh user data to ensure we have the latest metadata
             const { data: { user }, error: userError } = await supabase.auth.getUser();

@@ -380,7 +380,7 @@ export default function ExamReview() {
         <div className="flex items-center justify-between mb-6">
           <Button
             variant="ghost"
-            onClick={() => navigate("/dashboard")}
+            onClick={() => navigate("/analytics")}
             className="gap-2"
           >
             <ArrowLeft className="w-4 h-4" />
