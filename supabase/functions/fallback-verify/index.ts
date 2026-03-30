@@ -1,0 +1,198 @@
+// supabase/functions/fallback-verify/index.ts
+//
+// Fallback email verification — called on the 3rd resend attempt.
+// Generates a verification link via Supabase Admin API, then sends
+// the email directly via Resend HTTP API (bypasses SMTP entirely).
+//
+// This is a different delivery pathway than attempts 1-2:
+//   Attempt 1-2: Supabase auth.resend() → Resend SMTP
+//   Attempt 3:   admin.generateLink() → Resend HTTP API (this function)
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// Simple in-memory rate limiter
+const rateLimitMap = new Map<string, number>();
+const RATE_LIMIT_MS = 30_000; // 30 seconds
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+Deno.serve(async (req: Request) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    const { email, redirectTo } = await req.json();
+
+    if (!email || typeof email !== "string") {
+      return new Response(
+        JSON.stringify({ error: "Email is required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Rate limit check
+    const lastSent = rateLimitMap.get(email);
+    if (lastSent && Date.now() - lastSent < RATE_LIMIT_MS) {
+      const waitSeconds = Math.ceil((RATE_LIMIT_MS - (Date.now() - lastSent)) / 1000);
+      return new Response(
+        JSON.stringify({ error: `Please wait ${waitSeconds} seconds before trying again.` }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // --- Step 1: Generate verification link via Admin API ---
+    const supabaseAdmin = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: "signup",
+      email,
+      options: {
+        redirectTo: redirectTo || undefined,
+      },
+    });
+
+    if (linkError) {
+      console.error("generateLink error:", linkError);
+      return new Response(
+        JSON.stringify({ error: linkError.message }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const verificationUrl = linkData?.properties?.action_link;
+    if (!verificationUrl) {
+      return new Response(
+        JSON.stringify({ error: "Failed to generate verification link" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // --- Step 2: Send email via Resend HTTP API (bypasses SMTP) ---
+    const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+    if (!RESEND_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: "Email service not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const siteUrl = Deno.env.get("SUPABASE_URL")?.replace(".supabase.co", "") || "https://mocksetu.in";
+    const publicSiteUrl = Deno.env.get("SITE_URL") || "https://examt.vercel.app";
+
+    const emailHtml = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <div style="display:none;font-size:1px;color:#f4f4f7;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+    One quick step and you're in. Your first mock exam is waiting.
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;">
+    <tr>
+      <td align="center" style="padding:40px 20px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#ffffff;border-radius:16px;border:1px solid #e8e8ed;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+          <tr>
+            <td align="center" style="padding:32px 40px 0 40px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding-right:8px;vertical-align:middle;">
+                    <img src="${publicSiteUrl}/mocksetu-logo.png" alt="MockSetu" width="32" height="32" style="display:block;width:32px;height:32px;border:0;" />
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <span style="font-size:18px;font-weight:700;color:#1a1a2e;letter-spacing:-0.02em;">Mock<span style="color:#6C3EF4;">Setu</span></span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr><td style="padding:20px 40px 0 40px;"><div style="height:1px;background-color:#eeeef2;"></div></td></tr>
+          <tr>
+            <td style="padding:28px 40px 0 40px;">
+              <h1 style="margin:0 0 20px 0;font-size:24px;font-weight:800;color:#1a1a2e;line-height:1.3;">Welcome to MockSetu! 🎓</h1>
+              <p style="margin:0 0 8px 0;font-size:15px;color:#555770;line-height:1.7;">Hey there,</p>
+              <p style="margin:0 0 28px 0;font-size:15px;color:#555770;line-height:1.7;">We're trying a different delivery method for you. Click below to verify your email.</p>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:0 40px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+                <tr>
+                  <td align="center" style="border-radius:12px;background-color:#6C3EF4;">
+                    <a href="${verificationUrl}" target="_blank" style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:12px;background-color:#6C3EF4;">
+                      Verify My Email &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr><td style="padding:28px 40px 0 40px;"><div style="height:1px;background-color:#eeeef2;"></div></td></tr>
+          <tr>
+            <td style="padding:20px 40px 0 40px;">
+              <p style="margin:0 0 10px 0;font-size:13px;font-weight:600;color:#1a1a2e;">What's waiting for you:</p>
+              <p style="margin:0 0 6px 0;font-size:13px;color:#555770;line-height:1.6;">✓ &nbsp;Question-level analytics to find weak spots</p>
+              <p style="margin:0;font-size:13px;color:#555770;line-height:1.6;">✓ &nbsp;Mark-for-review, section navigation — real exam feel</p>
+            </td>
+          </tr>
+          <tr><td style="padding:24px 40px 0 40px;"><div style="height:1px;background-color:#eeeef2;"></div></td></tr>
+          <tr>
+            <td align="center" style="padding:20px 40px 32px 40px;">
+              <p style="margin:0 0 4px 0;font-size:11px;color:#b0b0c0;">&copy; 2025 MockSetu &middot; <a href="${publicSiteUrl}/privacy-policy" style="color:#b0b0c0;text-decoration:underline;">Privacy Policy</a> &middot; <a href="${publicSiteUrl}/terms-of-service" style="color:#b0b0c0;text-decoration:underline;">Terms of Service</a></p>
+              <p style="margin:0;font-size:11px;color:#c8c8d4;">MockSetu, India &middot; You received this because you signed up at mocksetu.in</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    const resendResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "MockSetu <hey@mocksetu.in>",
+        to: [email],
+        subject: "Welcome to MockSetu — verify your email ✨",
+        html: emailHtml,
+      }),
+    });
+
+    const resendResult = await resendResponse.json();
+
+    if (!resendResponse.ok) {
+      console.error("Resend API error:", resendResult);
+      return new Response(
+        JSON.stringify({ error: "Failed to send fallback email" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Update rate limit
+    rateLimitMap.set(email, Date.now());
+
+    return new Response(
+      JSON.stringify({ success: true, message: "Verification email sent via alternate delivery." }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+
+  } catch (err) {
+    console.error("Unexpected error:", err);
+    return new Response(
+      JSON.stringify({ error: "Internal server error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
