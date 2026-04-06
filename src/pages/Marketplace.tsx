@@ -122,39 +122,35 @@ const Marketplace = () => {
 
             <main className="container mx-auto max-w-7xl px-6 py-8">
                 {/* Back Button */}
-                <Button
-                    variant="ghost"
+                <button
                     onClick={() => navigate("/")}
-                    className="mb-4 text-muted-foreground hover:text-foreground"
+                    className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
-                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    <ArrowLeft className="h-4 w-4" />
                     Back to Home
-                </Button>
+                </button>
 
                 <div className="flex items-center justify-between mb-8">
                     <div>
-                        <div className="flex items-center gap-3 mb-2">
-                            <Store className="h-8 w-8 text-primary" />
-                            <h1 className="text-3xl font-bold text-foreground">Exam Library</h1>
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 text-[11px] font-semibold text-[#A855F7] uppercase tracking-wider">Public Library</span>
                         </div>
-                        <p className="text-muted-foreground">Browse and take public exams shared by the community</p>
+                        <h1 className="text-3xl font-bold tracking-tight text-foreground">Exam Library</h1>
+                        <p className="text-muted-foreground text-sm mt-1">Browse and take mock exams shared by the community</p>
                     </div>
                 </div>
 
-                <div className="flex flex-col md:flex-row gap-4 mb-8">
-                    <div className="flex gap-4 flex-1">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search by title..."
-                                className="pl-8"
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                            />
-                        </div>
-                        <Button>Search</Button>
+                <div className="flex flex-col md:flex-row gap-3 mb-8">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Search by title or category..."
+                            className="pl-10 h-11 rounded-xl border-border/60 bg-card/60 focus-visible:border-[#6C3EF4]/40"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
                     </div>
-                    <div className="w-full md:w-64">
+                    <div className="w-full md:w-56">
                         <MultiSelectDropdown
                             options={categoryOptions}
                             selected={selectedCategories}
@@ -177,63 +173,55 @@ const Marketplace = () => {
                         </CardContent>
                     </Card>
                 ) : (
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
                         {exams.filter(exam => {
                             const query = searchQuery.toLowerCase();
                             const nameMatch = exam.name.toLowerCase().includes(query);
                             const categoryMatch = exam.exam_category?.toLowerCase().includes(query);
                             const textMatch = nameMatch || categoryMatch;
-
                             const filterMatch = selectedCategories.length === 0 || (exam.exam_category && selectedCategories.includes(exam.exam_category));
-
                             return textMatch && filterMatch;
                         }).map((exam) => (
-                            <Card key={exam.id} className="flex flex-col justify-between">
-                                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-                                    <div className="space-y-1">
-                                        <div className="flex items-center gap-2">
-                                            <CardTitle className="text-xl font-bold break-all">{exam.name}</CardTitle>
+                            <div key={exam.id} className="group flex flex-col justify-between rounded-xl border border-border/60 bg-card hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden">
+                                <div className="p-5">
+                                    <div className="flex items-start justify-between gap-2 mb-2">
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className="text-base font-bold text-foreground break-words leading-tight mb-1">{exam.name}</h3>
                                             {exam.exam_category && (
-                                                <Badge variant="secondary" className="text-xs font-normal shrink-0">
-                                                    {exam.exam_category}
-                                                </Badge>
+                                                <Badge variant="secondary" className="text-[10px] font-medium">{exam.exam_category}</Badge>
                                             )}
                                         </div>
-                                        <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
-                                        <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
-                                            <span className="font-medium text-primary">@{exam.creator_username || "Unknown"}</span>
+                                        <div className="flex items-center gap-0.5 shrink-0">
+                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => handleShare(exam.id)}>
+                                                <Share2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
+                                                        <MoreVertical className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end">
+                                                    <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>View Details</DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-1 -mr-2">
-                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => handleShare(exam.id)}>
-                                            <Share2 className="h-4 w-4" />
-                                        </Button>
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
-                                                    <MoreVertical className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end">
-                                                <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
-                                                    View Details
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="mt-4">
-                                    <div className="flex gap-3">
-                                        <Button
-                                            className="flex-1 bg-blue-600 hover:bg-blue-700"
-                                            onClick={() => handleTakeExam(exam.id)}
-                                        >
-                                            <BookOpen className="mr-2 h-4 w-4" />
-                                            Take Exam
-                                        </Button>
-                                    </div>
-                                </CardContent>
-                            </Card>
+                                    <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{exam.description || "No description provided."}</p>
+                                    <p className="text-[11px] text-muted-foreground">
+                                        by <span className="font-semibold text-[#6C3EF4]">{exam.creator_username || "Unknown"}</span>
+                                    </p>
+                                </div>
+                                <div className="px-5 pb-5">
+                                    <button
+                                        onClick={() => handleTakeExam(exam.id)}
+                                        className="w-full h-9 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-sm shadow-md shadow-[#6C3EF4]/20 hover:shadow-[#6C3EF4]/30 hover:-translate-y-px transition-all duration-200 flex items-center justify-center gap-2"
+                                    >
+                                        <BookOpen className="h-4 w-4" />
+                                        Take Exam
+                                    </button>
+                                </div>
+                            </div>
                         ))}
                     </div>
                 )}
