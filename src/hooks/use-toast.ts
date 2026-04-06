@@ -157,9 +157,13 @@ function toast({ ...props }: Toast) {
   });
 
   // Auto-dismiss after TOAST_REMOVE_DELAY
+  // Increase delay by 3 seconds for error/destructive toasts
+  const delay = props.variant === "destructive" ? TOAST_REMOVE_DELAY + 3000 : TOAST_REMOVE_DELAY;
+  
+  // Also respect explicit duration if provided
   setTimeout(() => {
     dismiss();
-  }, TOAST_REMOVE_DELAY);
+  }, props.duration || delay);
 
   return {
     id: id,

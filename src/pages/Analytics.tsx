@@ -55,24 +55,27 @@ interface QuestionStats {
   mostCommonWrong?: string | null;
 }
 
+import { useUserRole } from "@/hooks/use-user-role";
+
 export default function Analytics() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const examId = searchParams.get("examId");
+  const { role, loading: roleLoading } = useUserRole();
 
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [loading, setLoading] = useState(true);
   const [examName, setExamName] = useState<string>("");
-  const [firstSectionId, setFirstSectionId] = useState<string | null>(null);
-  const [lastSectionId, setLastSectionId] = useState<string | null>(null);
+  const [firstSectionIds, setFirstSectionIds] = useState<Set<string>>(new Set());
+  const [lastSectionIds, setLastSectionIds] = useState<Set<string>>(new Set());
   const [questionStats, setQuestionStats] = useState<QuestionStats[]>([]);
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionStats | null>(null);
   const [selectedSectionName, setSelectedSectionName] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   // Rank data for student history: maps attemptId -> { rank, total }
   const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
-  // Maps examId -> firstSectionId (used for session-based history grouping)
-  const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, string>>({}); 
+  // Maps examId -> Set of firstSectionIds (used for session-based history grouping)
+  const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, Set<string>>>({}); 
   // Creator leaderboard: top 3 sessions ranked by total score
   const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; username: string; displayName: string; totalScore: number; totalQuestions: number }[]>([]);
 
@@ -87,8 +90,16 @@ export default function Analytics() {
   };
 
   useEffect(() => {
+    if (roleLoading) return;
+    
+    // For Creator side this type of analytics (Student overall performance) shouldn't be accessed
+    if (role === 'creator' && !examId) {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+
     fetchData();
-  }, [examId]);
+  }, [examId, role, roleLoading]);
 
   const fetchData = async () => {
     try {
@@ -137,16 +148,32 @@ export default function Analytics() {
         // 1.5 Get All Sections to determine First and Last (for analytics logic)
         const { data: allSections, error: sectionsError } = await supabase
           .from("sections")
-          .select("id, sort_order, created_at")
+          .select("id, sort_order, created_at, language")
           .eq("exam_id", examId)
           .order("sort_order", { ascending: true })
           .order("created_at", { ascending: true });
 
         if (sectionsError) throw sectionsError;
 
+        const localFirstIds = new Set<string>();
+        const localLastIds = new Set<string>();
+
         if (allSections && allSections.length > 0) {
-          setFirstSectionId(allSections[0].id);
-          setLastSectionId(allSections[allSections.length - 1].id);
+          const langMap = new Map<string, any[]>();
+          allSections.forEach(s => {
+            const lang = s.language || 'en';
+            if (!langMap.has(lang)) langMap.set(lang, []);
+            langMap.get(lang)!.push(s);
+          });
+          
+          // Add the first and last section elements per-language variant strictly
+          langMap.forEach((secs) => {
+            localFirstIds.add(secs[0].id);
+            localLastIds.add(secs[secs.length - 1].id);
+          });
+          
+          setFirstSectionIds(localFirstIds);
+          setLastSectionIds(localLastIds);
         }
 
         // 2. Get attempts through sections
@@ -286,8 +313,6 @@ export default function Analytics() {
         // --- Compute Top 3 Leaderboard for Creator View ---
         try {
           if (allSections && allSections.length > 0 && correctedAttempts.length > 0) {
-            const firstSectionId = allSections[0].id;
-
             // Sort all corrected attempts chronologically
             const sortedAttempts = [...correctedAttempts].sort(
               (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
@@ -308,7 +333,7 @@ export default function Analytics() {
               const orphans: any[] = [];
 
               userAtts.forEach(att => {
-                if (att.section_id === firstSectionId) {
+                if (localFirstIds.has(att.section_id)) {
                   if (cur) sessions.push(cur);
                   cur = { userId: uid, totalScore: att.score || 0, totalQuestions: att.total_questions || 0 };
                 } else if (cur) {
@@ -494,28 +519,39 @@ export default function Analytics() {
 
             // Batch-fetch all sections for all exams in ONE query (eliminates N+1 loop)
             const rankMap: Record<string, { rank: number; total: number }> = {};
-            const firstSectionsMap: Record<string, string> = {};
+            const firstSectionsMap: Record<string, Set<string>> = {};
 
             const { data: allExamSections } = await supabase
               .from("sections")
-              .select("id, exam_id, sort_order, created_at")
+              .select("id, exam_id, sort_order, created_at, language")
               .in("exam_id", examIds)
               .order("sort_order", { ascending: true })
               .order("created_at", { ascending: true });
 
             if (allExamSections && allExamSections.length > 0) {
-              // Group sections by exam_id and determine first section per exam
+              // Group sections by exam_id
               const sectionsByExam: Record<string, typeof allExamSections> = {};
               allExamSections.forEach(s => {
                 if (!sectionsByExam[s.exam_id]) sectionsByExam[s.exam_id] = [];
                 sectionsByExam[s.exam_id].push(s);
               });
 
-              // Build firstSectionsMap (first section per exam, already sorted)
+              // Build firstSectionsMap (multi-language aware first sections per exam)
               const allSectionIds: string[] = [];
               Object.entries(sectionsByExam).forEach(([eid, sections]) => {
-                firstSectionsMap[eid] = sections[0].id;
-                sections.forEach(s => allSectionIds.push(s.id));
+                const langMap = new Map<string, any[]>();
+                sections.forEach(s => {
+                  const l = s.language || 'en';
+                  if (!langMap.has(l)) langMap.set(l, []);
+                  langMap.get(l)!.push(s);
+                  allSectionIds.push(s.id);
+                });
+                
+                const firstIds = new Set<string>();
+                langMap.forEach(secs => {
+                  firstIds.add(secs[0].id);
+                });
+                firstSectionsMap[eid] = firstIds;
               });
 
               // Batch-fetch ALL attempts for ALL sections in ONE query
@@ -544,8 +580,8 @@ export default function Analytics() {
                   const examAttempts = attemptsByExam[eid];
                   if (!examAttempts || examAttempts.length === 0) continue;
 
-                  const firstSectionId = firstSectionsMap[eid];
-                  if (!firstSectionId) continue;
+                  const firstSectionGroupIds = firstSectionsMap[eid];
+                  if (!firstSectionGroupIds || firstSectionGroupIds.size === 0) continue;
 
                   // Group by user
                   const byUser: Record<string, any[]> = {};
@@ -563,7 +599,7 @@ export default function Analytics() {
                     const orphanAttempts: any[] = [];
 
                     userAtts.forEach(att => {
-                      if (att.section_id === firstSectionId) {
+                      if (firstSectionGroupIds.has(att.section_id)) {
                         if (cur) sessions.push(cur);
                         cur = { attemptIds: [att.id], totalScore: att.score || 0 };
                       } else if (cur) {
@@ -661,12 +697,12 @@ export default function Analytics() {
     });
 
     Object.entries(byExam).forEach(([eid, examAtts]) => {
-      const firstSectionId = firstSectionsByExamId[eid];
+      const firstSectionGroupIds = firstSectionsByExamId[eid];
       let cur: any = null;
       const orphans: any[] = [];
 
       examAtts.forEach(att => {
-        if (firstSectionId && att.section_id === firstSectionId) {
+        if (firstSectionGroupIds && firstSectionGroupIds.has(att.section_id)) {
           // Start a new session
           if (cur) sessionsList.push(cur);
           cur = {
@@ -721,11 +757,11 @@ export default function Analytics() {
   // Logic: Completed = Submissions of the Last Section
 
   const totalAttempts = examId 
-    ? (firstSectionId ? attempts.filter(a => a.section_id === firstSectionId).length : 0)
+    ? (firstSectionIds.size > 0 ? attempts.filter(a => firstSectionIds.has(a.section_id)).length : 0)
     : studentSessionsList.length;
 
-  const submittedCount = (examId && lastSectionId)
-    ? attempts.filter(a => a.section_id === lastSectionId && a.submitted_at).length
+  const submittedCount = (examId && lastSectionIds.size > 0)
+    ? attempts.filter(a => lastSectionIds.has(a.section_id) && a.submitted_at).length
     : (examId ? 0 : attempts.filter(a => a.submitted_at).length);
 
   const completionRate = totalAttempts > 0 ? (submittedCount / totalAttempts) * 100 : 0;
@@ -734,7 +770,7 @@ export default function Analytics() {
   // Repeat Attempts (Creator Only)
   const studentAttempts = attempts.reduce((acc: any, attempt) => {
     // Only count attempts for the first section to avoid counting section transitions as repeats
-    if (examId && firstSectionId && attempt.section_id !== firstSectionId) {
+    if (examId && firstSectionIds.size > 0 && !firstSectionIds.has(attempt.section_id)) {
       return acc;
     }
     acc[attempt.user_id] = (acc[attempt.user_id] || 0) + 1;
@@ -769,8 +805,8 @@ export default function Analytics() {
         acc[date].scoreCount++;
 
         // Only count as an "Exam Attempt" if it's the first section
-        // Fallback: If no firstSectionId is determined, counting everything is safer than counting nothing
-        if (!firstSectionId || attempt.section_id === firstSectionId) {
+        // Fallback: If no firstSectionIds are determined, counting everything is safer than counting nothing
+        if (firstSectionIds.size === 0 || firstSectionIds.has(attempt.section_id)) {
           acc[date].attemptCount++;
         }
 
@@ -840,7 +876,7 @@ export default function Analytics() {
     { range: '81-100%', count: 0 },
   ];
 
-  if (firstSectionId) {
+  if (firstSectionIds.size > 0) {
     // Group attempts by user
     const attemptsByUser: Record<string, Attempt[]> = {};
     attempts.forEach(a => {
@@ -857,7 +893,7 @@ export default function Analytics() {
 
       userAttempts.forEach(attempt => {
         // Start of new session (delimited by First Section)
-        if (attempt.section_id === firstSectionId) {
+        if (firstSectionIds.has(attempt.section_id)) {
           // If previous session active, push its average
           if (sessionActive && currentSessionScores.length > 0) {
             const avg = currentSessionScores.reduce((a, b) => a + b, 0) / currentSessionScores.length;

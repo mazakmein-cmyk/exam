@@ -20,6 +20,7 @@ export type Database = {
           avg_time_per_question: number | null
           created_at: string
           id: string
+          language: string
           score: number | null
           section_id: string
           started_at: string
@@ -33,6 +34,7 @@ export type Database = {
           avg_time_per_question?: number | null
           created_at?: string
           id?: string
+          language?: string
           score?: number | null
           section_id: string
           started_at?: string
@@ -46,6 +48,7 @@ export type Database = {
           avg_time_per_question?: number | null
           created_at?: string
           id?: string
+          language?: string
           score?: number | null
           section_id?: string
           started_at?: string
@@ -68,27 +71,45 @@ export type Database = {
         Row: {
           created_at: string
           description: string | null
+          description_translations: Json | null
+          exam_category: string | null
           id: string
+          instruction: string | null
+          instruction_translations: Json | null
           is_published: boolean
           name: string
+          published_languages: string[]
+          supported_languages: string[]
           updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
           description?: string | null
+          description_translations?: Json | null
+          exam_category?: string | null
           id?: string
+          instruction?: string | null
+          instruction_translations?: Json | null
           is_published?: boolean
           name: string
+          published_languages?: string[]
+          supported_languages?: string[]
           updated_at?: string
           user_id: string
         }
         Update: {
           created_at?: string
           description?: string | null
+          description_translations?: Json | null
+          exam_category?: string | null
           id?: string
+          instruction?: string | null
+          instruction_translations?: Json | null
           is_published?: boolean
           name?: string
+          published_languages?: string[]
+          supported_languages?: string[]
           updated_at?: string
           user_id?: string
         }
@@ -219,6 +240,7 @@ export type Database = {
           exam_id: string
           id: string
           is_finalized: boolean | null
+          language: string
           name: string
           parsing_completed_at: string | null
           parsing_started_at: string | null
@@ -226,6 +248,7 @@ export type Database = {
           pdf_name: string | null
           pdf_url: string | null
           questions_requiring_review: number | null
+          section_group_id: string | null
           sort_order: number
           time_minutes: number
           total_questions: number | null
@@ -235,6 +258,7 @@ export type Database = {
           exam_id: string
           id?: string
           is_finalized?: boolean | null
+          language?: string
           name: string
           parsing_completed_at?: string | null
           parsing_started_at?: string | null
@@ -242,6 +266,7 @@ export type Database = {
           pdf_name?: string | null
           pdf_url?: string | null
           questions_requiring_review?: number | null
+          section_group_id?: string | null
           sort_order?: number
           time_minutes: number
           total_questions?: number | null
@@ -251,6 +276,7 @@ export type Database = {
           exam_id?: string
           id?: string
           is_finalized?: boolean | null
+          language?: string
           name?: string
           parsing_completed_at?: string | null
           parsing_started_at?: string | null
@@ -258,6 +284,7 @@ export type Database = {
           pdf_name?: string | null
           pdf_url?: string | null
           questions_requiring_review?: number | null
+          section_group_id?: string | null
           sort_order?: number
           time_minutes?: number
           total_questions?: number | null

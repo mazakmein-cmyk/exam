@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,7 +52,9 @@ import { saveExamAttempt } from "@/services/examService";
 const ExamSimulator = () => {
   const { examId, sectionId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
+  const lang = searchParams.get("lang") || "en";
 
   const [allSections, setAllSections] = useState<Section[]>([]);
   const [section, setSection] = useState<Section | null>(null);
@@ -145,6 +147,7 @@ const ExamSimulator = () => {
       }
 
       // Fetch all sections for the exam to determine order
+      // Filter by language if multi-language
       const { data: allSectionsData } = await supabase
         .from("sections")
         .select("*")
@@ -152,7 +155,11 @@ const ExamSimulator = () => {
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
 
-      setAllSections(allSectionsData || []);
+      // Filter to only sections matching the language, or all if single-lang (legacy)
+      const allSecs = allSectionsData || [];
+      const langSections = allSecs.filter(s => (s as any).language === lang);
+      // Use language-filtered sections if available, otherwise fall back to all
+      setAllSections(langSections.length > 0 ? langSections : allSecs);
 
       const { data: sectionData } = await supabase
         .from("sections")
@@ -220,6 +227,7 @@ const ExamSimulator = () => {
             user_id: user.id,
             section_id: sectionId,
             started_at: new Date().toISOString(),
+            language: lang,
           })
           .select()
           .single();
@@ -413,8 +421,8 @@ const ExamSimulator = () => {
       setShowSectionCompleteDialog(false);
       setCurrentQuestionIndex(0);
       setQuestionStates({});
-      // Navigate to next section
-      navigate(`/exam/${examId}/section/${nextSection.id}/simulator`);
+      // Navigate to next section, preserving language
+      navigate(`/exam/${examId}/section/${nextSection.id}/simulator?lang=${lang}`);
     }
   };
 

@@ -122,19 +122,28 @@ export default function ExamReview() {
       // Attempts are fetched ordered by created_at DESC, so reverse to get ascending order
       const attemptsAsc = [...allAttempts].reverse();
 
-      // Identify the first section of this exam (lowest sort_order)
-      const firstSection = sections[0];
-      const firstSectionId = firstSection?.id;
+      // Identify the first section of this exam for EACH language variant
+      const langMap = new Map<string, any[]>();
+      sections.forEach(s => {
+        const lang = s.language || 'en';
+        if (!langMap.has(lang)) langMap.set(lang, []);
+        langMap.get(lang)!.push(s);
+      });
+      
+      const firstSectionIds = new Set<string>();
+      langMap.forEach((secs) => {
+        firstSectionIds.add(secs[0].id);
+      });
 
       // Walk through attempts in chronological order, building sessions.
-      // Each time we see firstSectionId, a new session starts.
+      // Each time we see a firstSectionId, a new session starts.
       // Find the session whose attemptIds includes our clicked attemptId.
       let sessionAttemptIds: string[] = [];
       let currentSessionIds: string[] = [];
       let found = false;
 
       for (const attempt of attemptsAsc) {
-        if (firstSectionId && attempt.section_id === firstSectionId) {
+        if (firstSectionIds.has(attempt.section_id)) {
           // Starting a new session — if previous session had our target, we're done
           if (currentSessionIds.includes(attemptId!)) {
             sessionAttemptIds = currentSessionIds;
@@ -254,7 +263,6 @@ export default function ExamReview() {
       // 7. Compute Rank across ALL users for this exam
       try {
         const sectionIds = sections.map((s: any) => s.id);
-        const firstSectionId = sectionIds[0];
 
         // Fetch all attempts for this exam (all users)
         const { data: allExamAttempts, error: rankError } = await supabase
@@ -265,7 +273,7 @@ export default function ExamReview() {
 
         if (!rankError && allExamAttempts && allExamAttempts.length > 0) {
           // Group attempts into sessions
-          // A session starts when a user creates an attempt for the first section
+          // A session starts when a user creates an attempt for any first section
           const userAttempts: Record<string, any[]> = {};
           allExamAttempts.forEach(a => {
             if (!userAttempts[a.user_id]) userAttempts[a.user_id] = [];
@@ -290,7 +298,7 @@ export default function ExamReview() {
             let currentSession: ExamSession | null = null;
 
             attempts.forEach(attempt => {
-              if (attempt.section_id === firstSectionId) {
+              if (firstSectionIds.has(attempt.section_id)) {
                 // Save previous session if exists
                 if (currentSession) {
                   sessions.push(currentSession);

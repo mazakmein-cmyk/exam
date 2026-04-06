@@ -188,6 +188,7 @@ const ForCreators = () => {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    window.scrollTo(0, 0);
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
   }, []);
