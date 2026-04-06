@@ -46,7 +46,7 @@ const AdminDashboard = () => {
 
     const fetchStats = async () => {
         try {
-            const { data, error } = await supabase.rpc('get_admin_stats');
+            const { data, error } = await (supabase.rpc as any)('get_admin_stats');
             if (error) throw error;
             setStats(data as any);
         } catch (error: any) {
@@ -59,7 +59,7 @@ const AdminDashboard = () => {
     const fetchExams = async () => {
         try {
             // Use secure RPC to get ALL exams (published and unpublished)
-            const { data, error } = await supabase.rpc('admin_get_all_exams');
+            const { data, error } = await (supabase.rpc as any)('admin_get_all_exams');
 
             if (error) throw error;
             setExams(data || []);
@@ -72,7 +72,7 @@ const AdminDashboard = () => {
     const handleToggleStatus = async (examId: string, currentStatus: boolean) => {
         try {
             const newStatus = !currentStatus;
-            const { error } = await supabase.rpc('admin_update_exam_status', {
+            const { error } = await (supabase.rpc as any)('admin_update_exam_status', {
                 target_exam_id: examId,
                 new_status: newStatus
             });
@@ -101,7 +101,7 @@ const AdminDashboard = () => {
 
         try {
             // Use secure RPC to fetch preview data
-            const { data, error } = await supabase.rpc('admin_get_exam_preview', {
+            const { data, error } = await (supabase.rpc as any)('admin_get_exam_preview', {
                 target_exam_id: exam.id
             });
 
