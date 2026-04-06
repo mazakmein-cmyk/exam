@@ -980,85 +980,132 @@ export default function Analytics() {
           </Button>
           <div className="h-5 w-px bg-border" />
           <div>
-            <h1 className="text-2xl font-bold leading-tight">{examId ? "Exam Analytics" : "My Performance"}</h1>
-            {examId && <p className="text-sm text-muted-foreground">{examName}</p>}
+            <div className="flex items-center gap-2 mb-1">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 text-[11px] font-semibold text-[#A855F7] uppercase tracking-wider">
+                {examId ? "Creator Dashboard" : "Performance Hub"}
+              </span>
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">{examId ? "Exam Analytics" : "My Performance"}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{examId ? `In-depth insights and metrics for "${examName}"` : "Track your test scores and history over time"}</p>
           </div>
         </div>
 
         {/* Overall Stats */}
         {!examId ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-border border rounded-xl mb-6 bg-card">
-            <div className="flex flex-col items-center justify-center py-5 px-4 gap-1">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Exams Given</span>
-              <span className="text-3xl font-bold">{totalAttempts}</span>
-            </div>
-            <div className="flex flex-col items-center justify-center py-5 px-4 gap-1">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Overall Accuracy/Q</span>
-              <span className="text-3xl font-bold">{overallAccuracy.toFixed(1)}%</span>
-            </div>
-            <div className="flex flex-col items-center justify-center py-5 px-4 gap-1">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Avg Time/Q</span>
-              <span className="text-3xl font-bold">{avgTimePerQuestion.toFixed(1)}s</span>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+            <Card className="p-6 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Total Mock Exams</span>
+                <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
+                  <Target className="w-4 h-4" />
+                </div>
+              </div>
+              <span className="text-4xl font-black tracking-tight text-foreground">{totalAttempts}</span>
+            </Card>
+
+            <Card className="p-6 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Overall Accuracy</span>
+                <div className="w-8 h-8 rounded-lg bg-green-500/10 flex items-center justify-center text-green-500">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+              </div>
+              <span className="text-4xl font-black tracking-tight text-green-600 dark:text-green-500">{overallAccuracy.toFixed(1)}%</span>
+            </Card>
+
+            <Card className="p-6 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Avg Time / Question</span>
+                <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-500">
+                  <Clock className="w-4 h-4" />
+                </div>
+              </div>
+              <span className="text-4xl font-black tracking-tight text-foreground">{avgTimePerQuestion.toFixed(1)}s</span>
+            </Card>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                <h3 className="font-semibold">Total Attempts</h3>
-              </div>
-              <p className="text-3xl font-bold">{totalAttempts}</p>
-            </Card>
-
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-2">
-                <Users className="w-5 h-5 text-purple-500" />
-                <h3 className="font-semibold">Total Unique Students</h3>
-              </div>
-              <p className="text-3xl font-bold">{uniqueStudents}</p>
-            </Card>
-
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 className="w-5 h-5 text-indigo-500" />
-                <h3 className="font-semibold">Completion</h3>
-              </div>
-              <div className="flex flex-col">
-                <p className="text-3xl font-bold">{Math.round(completionRate)}%</p>
-                <p className="text-xs text-muted-foreground mt-1">{submittedCount} / {totalAttempts} started</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+            <Card className="p-5 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-[#6C3EF4]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex flex-col gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#6C3EF4]/10 flex items-center justify-center text-[#6C3EF4]">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Total Attempts</span>
+                  <span className="text-2xl font-black tracking-tight text-foreground">{totalAttempts}</span>
+                </div>
               </div>
             </Card>
 
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-2">
-                <Users className="w-5 h-5 text-pink-500" />
-                <h3 className="font-semibold">Repeaters</h3>
-              </div>
-              <div className="flex flex-col">
-                <p className="text-3xl font-bold">{repeatersCount}</p>
-                <p className="text-xs text-muted-foreground mt-1">students retook</p>
+            <Card className="p-5 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex flex-col gap-3">
+                <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Unique Students</span>
+                  <span className="text-2xl font-black tracking-tight text-foreground">{uniqueStudents}</span>
+                </div>
               </div>
             </Card>
 
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-2">
-                <Target className="w-5 h-5 text-green-500" />
-                <h3 className="font-semibold">Overall Accuracy/Q</h3>
+            <Card className="p-5 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex flex-col gap-3">
+                <div className="w-8 h-8 rounded-lg bg-green-500/10 flex items-center justify-center text-green-500">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Completion</span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-black tracking-tight text-foreground">{Math.round(completionRate)}%</span>
+                  </div>
+                </div>
               </div>
-              <p className="text-3xl font-bold">
-                {overallAccuracy.toFixed(2)}%
-              </p>
             </Card>
 
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="w-5 h-5 text-blue-500" />
-                <h3 className="font-semibold">Avg Time/Q</h3>
+            <Card className="p-5 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex flex-col gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
+                  <Target className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Repeaters</span>
+                  <span className="text-2xl font-black tracking-tight text-foreground">{repeatersCount}</span>
+                </div>
               </div>
-              <p className="text-3xl font-bold">
-                {avgTimePerQuestion.toFixed(2)}s
-              </p>
+            </Card>
+
+            <Card className="p-5 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex flex-col gap-3">
+                <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-500">
+                  <BookOpen className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Accuracy / Q</span>
+                  <span className="text-2xl font-black tracking-tight text-foreground">{overallAccuracy.toFixed(1)}%</span>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-5 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
+              <div className="absolute inset-0 bg-gradient-to-br from-pink-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex flex-col gap-3">
+                <div className="w-8 h-8 rounded-lg bg-pink-500/10 flex items-center justify-center text-pink-500">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Avg Time / Q</span>
+                  <span className="text-2xl font-black tracking-tight text-foreground">{avgTimePerQuestion.toFixed(1)}s</span>
+                </div>
+              </div>
             </Card>
           </div>
         )}
@@ -1576,11 +1623,19 @@ export default function Analytics() {
         {!examId && (
           <div className="mt-2">
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">History</h3>
-            <div className="border rounded-xl overflow-hidden bg-card">
+            <div className="border border-border/60 rounded-xl overflow-hidden bg-card/50 shadow-sm">
               {attempts.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">No attempts recorded yet.</p>
+                <div className="flex flex-col items-center justify-center p-10 md:p-16 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#6C3EF4]/15 to-[#A855F7]/8 border border-[#6C3EF4]/15 flex items-center justify-center mb-4">
+                    <BookOpen className="h-8 w-8 text-[#A855F7]/70" />
+                  </div>
+                  <h3 className="text-lg font-semibold mb-2 text-foreground">No history yet</h3>
+                  <p className="text-muted-foreground text-sm max-w-sm">When you take exams, your detailed performance tracking and score history will appear here.</p>
+                </div>
               ) : Object.keys(firstSectionsByExamId).length === 0 ? (
-                <p className="text-muted-foreground text-center py-8 text-sm">Loading history...</p>
+                <div className="flex items-center justify-center py-12">
+                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                </div>
               ) : (() => {
                 const getRankForGroup = (group: any) => {
                   for (const id of group.allAttemptIds) {
