@@ -987,7 +987,7 @@ export default function Analytics() {
 
         {/* Overall Stats */}
         {!examId ? (
-          <div className="grid grid-cols-3 divide-x divide-border border rounded-xl mb-6 bg-card">
+          <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-border border rounded-xl mb-6 bg-card">
             <div className="flex flex-col items-center justify-center py-5 px-4 gap-1">
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Exams Given</span>
               <span className="text-3xl font-bold">{totalAttempts}</span>
@@ -1258,8 +1258,8 @@ export default function Analytics() {
         {examId && sectionData.length > 0 && (
           <Card className="p-6 mb-6">
             <h3 className="text-lg font-semibold mb-4">Section Analytics</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
+            <div className="overflow-x-auto pb-4">
+              <table className="w-full text-sm text-left min-w-[700px]">
                 <thead className="bg-muted/50 text-muted-foreground uppercase text-xs">
                   <tr>
                     <th className="px-2 py-3 text-left w-[20%] rounded-tl-lg">Section Name</th>
@@ -1314,8 +1314,8 @@ export default function Analytics() {
         {examId && questionStats.length > 0 && (
           <Card className="p-6 mb-6">
             <h3 className="text-lg font-semibold mb-4">Question Analysis</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
+            <div className="overflow-x-auto pb-4">
+              <table className="w-full text-sm text-left min-w-[700px]">
                 <thead className="bg-muted/50 text-muted-foreground uppercase text-xs">
                   <tr>
                     <th className="px-2 py-3 text-center w-[80px] rounded-tl-lg">Q. No</th>
