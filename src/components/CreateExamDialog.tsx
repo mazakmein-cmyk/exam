@@ -4,11 +4,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, X, Upload } from "lucide-react";
+import { TransliterateInput } from "@/components/TransliterateInput";
+import { TransliterateTextarea } from "@/components/TransliterateTextarea";
+import { Plus, X, Upload, Globe } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+
+const AVAILABLE_LANGUAGES = [
+  { code: "en", label: "English", nativeLabel: "English" },
+  { code: "hi", label: "Hindi", nativeLabel: "हिंदी" },
+];
 
 type Section = {
   id: string;
@@ -27,12 +35,31 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
   const [examDescription, setExamDescription] = useState("");
   const [examInstruction, setExamInstruction] = useState("");
   const [examCategory, setExamCategory] = useState<string>("");
+  const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["en"]);
   const [sections, setSections] = useState<Section[]>([]);
   const [newSectionName, setNewSectionName] = useState("");
   const [newSectionTime, setNewSectionTime] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const { toast } = useToast();
+
+  const toggleLanguage = (langCode: string) => {
+    setSelectedLanguages((prev) => {
+      if (prev.includes(langCode)) {
+        // Don't allow deselecting the last language
+        if (prev.length === 1) {
+          toast({
+            title: "At least one language required",
+            description: "You must select at least one language for the exam.",
+            variant: "destructive",
+          });
+          return prev;
+        }
+        return prev.filter((l) => l !== langCode);
+      }
+      return [...prev, langCode];
+    });
+  };
 
   const addSection = () => {
     if (!newSectionName || !newSectionTime) {
@@ -111,7 +138,10 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           name: examName,
           description: examDescription || null,
           instruction: examInstruction || null,
+          description_translations: examDescription ? { en: examDescription } : {},
+          instruction_translations: examInstruction ? { en: examInstruction } : {},
           exam_category: examCategory || null,
+          supported_languages: selectedLanguages,
         })
         .select()
         .single();
@@ -130,61 +160,66 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
         .from("exam-pdfs")
         .getPublicUrl(fileName);
 
-      // Create sections with PDF info
-      const sectionsData = sections.map((section, index) => ({
-        exam_id: exam.id,
-        name: section.name,
-        time_minutes: section.time_minutes,
-        sort_order: index,
-        pdf_url: publicUrl,
-        pdf_name: file.name,
-        parsing_status: "pending",
-      }));
-
-      const { data: createdSections, error: sectionsError } = await supabase
-        .from("sections")
-        .insert(sectionsData)
-        .select();
-
-      if (sectionsError) throw sectionsError;
-
-      // Trigger PDF parsing for each section
-      console.log("Starting PDF parsing for sections:", createdSections.length);
-
-      let parsedCount = 0;
-      for (const section of createdSections) {
-        console.log(`Invoking parse-pdf for section ${section.id}`);
-
-        const { data: parseData, error: parseError } = await supabase.functions.invoke("parse-pdf", {
-          body: {
-            sectionId: section.id,
-            pdfUrl: publicUrl,
-          },
+      // Create sections for each language
+      for (const lang of selectedLanguages) {
+        const sectionsData = sections.map((section, index) => {
+          const groupId = `${section.id}`; // Use the client-generated ID as group identifier
+          return {
+            exam_id: exam.id,
+            name: section.name,
+            time_minutes: section.time_minutes,
+            sort_order: index,
+            language: lang,
+            section_group_id: groupId,
+            // Only assign PDF to the first language (English by default)
+            pdf_url: lang === selectedLanguages[0] ? publicUrl : null,
+            pdf_name: lang === selectedLanguages[0] ? file.name : null,
+            parsing_status: lang === selectedLanguages[0] ? "pending" : null,
+          };
         });
 
-        if (parseError) {
-          console.error("Parse-pdf error:", parseError);
+        const { data: createdSections, error: sectionsError } = await supabase
+          .from("sections")
+          .insert(sectionsData)
+          .select();
+
+        if (sectionsError) throw sectionsError;
+
+        // Only trigger PDF parsing for the first language
+        if (lang === selectedLanguages[0] && createdSections) {
+          let parsedCount = 0;
+          for (const section of createdSections) {
+            const { data: parseData, error: parseError } = await supabase.functions.invoke("parse-pdf", {
+              body: {
+                sectionId: section.id,
+                pdfUrl: publicUrl,
+              },
+            });
+
+            if (parseError) {
+              console.error("Parse-pdf error:", parseError);
+              toast({
+                title: "Parsing Error",
+                description: `Failed to parse PDF for ${section.name}: ${parseError.message}`,
+                variant: "destructive",
+              });
+            } else {
+              parsedCount++;
+            }
+          }
+
           toast({
-            title: "Parsing Error",
-            description: `Failed to parse PDF for ${section.name}: ${parseError.message}`,
-            variant: "destructive",
+            title: "Success!",
+            description: `Exam created! ${parsedCount}/${createdSections.length} sections parsed successfully.${selectedLanguages.length > 1 ? ` Remember to add content for other languages.` : ""}`,
           });
-        } else {
-          console.log("Parse-pdf response:", parseData);
-          parsedCount++;
         }
       }
-
-      toast({
-        title: "Success!",
-        description: `Exam created! ${parsedCount}/${createdSections.length} sections parsed successfully.`,
-      });
 
       setExamName("");
       setExamCategory("");
       setExamDescription("");
-      setExamDescription("");
       setExamInstruction("");
+      setSelectedLanguages(["en"]);
       setSections([]);
       setUploadingPdf(false);
       onOpenChange(false);
@@ -245,6 +280,15 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       return;
     }
 
+    if (selectedLanguages.length === 0) {
+      toast({
+        title: "No language selected",
+        description: "Please select at least one language for the exam",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
@@ -265,7 +309,10 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
         name: examName,
         description: examDescription || null,
         instruction: examInstruction || null,
+        description_translations: examDescription ? { en: examDescription } : {},
+        instruction_translations: examInstruction ? { en: examInstruction } : {},
         exam_category: examCategory || null,
+        supported_languages: selectedLanguages,
       })
       .select()
       .single();
@@ -280,17 +327,26 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       return;
     }
 
+    // Create sections for each language with linked section_group_id
     if (sections.length > 0) {
-      const sectionsData = sections.map((section, index) => ({
-        exam_id: exam.id,
-        name: section.name,
-        time_minutes: section.time_minutes,
-        sort_order: index,
-      }));
+      const allSectionsData: any[] = [];
+
+      for (const lang of selectedLanguages) {
+        sections.forEach((section, index) => {
+          allSectionsData.push({
+            exam_id: exam.id,
+            name: section.name,
+            time_minutes: section.time_minutes,
+            sort_order: index,
+            language: lang,
+            section_group_id: section.id, // Use the client-generated UUID as group ID
+          });
+        });
+      }
 
       const { error: sectionsError } = await supabase
         .from("sections")
-        .insert(sectionsData);
+        .insert(allSectionsData);
 
       if (sectionsError) {
         toast({
@@ -305,14 +361,14 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
 
     toast({
       title: "Success!",
-      description: "Exam created successfully",
+      description: `Exam created successfully${selectedLanguages.length > 1 ? ` in ${selectedLanguages.length} languages` : ""}`,
     });
 
     setExamName("");
     setExamCategory("");
     setExamDescription("");
-    setExamDescription("");
     setExamInstruction("");
+    setSelectedLanguages(["en"]);
     setSections([]);
     setLoading(false);
     onOpenChange(false);
@@ -357,11 +413,12 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
 
               <div className="space-y-2">
                 <Label htmlFor="exam-description" className="text-sm font-medium">Description <span className="text-destructive">*</span></Label>
-                <Textarea
+                <TransliterateTextarea
                   id="exam-description"
+                  lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
                   placeholder="Brief description of the exam..."
                   value={examDescription}
-                  onChange={(e) => setExamDescription(e.target.value)}
+                  onValueChange={(text) => setExamDescription(text)}
                   rows={2}
                   className="resize-none placeholder:text-muted-foreground/50"
                 />
@@ -369,14 +426,57 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
 
               <div className="space-y-2">
                 <Label htmlFor="exam-instruction" className="text-sm font-medium">Instruction <span className="text-destructive">*</span></Label>
-                <Textarea
+                <TransliterateTextarea
                   id="exam-instruction"
+                  lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
                   placeholder="Specific instructions for the exam..."
                   value={examInstruction}
-                  onChange={(e) => setExamInstruction(e.target.value)}
+                  onValueChange={(text) => setExamInstruction(text)}
                   rows={2}
                   className="resize-none placeholder:text-muted-foreground/50"
                 />
+              </div>
+
+              {/* Language Selection */}
+              <div className="space-y-3">
+                <Label className="text-sm font-medium flex items-center gap-2">
+                  <Globe className="h-4 w-4 text-primary" />
+                  Exam Languages <span className="text-destructive">*</span>
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Select languages for this exam. Students can choose their preferred language when taking the exam.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {AVAILABLE_LANGUAGES.map((lang) => (
+                    <label
+                      key={lang.code}
+                      className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all ${
+                        selectedLanguages.includes(lang.code)
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border hover:border-primary/40 hover:bg-muted/50"
+                      }`}
+                    >
+                      <Checkbox
+                        checked={selectedLanguages.includes(lang.code)}
+                        onCheckedChange={() => toggleLanguage(lang.code)}
+                      />
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">{lang.label}</span>
+                        {lang.nativeLabel !== lang.label && (
+                          <span className="text-xs text-muted-foreground">{lang.nativeLabel}</span>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                {selectedLanguages.length > 1 && (
+                  <div className="flex items-center gap-2 p-2.5 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <Globe className="h-4 w-4 text-blue-600 shrink-0" />
+                    <p className="text-xs text-blue-700 dark:text-blue-300">
+                      Multi-language exam — you'll be able to create content in each language from the Edit Exam page using the language switcher.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -393,11 +493,12 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                 <div className="flex gap-3 items-end">
                   <div className="flex-1 space-y-2">
                     <Label htmlFor="section-name" className="text-xs font-medium text-muted-foreground">Section Name</Label>
-                    <Input
+                    <TransliterateInput
                       id="section-name"
+                      lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
                       placeholder="e.g., Multiple Choice"
                       value={newSectionName}
-                      onChange={(e) => setNewSectionName(e.target.value)}
+                      onValueChange={(text) => setNewSectionName(text)}
                       className="bg-background placeholder:text-muted-foreground/50"
                     />
                   </div>
@@ -425,19 +526,24 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                   <Label className="text-xs font-medium text-muted-foreground">Added Sections ({sections.length})</Label>
                   {sections.length > 0 ? (
                     <div className="grid gap-2 max-h-[200px] overflow-y-auto pr-1">
-                      {sections.map((section) => (
+                      {sections.map((section, idx) => (
                         <div
                           key={section.id}
                           className="flex items-center justify-between p-3 bg-background border rounded-lg shadow-sm group hover:border-primary/50 transition-colors"
                         >
                           <div className="flex items-center gap-3">
                             <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
-                              {section.name.charAt(0).toUpperCase()}
+                              {idx + 1}
                             </div>
                             <div>
                               <p className="font-medium text-sm">{section.name}</p>
                               <p className="text-xs text-muted-foreground">
                                 {section.time_minutes} minutes
+                                {selectedLanguages.length > 1 && (
+                                  <span className="ml-2 text-blue-600">
+                                    · {selectedLanguages.length} languages
+                                  </span>
+                                )}
                               </p>
                             </div>
                           </div>

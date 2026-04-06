@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { TransliterateInput } from "@/components/TransliterateInput";
+import { TransliterateTextarea } from "@/components/TransliterateTextarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -19,8 +21,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check, Globe, Lock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import PublishExamDialog from "@/components/PublishExamDialog";
 import PdfSnipper from "@/components/PdfSnipper";
 import { QuestionForm } from "@/components/QuestionForm";
 import { RichTextEditor } from "@/components/RichTextEditor";
@@ -50,14 +53,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+const AVAILABLE_LANGUAGES = [
+  { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
+  { code: "hi", label: "Hindi", nativeLabel: "हिंदी", flag: "🇮🇳" },
+];
+
 type Exam = {
   id: string;
   name: string;
   description: string | null;
+  description_translations?: Record<string, string> | null;
   instruction: string | null;
+  instruction_translations?: Record<string, string> | null;
   exam_category: string | null;
   user_id: string;
   is_published: boolean;
+  supported_languages?: string[];
 };
 
 type Section = {
@@ -67,6 +78,8 @@ type Section = {
   time_minutes: number;
   pdf_url: string | null;
   sort_order?: number;
+  language?: string;
+  section_group_id?: string | null;
 };
 
 type Question = {
@@ -87,18 +100,28 @@ export default function ExamDetail() {
   const { toast } = useToast();
 
   const [exam, setExam] = useState<Exam | null>(null);
-  const [sections, setSections] = useState<Section[]>([]);
+  const [allSections, setAllSections] = useState<Section[]>([]); // ALL sections across all languages
+  const [sections, setSections] = useState<Section[]>([]); // Sections filtered by active language
   const [section, setSection] = useState<Section | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Language State
+  const [activeLanguage, setActiveLanguage] = useState("en");
+  const [supportedLanguages, setSupportedLanguages] = useState<string[]>(["en"]);
+  const isMultiLang = supportedLanguages.length > 1;
+
   // Form State
   const [examTitle, setExamTitle] = useState("");
   const [examCategory, setExamCategory] = useState("");
-  const [examDescription, setExamDescription] = useState("");
-  const [examInstruction, setExamInstruction] = useState("");
+  const [examDescriptionTrans, setExamDescriptionTrans] = useState<Record<string, string>>({});
+  const [examInstructionTrans, setExamInstructionTrans] = useState<Record<string, string>>({});
   const [isPublished, setIsPublished] = useState(false); // Placeholder for now
+  
+  // Publish Dialog States
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [publishAction, setPublishAction] = useState<{ isPublishing: boolean } | null>(null);
 
   // Add Question State
   const [newQuestionText, setNewQuestionText] = useState("");
@@ -126,6 +149,7 @@ export default function ExamDetail() {
   const [deleteSectionId, setDeleteSectionId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showDeleteExamDialog, setShowDeleteExamDialog] = useState(false);
+  const [pendingSectionReorder, setPendingSectionReorder] = useState<any>(null);
 
   // Delete Question Confirmation State
   const [deleteQuestionId, setDeleteQuestionId] = useState<string | null>(null);
@@ -139,8 +163,8 @@ export default function ExamDetail() {
   const initialExamDataRef = useRef({
     name: "",
     category: "",
-    description: "",
-    instruction: ""
+    description_translations: {} as Record<string, string>,
+    instruction_translations: {} as Record<string, string>
   });
 
   const [isDirty, setIsDirty] = useState(false);
@@ -153,8 +177,8 @@ export default function ExamDetail() {
     const isExamChanged =
       examTitle !== initialExamDataRef.current.name ||
       examCategory !== initialExamDataRef.current.category ||
-      examDescription !== initialExamDataRef.current.description ||
-      examInstruction !== initialExamDataRef.current.instruction;
+      JSON.stringify(examDescriptionTrans) !== JSON.stringify(initialExamDataRef.current.description_translations) ||
+      JSON.stringify(examInstructionTrans) !== JSON.stringify(initialExamDataRef.current.instruction_translations);
 
     // Check if new question is being typed but not empty (ignoring initial empty state)
     const isQuestionFormDirty =
@@ -167,7 +191,7 @@ export default function ExamDetail() {
     const isEditing = editingQuestionId !== null;
 
     setIsDirty(isExamChanged || isEditing || (isQuestionFormDirty && !editingQuestionId));
-  }, [examTitle, examCategory, examDescription, examInstruction, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImages, newQuestionCorrect]);
+  }, [examTitle, examCategory, examDescriptionTrans, examInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImages, newQuestionCorrect]);
 
   // Section Switch Confirmation State
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
@@ -209,7 +233,8 @@ export default function ExamDetail() {
     }
   }, [examId]);
 
-  const fetchExamData = async () => {
+  const fetchExamData = async (langOverride?: string) => {
+    const lang = langOverride || activeLanguage;
     try {
       setLoading(true);
       // Fetch Exam
@@ -223,19 +248,37 @@ export default function ExamDetail() {
       setExam(examData as unknown as Exam);
       setExamTitle(examData.name);
       setExamCategory((examData as any).exam_category || "");
-      setExamDescription(examData.description || "");
-      setExamInstruction((examData as any).instruction || "");
+      const descTrans = (examData as any).description_translations || {};
+      const instTrans = (examData as any).instruction_translations || {};
+      
+      if (Object.keys(descTrans).length === 0 && examData.description) {
+        descTrans['en'] = examData.description;
+      }
+      if (Object.keys(instTrans).length === 0 && (examData as any).instruction) {
+        instTrans['en'] = (examData as any).instruction;
+      }
+
+      setExamDescriptionTrans(descTrans);
+      setExamInstructionTrans(instTrans);
+
+      // Set language state
+      const examLangs = (examData as any).supported_languages || ["en"];
+      setSupportedLanguages(examLangs);
+      if (!examLangs.includes(lang)) {
+        setActiveLanguage(examLangs[0]);
+      }
+      const effectiveLang = examLangs.includes(lang) ? lang : examLangs[0];
 
       // Set initial data for dirty check
       initialExamDataRef.current = {
         name: examData.name,
         category: (examData as any).exam_category || "",
-        description: examData.description || "",
-        instruction: (examData as any).instruction || ""
+        description_translations: descTrans,
+        instruction_translations: instTrans
       };
 
-      // Fetch Sections
-      const { data: sectionsData, error: sectionsError } = await supabase
+      // Fetch ALL Sections (all languages)
+      const { data: allSectionsData, error: sectionsError } = await supabase
         .from("sections")
         .select("*")
         .eq("exam_id", examId)
@@ -244,24 +287,40 @@ export default function ExamDetail() {
 
       if (sectionsError) throw sectionsError;
 
-      let currentSections = sectionsData || [];
+      const allSecs = (allSectionsData || []) as Section[];
+      setAllSections(allSecs);
+
+      // Filter sections for the active language
+      let currentSections = allSecs.filter(s => (s as any).language === effectiveLang);
+
+      // Fallback: if no sections match the language (legacy data), show all
+      if (currentSections.length === 0 && allSecs.length > 0) {
+        currentSections = allSecs.filter(s => !(s as any).language || (s as any).language === "en");
+      }
+
       let currentSection = currentSections[0];
 
-      // If no section exists, create one
-      if (currentSections.length === 0) {
-        const { data: newSection, error: createError } = await supabase
+      // If no section exists at all, create one for each language
+      if (allSecs.length === 0) {
+        const groupId = crypto.randomUUID();
+        const newSectionsToCreate = examLangs.map((l: string) => ({
+          exam_id: examId,
+          name: "General Section",
+          time_minutes: 60,
+          language: l,
+          section_group_id: groupId,
+        }));
+
+        const { data: newSections, error: createError } = await supabase
           .from("sections")
-          .insert({
-            exam_id: examId,
-            name: "General Section",
-            time_minutes: 60,
-          })
-          .select()
-          .single();
+          .insert(newSectionsToCreate)
+          .select();
 
         if (createError) throw createError;
-        currentSections = [newSection];
-        currentSection = newSection;
+        const created = (newSections || []) as Section[];
+        setAllSections(created);
+        currentSections = created.filter(s => (s as any).language === effectiveLang);
+        currentSection = currentSections[0];
       }
 
       setSections(currentSections);
@@ -316,19 +375,22 @@ export default function ExamDetail() {
       return false;
     }
 
-    if (!examDescription || !examDescription.trim()) {
+    const currentDesc = examDescriptionTrans[activeLanguage] || "";
+    const currentInst = examInstructionTrans[activeLanguage] || "";
+
+    if (!currentDesc.trim()) {
       toast({
         title: "Validation Error",
-        description: "Please enter an Exam Description",
+        description: `Please enter an Exam Description for ${activeLanguage}`,
         variant: "destructive",
       });
       return false;
     }
 
-    if (!examInstruction || !examInstruction.trim()) {
+    if (!currentInst.trim()) {
       toast({
         title: "Validation Error",
-        description: "Please enter Exam Instructions",
+        description: `Please enter Exam Instructions for ${activeLanguage}`,
         variant: "destructive",
       });
       return false;
@@ -342,8 +404,10 @@ export default function ExamDetail() {
         .update({
           name: examTitle,
           exam_category: examCategory,
-          description: examDescription,
-          instruction: examInstruction,
+          description: examDescriptionTrans['en'] || currentDesc,
+          instruction: examInstructionTrans['en'] || currentInst,
+          description_translations: examDescriptionTrans,
+          instruction_translations: examInstructionTrans,
         })
         .eq("id", exam.id);
 
@@ -368,8 +432,8 @@ export default function ExamDetail() {
     initialExamDataRef.current = {
       name: examTitle,
       category: examCategory,
-      description: examDescription,
-      instruction: examInstruction
+      description_translations: examDescriptionTrans,
+      instruction_translations: examInstructionTrans
     };
     setIsDirty(false); // Force reset roughly, though effect will run again
     return true;
@@ -438,7 +502,9 @@ export default function ExamDetail() {
         .insert({
           name: `${exam.name} (Copy)`,
           description: exam.description,
+          description_translations: exam.description_translations,
           instruction: exam.instruction,
+          instruction_translations: exam.instruction_translations,
           exam_category: exam.exam_category,
           user_id: user.id,
         })
@@ -675,27 +741,41 @@ export default function ExamDetail() {
   const handleAddSection = async () => {
     if (!exam) return;
     try {
-      const { data: newSection, error } = await supabase
+      const groupId = crypto.randomUUID();
+      const newSortOrder = sections.length;
+
+      // Create a section for each supported language
+      const sectionsToCreate = supportedLanguages.map(lang => ({
+        exam_id: exam.id,
+        name: "New Section",
+        time_minutes: 60,
+        sort_order: newSortOrder,
+        language: lang,
+        section_group_id: groupId,
+      }));
+
+      const { data: newSections, error } = await supabase
         .from("sections")
-        .insert({
-          exam_id: exam.id,
-          name: "New Section",
-          time_minutes: 60,
-          sort_order: sections.length,
-        })
-        .select()
-        .single();
+        .insert(sectionsToCreate)
+        .select();
 
       if (error) throw error;
 
-      const updatedSections = [...sections, newSection];
-      setSections(updatedSections);
-      setSection(newSection);
-      fetchQuestions(newSection.id);
+      const created = newSections || [];
+      setAllSections(prev => [...prev, ...created]);
+
+      // Only show the section for the active language
+      const activeLangSection = created.find(s => (s as any).language === activeLanguage);
+      if (activeLangSection) {
+        const updatedSections = [...sections, activeLangSection];
+        setSections(updatedSections);
+        setSection(activeLangSection);
+        fetchQuestions(activeLangSection.id);
+      }
 
       toast({
         title: "Section Added",
-        description: "New section created successfully",
+        description: isMultiLang ? "New section created for all languages" : "New section created successfully",
       });
     } catch (error: any) {
       toast({
@@ -703,6 +783,14 @@ export default function ExamDetail() {
         description: error.message || "Failed to add section",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleLocalUpdateSection = (sectionId: string, updates: Partial<Section>) => {
+    setSections(prev => prev.map(s => s.id === sectionId ? { ...s, ...updates } : s));
+    setAllSections(prev => prev.map(s => s.id === sectionId ? { ...s, ...updates } : s));
+    if (section?.id === sectionId) {
+      setSection(prev => prev ? { ...prev, ...updates } : prev);
     }
   };
 
@@ -717,17 +805,36 @@ export default function ExamDetail() {
 
       if (error) throw error;
 
+      // If time was updated and multi-lang, sync across all language variants
+      if (isMultiLang && updates.time_minutes !== undefined) {
+        const sectionData = allSections.find(s => s.id === sectionId);
+        const groupId = sectionData?.section_group_id;
+        if (groupId) {
+          const otherSections = allSections.filter(
+            s => s.section_group_id === groupId && s.id !== sectionId
+          );
+          for (const otherSec of otherSections) {
+            await supabase
+              .from("sections")
+              .update({ time_minutes: updates.time_minutes })
+              .eq("id", otherSec.id);
+          }
+          // Update allSections state
+          setAllSections(prev => prev.map(s =>
+            s.section_group_id === groupId
+              ? { ...s, time_minutes: updates.time_minutes! }
+              : s
+          ));
+        }
+      }
+
       const updatedSections = sections.map(s => s.id === sectionId ? updatedSection : s);
       setSections(updatedSections);
+      setAllSections(prev => prev.map(s => s.id === sectionId ? updatedSection : s));
 
       if (section?.id === sectionId) {
         setSection(updatedSection);
       }
-
-      toast({
-        title: "Section Updated",
-        description: "Section details saved",
-      });
     } catch (error: any) {
       toast({
         title: "Error",
@@ -754,12 +861,31 @@ export default function ExamDetail() {
     if (!deleteSectionId) return;
 
     try {
-      const { error } = await supabase
-        .from("sections")
-        .delete()
-        .eq("id", deleteSectionId);
+      // Find the section's group_id to delete across all languages
+      const sectionData = allSections.find(s => s.id === deleteSectionId);
+      const groupId = sectionData?.section_group_id;
 
-      if (error) throw error;
+      if (isMultiLang && groupId) {
+        // Delete all sections with this group_id (all language variants)
+        const { error } = await supabase
+          .from("sections")
+          .delete()
+          .eq("section_group_id", groupId);
+
+        if (error) throw error;
+
+        // Update allSections
+        setAllSections(prev => prev.filter(s => s.section_group_id !== groupId));
+      } else {
+        const { error } = await supabase
+          .from("sections")
+          .delete()
+          .eq("id", deleteSectionId);
+
+        if (error) throw error;
+
+        setAllSections(prev => prev.filter(s => s.id !== deleteSectionId));
+      }
 
       const updatedSections = sections.filter(s => s.id !== deleteSectionId);
       setSections(updatedSections);
@@ -772,7 +898,7 @@ export default function ExamDetail() {
 
       toast({
         title: "Deleted",
-        description: "Section removed successfully",
+        description: isMultiLang ? "Section removed from all languages" : "Section removed successfully",
       });
     } catch (error: any) {
       toast({
@@ -891,6 +1017,35 @@ export default function ExamDetail() {
 
       setQuestions([...questions, data]);
 
+      // Multi-language sync: create placeholder questions in other language sections
+      if (isMultiLang && section.section_group_id) {
+        const siblingGroupSections = allSections.filter(
+          s => s.section_group_id === section.section_group_id && s.id !== section.id
+        );
+
+        for (const sibSec of siblingGroupSections) {
+          // Count existing questions in sibling to determine q_no
+          const { count } = await supabase
+            .from("parsed_questions")
+            .select("id", { count: "exact", head: true })
+            .eq("section_id", sibSec.id);
+
+          await supabase
+            .from("parsed_questions")
+            .insert({
+              section_id: sibSec.id,
+              q_no: (count || 0) + 1,
+              text: "",  // Empty placeholder
+              answer_type: newQuestionType,
+              options: (newQuestionType === "single" || newQuestionType === "multi") ? ["Option A", "Option B"] : null,
+              correct_answer: null,
+              requires_review: true,
+              is_excluded: false,
+              is_finalized: false,
+            });
+        }
+      }
+
       // Reset form
       setNewQuestionText("");
       setNewQuestionImages([]); // Updated
@@ -902,7 +1057,7 @@ export default function ExamDetail() {
 
       toast({
         title: "Success",
-        description: "Question added successfully",
+        description: isMultiLang ? "Question added — placeholder created in other languages" : "Question added successfully",
       });
       return true;
     } catch (error: any) {
@@ -925,6 +1080,10 @@ export default function ExamDetail() {
     if (!deleteQuestionId) return;
 
     try {
+      // Find the question to get its q_no for cross-language deletion
+      const questionToDelete = questions.find(q => q.id === deleteQuestionId);
+      const qNo = questionToDelete?.q_no;
+
       const { error } = await supabase
         .from("parsed_questions")
         .delete()
@@ -932,10 +1091,33 @@ export default function ExamDetail() {
 
       if (error) throw error;
 
+      // Multi-language sync: delete the corresponding question in sibling sections
+      if (isMultiLang && section?.section_group_id && qNo) {
+        const siblingGroupSections = allSections.filter(
+          s => s.section_group_id === section.section_group_id && s.id !== section.id
+        );
+
+        for (const sibSec of siblingGroupSections) {
+          // Find the question with the same q_no in the sibling section
+          const { data: sibQuestions } = await supabase
+            .from("parsed_questions")
+            .select("id")
+            .eq("section_id", sibSec.id)
+            .eq("q_no", qNo);
+
+          if (sibQuestions && sibQuestions.length > 0) {
+            await supabase
+              .from("parsed_questions")
+              .delete()
+              .eq("id", sibQuestions[0].id);
+          }
+        }
+      }
+
       setQuestions(questions.filter(q => q.id !== deleteQuestionId));
       toast({
         title: "Deleted",
-        description: "Question removed successfully",
+        description: isMultiLang ? "Question removed from all languages" : "Question removed successfully",
       });
     } catch (error) {
       toast({
@@ -1011,13 +1193,15 @@ export default function ExamDetail() {
 
   const saveSectionOrder = async (updatedSections: Section[]) => {
     try {
-      const updates = updatedSections.map((s, index) => ({
+      const updates = updatedSections.map((s) => ({
         id: s.id,
         exam_id: s.exam_id,
         name: s.name,
         time_minutes: s.time_minutes,
         pdf_url: s.pdf_url,
-        sort_order: index,
+        sort_order: s.sort_order,
+        language: s.language,
+        section_group_id: s.section_group_id,
       }));
 
       const { error } = await supabase.from('sections').upsert(updates);
@@ -1036,24 +1220,62 @@ export default function ExamDetail() {
 
   const handleSectionDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-
     if (over && active.id !== over.id) {
-      setSections((items) => {
-        const oldIndex = items.findIndex((item) => item.id === active.id);
-        const newIndex = items.findIndex((item) => item.id === over.id);
-
-        const newItems = arrayMove(items, oldIndex, newIndex);
-
-        // Update sort_order for all items
-        const updatedItems = newItems.map((item, index) => ({
-          ...item,
-          sort_order: index,
-        }));
-
-        saveSectionOrder(updatedItems);
-        return updatedItems;
-      });
+      if (isMultiLang) {
+        // Ask for confirmation to reorder across all languages
+        setPendingSectionReorder(event);
+      } else {
+        processSectionReorder(event);
+      }
     }
+  };
+
+  const processSectionReorder = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    
+    // Calculate new order synchronously using the current sections state
+    const oldIndex = sections.findIndex((item) => item.id === active.id);
+    const newIndex = sections.findIndex((item) => item.id === over.id);
+
+    const newItems = arrayMove(sections, oldIndex, newIndex);
+
+    const updatedItems = newItems.map((item, index) => ({
+      ...item,
+      sort_order: index,
+    }));
+
+    // Instantly update the visual UI
+    setSections(updatedItems);
+
+    if (isMultiLang) {
+      // Map group IDs to new sort_order from the currently active language sections
+      const groupOrderMap = new Map(updatedItems.map(s => [s.section_group_id, s.sort_order]));
+      
+      const newAllSections = allSections.map(s => {
+        if (s.section_group_id && groupOrderMap.has(s.section_group_id)) {
+          return { ...s, sort_order: groupOrderMap.get(s.section_group_id)! };
+        }
+        return s;
+      });
+      setAllSections(newAllSections as Section[]);
+      
+      const sectionsToUpdateDb = newAllSections.filter(s => s.section_group_id && groupOrderMap.has(s.section_group_id));
+      saveSectionOrder(sectionsToUpdateDb as Section[]);
+      
+      toast({
+        title: "Sections Reordered",
+        description: "Section order synced across all languages.",
+      });
+    } else {
+      setAllSections(prev => prev.map(s => {
+        const updated = updatedItems.find(ui => ui.id === s.id);
+        return updated ? { ...s, sort_order: updated.sort_order } : s;
+      }));
+      saveSectionOrder(updatedItems);
+    }
+    
+    setPendingSectionReorder(null);
   };
 
   const handleEditQuestion = (question: Question) => {
@@ -1491,6 +1713,49 @@ export default function ExamDetail() {
     setPassageImage(null);
   };
 
+  // Language Switcher Handler
+  const handleLanguageSwitch = (newLang: string) => {
+    if (newLang === activeLanguage) return;
+
+    // Check for unsaved changes
+    if (isQuestionDirty() || isDirty) {
+      toast({
+        title: "Save changes first",
+        description: "Please save your current changes before switching languages.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setActiveLanguage(newLang);
+
+    // Filter sections for the new language from allSections and sort by updated sort_order
+    const langSections = allSections
+      .filter(s => s.language === newLang)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    setSections(langSections);
+
+    // Select the first section in the new language
+    const firstSection = langSections[0];
+    setSection(firstSection || null);
+
+    if (firstSection) {
+      fetchQuestions(firstSection.id);
+    } else {
+      setQuestions([]);
+    }
+
+    // Reset form state
+    setEditingQuestionId(null);
+    setNewQuestionText("");
+    setNewQuestionImages([]);
+    setNewQuestionCorrect("");
+    setPassageText("");
+    setPassageImage(null);
+    setNewQuestionOptions(["", "", "", ""]);
+    setExpandedQuestionId(null);
+  };
+
   if (loading) return <div className="p-8 text-center">Loading...</div>;
 
   return (
@@ -1504,20 +1769,82 @@ export default function ExamDetail() {
           <h1 className="text-lg sm:text-xl font-bold truncate max-w-[150px] sm:max-w-md">Edit Exam</h1>
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" size="sm" className="hidden sm:flex" onClick={() => navigate(`/exam/${examId}/intro`)}>
-            <BookOpen className="mr-2 h-4 w-4" />
-            View
-          </Button>
-          <Button variant="ghost" size="icon" className="sm:hidden" onClick={() => navigate(`/exam/${examId}/intro`)}>
-            <BookOpen className="h-4 w-4" />
-          </Button>
+          {supportedLanguages.length > 1 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="hidden sm:flex">
+                  <BookOpen className="mr-2 h-4 w-4" />
+                  View <ChevronDown className="ml-1 h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                {supportedLanguages.map((lang) => {
+                  const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === lang);
+                  return (
+                    <DropdownMenuItem key={lang} onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${lang}`)}>
+                      <span className="mr-2">{langInfo?.flag || "🌐"}</span>
+                      {langInfo?.label || lang.toUpperCase()}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button variant="ghost" size="sm" className="hidden sm:flex" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
+              <BookOpen className="mr-2 h-4 w-4" />
+              View
+            </Button>
+          )}
 
-          <Button onClick={handleSaveAll} disabled={saving} size="sm" className="hidden sm:flex">
+          {supportedLanguages.length > 1 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="sm:hidden">
+                  <BookOpen className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                {supportedLanguages.map((lang) => {
+                  const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === lang);
+                  return (
+                    <DropdownMenuItem key={lang} onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${lang}`)}>
+                      <span className="mr-2">{langInfo?.flag || "🌐"}</span>
+                      {langInfo?.label || lang.toUpperCase()}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button variant="ghost" size="icon" className="sm:hidden" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
+              <BookOpen className="h-4 w-4" />
+            </Button>
+          )}
+
+          <Button onClick={handleSaveAll} disabled={saving || exam?.is_published} size="sm" className="hidden sm:flex" title={exam?.is_published ? "Unpublish to save changes" : ""}>
             <Save className="mr-2 h-4 w-4" />
             Save
           </Button>
-          <Button onClick={handleSaveAll} disabled={saving} size="icon" className="sm:hidden">
+          <Button onClick={handleSaveAll} disabled={saving || exam?.is_published} size="icon" className="sm:hidden" title={exam?.is_published ? "Unpublish to save changes" : ""}>
             <Save className="h-4 w-4" />
+          </Button>
+
+          <Button 
+            onClick={() => { setPublishAction({ isPublishing: !exam?.is_published }); setShowPublishDialog(true); }} 
+            className="hidden sm:flex"
+            variant={exam?.is_published ? "outline" : "default"}
+            size="sm"
+          >
+            <Globe className="mr-2 h-4 w-4" />
+            {exam?.is_published ? "Unpublish" : "Publish"}
+          </Button>
+          <Button 
+            onClick={() => { setPublishAction({ isPublishing: !exam?.is_published }); setShowPublishDialog(true); }} 
+            className="sm:hidden"
+            variant={exam?.is_published ? "outline" : "default"}
+            size="icon"
+          >
+            <Globe className="h-4 w-4" />
           </Button>
 
           <DropdownMenu>
@@ -1548,9 +1875,58 @@ export default function ExamDetail() {
         </div>
       </header>
 
-      <main className="container mx-auto max-w-[1600px] p-4 sm:p-6 grid grid-cols-12 gap-6">
-        {/* Left Sidebar: Exam Details & Sections */}
-        <div className="col-span-12 lg:col-span-3 space-y-6">
+      {/* Language Switcher Bar */}
+      {isMultiLang && (
+        <div className="bg-white border-b px-4 sm:px-6 py-2 sticky top-[65px] z-[9]">
+          <div className="flex items-center gap-3">
+            <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
+            <span className="text-sm font-medium text-muted-foreground hidden sm:inline">Language:</span>
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+              {supportedLanguages.map((langCode) => {
+                const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === langCode);
+                return (
+                  <button
+                    key={langCode}
+                    onClick={() => handleLanguageSwitch(langCode)}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                      activeLanguage === langCode
+                        ? "bg-white text-primary shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-white/50"
+                    }`}
+                  >
+                    {langInfo?.label || langCode}
+                    {langInfo?.nativeLabel && langInfo.nativeLabel !== langInfo.label && (
+                      <span className="ml-1 text-xs opacity-60">({langInfo.nativeLabel})</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <main className="container mx-auto max-w-[1600px] p-4 sm:p-6">
+        {exam?.is_published && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg flex items-center gap-3 mb-6">
+            <Lock className="h-5 w-5 text-amber-500 shrink-0" />
+            <div>
+              <p className="font-semibold text-sm">Exam is Published</p>
+              <p className="text-sm">This exam is currently live. Editing is disabled to protect test integrity. Please unpublish the exam from your Dashboard to make changes.</p>
+            </div>
+          </div>
+        )}
+
+        <div className="relative">
+          {exam?.is_published && (
+            <div 
+              className="absolute inset-0 z-[50] cursor-not-allowed" 
+              title="Editing is disabled for published exams. Please unpublish first."
+            />
+          )}
+          <div className={`grid grid-cols-12 gap-6 ${exam?.is_published ? "opacity-60 pointer-events-none select-none grayscale-[20%]" : ""}`}>
+            {/* Left Sidebar: Exam Details & Sections */}
+            <div className="col-span-12 lg:col-span-3 space-y-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-lg font-bold">Edit Exam Details</CardTitle>
@@ -1578,20 +1954,22 @@ export default function ExamDetail() {
                 </div>
                 <div className="space-y-2">
                   <Label>Description <span className="text-destructive">*</span></Label>
-                  <Textarea
-                    value={examDescription}
-                    onChange={(e) => setExamDescription(e.target.value)}
+                  <TransliterateTextarea
+                    lang={activeLanguage}
+                    value={examDescriptionTrans[activeLanguage] || ""}
+                    onValueChange={(text) => setExamDescriptionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
                     rows={4}
-                    placeholder="Brief description of the exam..."
+                    placeholder={`Brief description of the exam in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Instruction <span className="text-destructive">*</span></Label>
-                  <Textarea
-                    value={examInstruction}
-                    onChange={(e) => setExamInstruction(e.target.value)}
+                  <TransliterateTextarea
+                    lang={activeLanguage}
+                    value={examInstructionTrans[activeLanguage] || ""}
+                    onValueChange={(text) => setExamInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
                     rows={4}
-                    placeholder="Specific instructions for the exam..."
+                    placeholder={`Specific instructions for the exam in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
                 </div>
 
@@ -1626,7 +2004,7 @@ export default function ExamDetail() {
                     items={sections.map((s) => s.id)}
                     strategy={verticalListSortingStrategy}
                   >
-                    {sections.map((s) => (
+                    {sections.map((s, index) => (
                       <SortableSectionItem key={s.id} id={s.id}>
                         <div
                           className={`p-3 rounded-lg border cursor-pointer transition-all ${section?.id === s.id
@@ -1635,12 +2013,19 @@ export default function ExamDetail() {
                             }`}
                           onClick={() => handleSectionChange(s.id)}
                         >
-                          <div className="flex justify-between items-start mb-2 gap-2">
-                            <Input
-                              className="h-7 text-sm font-medium border-transparent hover:border-input focus:border-input px-1 -ml-1"
+                          <div className="flex flex-col gap-1 mb-2">
+                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider ml-1">Section {index + 1}</span>
+                            <div className="flex justify-between items-start gap-2 w-full">
+                            <TransliterateInput
+                              lang={activeLanguage}
+                              className="flex-1 h-7 text-sm font-medium border-transparent hover:border-input focus:border-input px-1 -ml-1"
                               value={s.name}
                               onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => handleUpdateSection(s.id, { name: e.target.value })}
+                              onValueChange={(text) => handleLocalUpdateSection(s.id, { name: text })}
+                              onBlur={(e) => handleUpdateSection(s.id, { name: (e.target as HTMLInputElement).value })}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                              }}
                             />
                             {sections.length > 1 && (
                               <Button
@@ -1657,6 +2042,7 @@ export default function ExamDetail() {
                                 <Trash2 className="h-3 w-3" />
                               </Button>
                             )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <Clock className="h-3 w-3" />
@@ -1666,8 +2052,14 @@ export default function ExamDetail() {
                               value={s.time_minutes}
                               onClick={(e) => e.stopPropagation()}
                               onChange={(e) =>
+                                handleLocalUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
+                              }
+                              onBlur={(e) =>
                                 handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
                               }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') e.currentTarget.blur();
+                              }}
                             />
                             <span>min</span>
                           </div>
@@ -2029,6 +2421,16 @@ export default function ExamDetail() {
                         </div>
                       )}
                     </div>
+                    
+                    {isMultiLang && !editingQuestionId && (
+                      <div className="bg-blue-50 border border-blue-200 text-blue-800 text-sm p-3.5 rounded-lg flex items-start gap-3 mt-3 mb-4">
+                        <Globe className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold mb-0.5">Multi-Language Exam</p>
+                          <p>Adding a new question here will automatically create linked placeholder questions in all other language variants. This keeps your exam structure perfectly synced.</p>
+                        </div>
+                      </div>
+                    )}
                     <QuestionForm
                       text={newQuestionText}
                       setText={setNewQuestionText}
@@ -2048,6 +2450,7 @@ export default function ExamDetail() {
                       onAdd={editingQuestionId ? handleUpdateQuestion : handleAddQuestion}
                       showImageUpload={true}
                       isEditing={!!editingQuestionId}
+                      lang={activeLanguage}
                     />
                   </div>
                 </TabsContent>
@@ -2213,6 +2616,8 @@ export default function ExamDetail() {
             </CardContent>
           </Card>
         </div>
+          </div>
+        </div>
       </main>
 
       {/* Delete Section Confirmation Dialog */}
@@ -2329,6 +2734,42 @@ export default function ExamDetail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Section Reorder Confirmation Dialog */}
+      <AlertDialog open={!!pendingSectionReorder} onOpenChange={(open) => !open && setPendingSectionReorder(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reorder Across All Languages</AlertDialogTitle>
+            <AlertDialogDescription>
+              Changing the section order here will automatically apply the same structural order to this exam in all other languages. Do you want to proceed?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingSectionReorder(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              if (pendingSectionReorder) {
+                processSectionReorder(pendingSectionReorder);
+              }
+            }}>
+              Confirm Reorder
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Publish Dialog Component */}
+      {publishAction && exam && (
+        <PublishExamDialog
+          open={showPublishDialog}
+          onOpenChange={setShowPublishDialog}
+          examId={examId!}
+          examName={exam.name}
+          isPublishing={publishAction.isPublishing}
+          onSuccess={(isPublishing, publishedLangs) => {
+            setExam(prev => prev ? { ...prev, is_published: isPublishing, published_languages: publishedLangs } as any : null);
+          }}
+        />
+      )}
     </div>
   );
 }

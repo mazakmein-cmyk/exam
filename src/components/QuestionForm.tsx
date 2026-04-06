@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import katex from "katex";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { TransliterateInput } from "@/components/TransliterateInput";
+import { getTransliterationSuggestions } from "@/lib/transliteration";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Upload, Check, X, Plus, Link, Pilcrow, List, MoreHorizontal, Bold, Italic, Underline, Strikethrough, Code, Table, AlignLeft, AlignCenter, AlignRight, AlignJustify, Type, Sigma, Undo, Redo, Keyboard, Baseline, ALargeSmall, ChevronDown, Heading1, Heading2, Heading3, Heading4, Quote, ListOrdered, CheckSquare, MoreVertical, Trash, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Palette, Minus } from "lucide-react";
@@ -42,6 +44,7 @@ interface QuestionFormProps {
     showImageUpload?: boolean;
     isEditing?: boolean;
     onImageRemove?: (index: number) => void;
+    lang?: string;
 }
 
 const ToolbarIcon = ({ icon: Icon, label, onClick, isActive }: { icon: any, label: string, onClick?: () => void, isActive?: boolean }) => (
@@ -92,7 +95,8 @@ export function QuestionForm({
     onAdd,
     showImageUpload = true,
     isEditing = false,
-    onImageRemove
+    onImageRemove,
+    lang = "en"
 }: QuestionFormProps) {
     const [isQuestionFocused, setIsQuestionFocused] = useState(false);
 
@@ -1072,6 +1076,174 @@ export function QuestionForm({
         startPos: 0,
         startSize: 0
     });
+
+    // ============================================
+    // TRANSLITERATION STATE (for contentEditable)
+    // ============================================
+    const [translitSuggestions, setTranslitSuggestions] = useState<string[]>([]);
+    const [showTranslitSuggestions, setShowTranslitSuggestions] = useState(false);
+    const [translitActiveIndex, setTranslitActiveIndex] = useState(0);
+    const [translitCurrentWord, setTranslitCurrentWord] = useState("");
+    const translitDebounceRef = useRef<NodeJS.Timeout>();
+    const translitSuggestionsRef = useRef<HTMLDivElement>(null);
+    const [translitPopupPos, setTranslitPopupPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+    const isIndicLang = lang && lang !== "en";
+
+    // Get caret coordinates for positioning the popup
+    const getCaretCoordinates = useCallback(() => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0).cloneRange();
+        range.collapse(false);
+        const rect = range.getBoundingClientRect();
+        // If rect is empty (e.g. at start of line), use the editor's position
+        if (rect.width === 0 && rect.height === 0) {
+            if (textareaRef.current) {
+                const editorRect = textareaRef.current.getBoundingClientRect();
+                return { top: editorRect.top + 24, left: editorRect.left + 12 };
+            }
+        }
+        return { top: rect.bottom, left: rect.left };
+    }, []);
+
+    // Extract the current English word being typed at the cursor position
+    const extractWordAtCaret = useCallback((): { word: string; range: Range | null } => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return { word: '', range: null };
+
+        const range = selection.getRangeAt(0);
+        if (!range.collapsed) return { word: '', range: null };
+
+        const node = range.startContainer;
+        if (node.nodeType !== Node.TEXT_NODE) return { word: '', range: null };
+
+        const text = node.textContent || '';
+        const offset = range.startOffset;
+
+        // Walk backwards from cursor to find start of English word
+        let start = offset;
+        while (start > 0 && /[a-zA-Z]/.test(text[start - 1])) {
+            start--;
+        }
+
+        const word = text.substring(start, offset);
+        if (!word) return { word: '', range: null };
+
+        // Create a range spanning the English word
+        const wordRange = document.createRange();
+        wordRange.setStart(node, start);
+        wordRange.setEnd(node, offset);
+
+        return { word, range: wordRange };
+    }, []);
+
+    // Apply a transliteration suggestion in the contentEditable
+    const applyTranslitSuggestion = useCallback((suggestion: string, addSpace: boolean = false) => {
+        const { range } = extractWordAtCaret();
+        if (!range) return;
+
+        // Replace the English word with the suggestion
+        range.deleteContents();
+        const textNode = document.createTextNode(suggestion + (addSpace ? ' ' : ''));
+        range.insertNode(textNode);
+
+        // Move cursor after the inserted text
+        const newRange = document.createRange();
+        newRange.setStartAfter(textNode);
+        newRange.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(newRange);
+
+        // Update text state
+        if (textareaRef.current) {
+            setText(textareaRef.current.innerHTML);
+        }
+
+        setTranslitSuggestions([]);
+        setShowTranslitSuggestions(false);
+        setTranslitCurrentWord("");
+    }, [extractWordAtCaret, setText]);
+
+    // Handle input in the contentEditable for transliteration
+    const handleTranslitInput = useCallback(() => {
+        if (!isIndicLang) return;
+
+        const { word } = extractWordAtCaret();
+        setTranslitCurrentWord(word);
+
+        if (!word || word.length < 1) {
+            setTranslitSuggestions([]);
+            setShowTranslitSuggestions(false);
+            return;
+        }
+
+        // Position the popup near the caret
+        const coords = getCaretCoordinates();
+        if (coords) {
+            setTranslitPopupPos({ top: coords.top + 4, left: coords.left });
+        }
+
+        // Debounce API call
+        if (translitDebounceRef.current) clearTimeout(translitDebounceRef.current);
+        translitDebounceRef.current = setTimeout(async () => {
+            try {
+                const results = await getTransliterationSuggestions(word, lang, 5);
+                if (results.length > 0) {
+                    setTranslitSuggestions(results);
+                    setShowTranslitSuggestions(true);
+                    setTranslitActiveIndex(0);
+                } else {
+                    setTranslitSuggestions([]);
+                    setShowTranslitSuggestions(false);
+                }
+            } catch {
+                setTranslitSuggestions([]);
+                setShowTranslitSuggestions(false);
+            }
+        }, 150);
+    }, [isIndicLang, extractWordAtCaret, getCaretCoordinates, lang]);
+
+    // Handle keydown in contentEditable for transliteration navigation
+    const handleTranslitKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!showTranslitSuggestions || translitSuggestions.length === 0) return false;
+
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                setTranslitActiveIndex((prev) => (prev + 1) % translitSuggestions.length);
+                return true;
+            case 'ArrowUp':
+                e.preventDefault();
+                setTranslitActiveIndex((prev) => (prev - 1 + translitSuggestions.length) % translitSuggestions.length);
+                return true;
+            case 'Enter':
+            case 'Tab':
+                e.preventDefault();
+                applyTranslitSuggestion(translitSuggestions[translitActiveIndex]);
+                return true;
+            case ' ':
+                if (translitSuggestions.length > 0) {
+                    e.preventDefault();
+                    applyTranslitSuggestion(translitSuggestions[translitActiveIndex], true);
+                    return true;
+                }
+                break;
+            case 'Escape':
+                setTranslitSuggestions([]);
+                setShowTranslitSuggestions(false);
+                return true;
+        }
+        return false;
+    }, [showTranslitSuggestions, translitSuggestions, translitActiveIndex, applyTranslitSuggestion]);
+
+    // Cleanup transliteration debounce
+    useEffect(() => {
+        return () => {
+            if (translitDebounceRef.current) clearTimeout(translitDebounceRef.current);
+        };
+    }, []);
 
     // Capture selection when opening popover or dropdowns that steal focus
     useEffect(() => {
@@ -2382,11 +2554,20 @@ export function QuestionForm({
                         contentEditable
                         className={`min-h-[100px] w-full px-3 py-2 text-sm border-none placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 whitespace-pre-wrap cursor-text overflow-auto ${!text ? 'empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground' : ''} [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-2 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-2 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:my-1 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:my-1 [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-gray-600 [&_ul]:list-disc [&_ul]:ml-6 [&_ol]:list-decimal [&_ol]:ml-6 [&_a]:text-blue-600 [&_a]:underline`}
                         data-placeholder="Enter question text"
-                        onInput={(e) => setText(e.currentTarget.innerHTML)}
+                        onInput={(e) => {
+                            setText(e.currentTarget.innerHTML);
+                            handleTranslitInput();
+                        }}
                         onBlur={(e) => {
                             if (!e.currentTarget.contains(e.relatedTarget)) {
                                 setIsQuestionFocused(false);
                             }
+                            // Delay hiding transliteration suggestions so click can register
+                            setTimeout(() => setShowTranslitSuggestions(false), 200);
+                        }}
+                        onKeyDown={(e) => {
+                            // Let transliteration handle first
+                            if (handleTranslitKeyDown(e)) return;
                         }}
                         onKeyUp={checkFormats}
                         onMouseUp={(e) => {
@@ -2398,6 +2579,63 @@ export function QuestionForm({
                         onFocus={() => setIsQuestionFocused(true)}
                         style={{ height: 'auto', minHeight: '100px' }}
                     />
+
+                    {/* Transliteration Suggestions Popup for contentEditable */}
+                    {showTranslitSuggestions && translitSuggestions.length > 0 && (
+                        <div
+                            ref={translitSuggestionsRef}
+                            style={{
+                                position: 'fixed',
+                                top: `${translitPopupPos.top}px`,
+                                left: `${translitPopupPos.left}px`,
+                                zIndex: 99999,
+                                minWidth: '160px',
+                                maxWidth: '300px',
+                                background: 'white',
+                                border: '1px solid hsl(230 18% 91%)',
+                                borderRadius: '0.5rem',
+                                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                                overflow: 'hidden',
+                                padding: '4px',
+                            }}
+                        >
+                            {translitSuggestions.map((suggestion, idx) => (
+                                <div
+                                    key={idx}
+                                    style={{
+                                        padding: '8px 12px',
+                                        fontSize: '0.9rem',
+                                        cursor: 'pointer',
+                                        borderRadius: '0.375rem',
+                                        transition: 'background 0.15s ease',
+                                        background: idx === translitActiveIndex ? 'hsl(252 87% 57% / 0.08)' : 'transparent',
+                                        color: idx === translitActiveIndex ? 'hsl(252 87% 57%)' : 'inherit',
+                                        fontWeight: idx === translitActiveIndex ? 600 : 400,
+                                        fontFamily: "'Noto Sans Devanagari', 'Inter', sans-serif",
+                                    }}
+                                    onMouseEnter={() => setTranslitActiveIndex(idx)}
+                                    onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        applyTranslitSuggestion(suggestion);
+                                    }}
+                                >
+                                    {suggestion}
+                                </div>
+                            ))}
+                            <div
+                                style={{
+                                    padding: '4px 12px',
+                                    fontSize: '0.65rem',
+                                    color: '#999',
+                                    borderTop: '1px solid hsl(230 18% 93%)',
+                                    marginTop: '4px',
+                                    textAlign: 'right',
+                                }}
+                            >
+                                ↑↓ navigate · Enter/Tab to select · Space to confirm
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -2421,12 +2659,13 @@ export function QuestionForm({
                     <Label>Options</Label>
                     {options.map((opt, idx) => (
                         <div key={idx} className="flex gap-2">
-                            <Input
+                            <TransliterateInput
+                                lang={lang}
                                 placeholder={`Option ${idx + 1}`}
                                 value={opt}
-                                onChange={(e) => {
+                                onValueChange={(text) => {
                                     const newOpts = [...options];
-                                    newOpts[idx] = e.target.value;
+                                    newOpts[idx] = text;
                                     setOptions(newOpts);
                                 }}
                             />
@@ -2503,10 +2742,11 @@ export function QuestionForm({
                         )}
                     </div>
                 ) : (
-                    <Input
+                    <TransliterateInput
+                        lang={lang}
                         placeholder="Enter correct answer"
                         value={correct as string}
-                        onChange={(e) => setCorrect(e.target.value)}
+                        onValueChange={(text) => setCorrect(text)}
                     />
                 )}
             </div>
