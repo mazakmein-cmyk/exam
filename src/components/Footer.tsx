@@ -31,24 +31,24 @@ const MockSetuMark = () => (
 
 const Footer = () => {
   return (
-    <footer className="border-t border-border/50">
-      <div className="container mx-auto max-w-5xl px-5 py-14">
-        <div className="grid sm:grid-cols-3 gap-10">
+    <footer className="border-t border-border/50" aria-label="Site footer">
+      <div className="container mx-auto max-w-6xl px-5 py-14">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-10">
           {/* Brand */}
-          <div className="sm:col-span-1 space-y-3">
+          <div className="space-y-3">
             <div className="flex items-center gap-2">
               <MockSetuMark />
               <span className="text-[15px] font-bold tracking-[-0.02em] text-foreground">
                 Mock<span className="text-gradient">Setu</span>
               </span>
             </div>
-            <p className="text-[13px] text-muted-foreground leading-[1.65] max-w-[200px]">
-              The smartest free exam simulator for JEE, NEET, CAT & GATE students.
+            <p className="text-[13px] text-muted-foreground leading-[1.65] max-w-[220px]">
+              The smartest free <strong className="font-semibold text-foreground/80">mock test</strong> &amp; exam simulator for JEE, NEET, CAT, GATE &amp; UPSC students.
             </p>
           </div>
 
           {/* For Students */}
-          <div>
+          <nav aria-label="For students">
             <h4 className="text-[11px] font-bold tracking-widest text-foreground/40 uppercase mb-4">For Students</h4>
             <ul className="space-y-3">
               {[
@@ -66,7 +66,31 @@ const Footer = () => {
                 </li>
               ))}
             </ul>
-          </div>
+          </nav>
+
+          {/* Exam Prep Resources (footer-only blog/guide links) */}
+          <nav aria-label="Exam preparation resources">
+            <h4 className="text-[11px] font-bold tracking-widest text-foreground/40 uppercase mb-4">Exam Prep</h4>
+            <ul className="space-y-3">
+              {[
+                { label: "JEE Main Mock Tests", to: "/marketplace?exam=jee-main", rel: "JEE Main exam preparation mock tests" },
+                { label: "NEET Mock Tests", to: "/marketplace?exam=neet", rel: "NEET UG mock test series" },
+                { label: "CAT Mock Tests", to: "/marketplace?exam=cat", rel: "CAT MBA mock test series" },
+                { label: "GATE Mock Tests", to: "/marketplace?exam=gate", rel: "GATE engineering mock tests" },
+                { label: "UPSC Mock Tests", to: "/marketplace?exam=upsc", rel: "UPSC civil services prelims mock tests" },
+              ].map(({ label, to, rel }) => (
+                <li key={to}>
+                  <Link
+                    to={to}
+                    title={rel}
+                    className="text-[13px] text-muted-foreground hover:text-foreground transition-colors duration-150"
+                  >
+                    {label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
 
           {/* Educators + Legal */}
           <div>
@@ -113,7 +137,7 @@ const Footer = () => {
         {/* Bottom bar */}
         <div className="mt-12 pt-6 border-t border-border/50 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-[12px] text-muted-foreground/70">
-            © 2025 MockSetu. Built for students, by educators.
+            © 2026 MockSetu. Built for students, by educators.
           </p>
           <p className="text-[12px] text-muted-foreground/70">
             Made with ❤️ to help students crack their exams.

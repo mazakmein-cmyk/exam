@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 interface SortableQuestionItemProps {
     id: string;
     children: React.ReactNode;
+    disabled?: boolean;
 }
 
-export function SortableQuestionItem({ id, children }: SortableQuestionItemProps) {
+export function SortableQuestionItem({ id, children, disabled = false }: SortableQuestionItemProps) {
     const {
         attributes,
         listeners,
@@ -17,7 +18,7 @@ export function SortableQuestionItem({ id, children }: SortableQuestionItemProps
         transform,
         transition,
         isDragging,
-    } = useSortable({ id });
+    } = useSortable({ id, disabled });
 
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -28,11 +29,13 @@ export function SortableQuestionItem({ id, children }: SortableQuestionItemProps
 
     return (
         <div ref={setNodeRef} style={style} className="relative flex items-start gap-2">
-            <div className="mt-4" {...attributes} {...listeners}>
-                <Button variant="ghost" size="icon" className="cursor-grab active:cursor-grabbing hover:bg-slate-100 h-8 w-8">
-                    <GripVertical className="h-4 w-4 text-slate-400" />
-                </Button>
-            </div>
+            {!disabled && (
+                <div className="mt-4" {...attributes} {...listeners}>
+                    <Button variant="ghost" size="icon" className="cursor-grab active:cursor-grabbing hover:bg-slate-100 h-8 w-8">
+                        <GripVertical className="h-4 w-4 text-slate-400" />
+                    </Button>
+                </div>
+            )}
             <div className="flex-1 min-w-0">
                 {children}
             </div>

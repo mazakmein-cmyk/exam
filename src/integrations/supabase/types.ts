@@ -78,6 +78,7 @@ export type Database = {
           instruction_translations: Json | null
           is_published: boolean
           name: string
+          primary_language: string
           published_languages: string[]
           supported_languages: string[]
           updated_at: string
@@ -93,6 +94,7 @@ export type Database = {
           instruction_translations?: Json | null
           is_published?: boolean
           name: string
+          primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]
           updated_at?: string
@@ -108,6 +110,7 @@ export type Database = {
           instruction_translations?: Json | null
           is_published?: boolean
           name?: string
+          primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]
           updated_at?: string
@@ -130,6 +133,7 @@ export type Database = {
           is_finalized: boolean | null
           options: Json | null
           q_no: number
+          question_group_id: string | null
           requires_review: boolean | null
           section_id: string
           section_label: string | null
@@ -149,6 +153,7 @@ export type Database = {
           is_finalized?: boolean | null
           options?: Json | null
           q_no: number
+          question_group_id?: string | null
           requires_review?: boolean | null
           section_id: string
           section_label?: string | null
@@ -168,6 +173,7 @@ export type Database = {
           is_finalized?: boolean | null
           options?: Json | null
           q_no?: number
+          question_group_id?: string | null
           requires_review?: boolean | null
           section_id?: string
           section_label?: string | null

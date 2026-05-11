@@ -8,6 +8,9 @@ import { toast } from "@/hooks/use-toast";
 import { ArrowLeft, TrendingUp, Clock, Target, Users, BookOpen, Eye, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import MarksAnalyticsPanel from "@/components/marks/MarksAnalyticsPanel";
+import SEO from "@/components/SEO";
+import { formatDuration } from "@/lib/utils";
 
 interface Attempt {
   id: string;
@@ -78,6 +81,8 @@ export default function Analytics() {
   const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, Set<string>>>({}); 
   // Creator leaderboard: top 3 sessions ranked by total score
   const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; username: string; displayName: string; totalScore: number; totalQuestions: number }[]>([]);
+  // Marks analytics data
+  const [marksAnalyticsData, setMarksAnalyticsData] = useState<any[] | null>(null);
 
   const toggleSection = (sectionName: string) => {
     const newCollapsed = new Set(collapsedSections);
@@ -310,6 +315,10 @@ export default function Analytics() {
 
         setAttempts(correctedAttempts);
 
+        // Marks module: check if any attempts have marks_score
+        const marksEnabled = correctedAttempts.some((a: any) => a.marks_score !== null && a.marks_score !== undefined);
+        if (marksEnabled) setMarksAnalyticsData(correctedAttempts);
+
         // --- Compute Top 3 Leaderboard for Creator View ---
         try {
           if (allSections && allSections.length > 0 && correctedAttempts.length > 0) {
@@ -505,6 +514,10 @@ export default function Analytics() {
         const { data, error } = await query.eq("user_id", user.id);
         if (error) throw error;
         setAttempts(data as any);
+
+        // Marks module: check if student has marks data
+        const marksEnabled = (data as any[])?.some((a: any) => a.marks_score !== null && a.marks_score !== undefined);
+        if (marksEnabled) setMarksAnalyticsData(data as any[]);
 
         // Compute ranks for each exam the student has attempted
         try {
@@ -967,6 +980,12 @@ export default function Analytics() {
 
   return (
     <div className="min-h-screen bg-background">
+      <SEO
+        title="My Analytics | MockSetu"
+        description="View your personal mock test performance analytics on MockSetu."
+        path="/analytics"
+        noindex
+      />
       <div className="max-w-7xl mx-auto p-6">
         <div className="flex items-center gap-3 mb-8">
           <Button
@@ -1339,15 +1358,10 @@ export default function Analytics() {
                         </div>
                       </td>
                       <td className="px-2 py-3 text-center text-muted-foreground">
-                        {section.avgTime.toFixed(1)}s
+                        {formatDuration(Math.round(section.avgTime))}
                       </td>
                       <td className="px-2 py-3 text-center text-muted-foreground">
-                        {(() => {
-                          const avgSeconds = section.totalTimeSpent / section.totalAttempts;
-                          const mins = Math.floor(avgSeconds / 60);
-                          const secs = Math.round(avgSeconds % 60);
-                          return `${mins} mins ${secs} sec / ${section.timeLimit} mins`;
-                        })()}
+                        {formatDuration(Math.round(section.totalTimeSpent / section.totalAttempts))} / {section.timeLimit}m
                       </td>
                     </tr>
                   ))}
@@ -1655,7 +1669,7 @@ export default function Analytics() {
                     <div className="flex flex-col gap-0.5 min-w-0">
                       <p className="font-semibold text-[15px] leading-snug truncate">{group.examName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {group.sections.length} section{group.sections.length > 1 ? 's' : ''}&nbsp;&bull;&nbsp;{group.date}&nbsp;&bull;&nbsp;{Math.floor((group.totalTime || 0) / 60)}m {(group.totalTime || 0) % 60}s
+                        {group.sections.length} section{group.sections.length > 1 ? 's' : ''}&nbsp;&bull;&nbsp;{group.date}&nbsp;&bull;&nbsp;{formatDuration(group.totalTime || 0)}
                       </p>
                     </div>
                     <div className="flex items-center gap-3 ml-4 shrink-0">
@@ -1691,6 +1705,12 @@ export default function Analytics() {
         )}
 
       </div>
+
+        {/* Marks Analytics Panel */}
+        {marksAnalyticsData && marksAnalyticsData.length > 0 && (
+          <MarksAnalyticsPanel attempts={marksAnalyticsData} examId={examId || undefined} />
+        )}
+
     </div>
   );
 }

@@ -22,6 +22,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import OptimizedImage from "@/components/OptimizedImage";
+import { MarksQuestionBadge } from "@/components/marks/MarksQuestionBadge";
+import type { ScoringConfig } from "@/services/scoringEngine";
 
 type Question = {
   id: string;
@@ -65,38 +67,88 @@ const ExamSimulator = () => {
   const [hasStarted, setHasStarted] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [showTimeWarning, setShowTimeWarning] = useState(false);
+  const [timeWarningCountdown, setTimeWarningCountdown] = useState(5);
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [showSectionCompleteDialog, setShowSectionCompleteDialog] = useState(false);
   const questionStartTimeRef = useRef(Date.now());
+  // Absolute wall-clock end time, shared with the Web Worker
+  const examEndTimeRef = useRef(0);
+  // Web Worker for background-accurate countdown (not throttled by browser)
+  const timerWorkerRef = useRef<Worker | null>(null);
+  // Always-current ref to handleAutoSubmit so the worker callback isn't stale
+  const handleAutoSubmitRef = useRef<() => void>(() => {});
   const [isLoading, setIsLoading] = useState(true);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [scoringConfigs, setScoringConfigs] = useState<Map<string, ScoringConfig>>(new Map());
+  const [showMarksInSim, setShowMarksInSim] = useState(true);
+
+  // Spin up the Web Worker once on mount and tear it down on unmount
+  useEffect(() => {
+    const workerCode = `
+      let intervalId = null;
+      self.onmessage = function(e) {
+        if (e.data.type === 'START') {
+          if (intervalId) clearInterval(intervalId);
+          var endTime = e.data.endTime;
+          intervalId = setInterval(function() {
+            var remaining = Math.ceil((endTime - Date.now()) / 1000);
+            if (remaining <= 0) {
+              clearInterval(intervalId);
+              intervalId = null;
+              self.postMessage({ type: 'EXPIRED' });
+            } else {
+              self.postMessage({ type: 'TICK', remaining: remaining });
+            }
+          }, 1000);
+        } else if (e.data.type === 'STOP') {
+          if (intervalId) { clearInterval(intervalId); intervalId = null; }
+        }
+      };
+    `;
+    const blob = new Blob([workerCode], { type: "application/javascript" });
+    const url = URL.createObjectURL(blob);
+    const worker = new Worker(url);
+    URL.revokeObjectURL(url);
+
+    worker.onmessage = (e) => {
+      if (e.data.type === "TICK") {
+        const remaining: number = e.data.remaining;
+        setTimeRemaining(remaining);
+        if (remaining <= 300) setShowTimeWarning(true);
+      } else if (e.data.type === "EXPIRED") {
+        setTimeRemaining(0);
+        handleAutoSubmitRef.current();
+      }
+    };
+
+    timerWorkerRef.current = worker;
+    return () => { worker.terminate(); };
+  }, []);
 
   useEffect(() => {
     fetchSectionAndQuestions();
   }, [sectionId, examId]);
 
   useEffect(() => {
-    if (!hasStarted || timeRemaining <= 0) return;
+    questionStartTimeRef.current = Date.now();
+  }, [currentQuestionIndex]);
 
-    const timer = setInterval(() => {
-      setTimeRemaining((prev) => {
+  // Auto-dismiss the 5-minute warning after 5 seconds
+  useEffect(() => {
+    if (!showTimeWarning) return;
+    setTimeWarningCountdown(5);
+    const interval = setInterval(() => {
+      setTimeWarningCountdown((prev) => {
         if (prev <= 1) {
-          handleAutoSubmit();
+          clearInterval(interval);
+          setShowTimeWarning(false);
           return 0;
-        }
-        if (prev === 300 && !showTimeWarning) {
-          setShowTimeWarning(true);
         }
         return prev - 1;
       });
     }, 1000);
-
-    return () => clearInterval(timer);
-  }, [hasStarted, timeRemaining]);
-
-  useEffect(() => {
-    questionStartTimeRef.current = Date.now();
-  }, [currentQuestionIndex]);
+    return () => clearInterval(interval);
+  }, [showTimeWarning]);
 
   // Preload all question images into browser cache when questions load
   const preloadImages = useCallback((questionsList: Question[]) => {
@@ -188,6 +240,19 @@ const ExamSimulator = () => {
         // Only set time — do NOT create attempt yet (wait for user to click "Start Section")
         // This prevents orphan attempt records from page loads, previews, and bot visits
         setTimeRemaining(sectionData.time_minutes * 60);
+
+        // Fetch scoring configs for marks badges
+        try {
+          const { getQuestionScoringConfigs, getExamScoringDefault } = await import('@/services/scoringService');
+          const examDefault = await getExamScoringDefault(examId!);
+          setShowMarksInSim(examDefault?.show_marks_in_simulator ?? true);
+          if (examDefault?.show_marks_in_simulator !== false) {
+            const configs = await getQuestionScoringConfigs(sortedQuestions.map((q: any) => q.id));
+            setScoringConfigs(configs);
+          }
+        } catch (e) {
+          // Non-fatal: badges just won't show
+        }
       }
     } catch (error) {
       console.error("Error fetching section:", error);
@@ -244,6 +309,10 @@ const ExamSimulator = () => {
         setAttemptId(data.id);
       }
 
+      // Set absolute end time and start the Web Worker countdown
+      examEndTimeRef.current = Date.now() + (section?.time_minutes || 0) * 60 * 1000;
+      questionStartTimeRef.current = Date.now();
+      timerWorkerRef.current?.postMessage({ type: "START", endTime: examEndTimeRef.current });
       setHasStarted(true);
     } catch (error) {
       console.error("Error starting section:", error);
@@ -260,6 +329,12 @@ const ExamSimulator = () => {
     if (!currentQuestion) return;
 
     const timeSpent = Math.floor((Date.now() - questionStartTimeRef.current) / 1000);
+
+    // Reset so repeated calls before navigation don't double-count
+    questionStartTimeRef.current = Date.now();
+
+    if (timeSpent <= 0) return;
+
     setQuestionStates((prev) => ({
       ...prev,
       [currentQuestion.id]: {
@@ -335,6 +410,7 @@ const ExamSimulator = () => {
   };
 
   const handleAutoSubmit = async () => {
+    timerWorkerRef.current?.postMessage({ type: "STOP" });
     updateQuestionTime();
     await submitExam();
     toast({
@@ -342,6 +418,11 @@ const ExamSimulator = () => {
       description: "Your section has been automatically submitted.",
     });
   };
+
+  // Keep the ref in sync so the worker's onmessage callback always calls the latest version
+  useEffect(() => {
+    handleAutoSubmitRef.current = handleAutoSubmit;
+  });
 
   const submitExam = async () => {
     // Calculate time for current question synchronously (state updates are async)
@@ -468,27 +549,28 @@ const ExamSimulator = () => {
     if (hasOptions) {
       // Check for multiple selection types
       if (currentQuestion.answer_type === "multi" || currentQuestion.answer_type === "multiple") {
-        const selectedValues = state.selectedAnswer || [];
+        const selectedValues: string[] = state.selectedAnswer || [];
         return (
           <div className="space-y-3">
-            {currentQuestion.options?.map((option: any, idx: number) => (
-              <div key={idx} className="flex items-center space-x-2 border p-3 rounded-lg hover:bg-slate-50 transition-colors">
-                <Checkbox
-                  id={`option-${idx}`}
-                  checked={selectedValues.includes(option)}
-                  onCheckedChange={(checked) => {
-                    if (checked) {
-                      handleAnswerChange([...selectedValues, option]);
-                    } else {
-                      handleAnswerChange(selectedValues.filter((v: any) => v !== option));
-                    }
-                  }}
-                />
-                <Label htmlFor={`option-${idx}`} className="flex-1 cursor-pointer font-normal">
-                  {option}
-                </Label>
-              </div>
-            ))}
+            {currentQuestion.options?.map((option: any, idx: number) => {
+              const idxStr = String(idx);
+              return (
+                <label key={idx} htmlFor={`option-${idx}`} className="flex items-center space-x-2 border p-3 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+                  <Checkbox
+                    id={`option-${idx}`}
+                    checked={selectedValues.includes(idxStr)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        handleAnswerChange([...selectedValues, idxStr]);
+                      } else {
+                        handleAnswerChange(selectedValues.filter((v: any) => v !== idxStr));
+                      }
+                    }}
+                  />
+                  <span className="flex-1 font-normal">{option}</span>
+                </label>
+              );
+            })}
           </div>
         );
       }
@@ -496,16 +578,14 @@ const ExamSimulator = () => {
       // Default to Single Choice (Radio) for all other types with options
       return (
         <RadioGroup
-          value={state.selectedAnswer || ""}
+          value={state.selectedAnswer != null ? String(state.selectedAnswer) : ""}
           onValueChange={(value) => handleAnswerChange(value)}
         >
           {currentQuestion.options?.map((option: any, idx: number) => (
-            <div key={idx} className="flex items-center space-x-2 border p-3 rounded-lg hover:bg-slate-50 transition-colors">
-              <RadioGroupItem value={option} id={`option-${idx}`} />
-              <Label htmlFor={`option-${idx}`} className="flex-1 cursor-pointer font-normal">
-                {option}
-              </Label>
-            </div>
+            <label key={idx} htmlFor={`option-${idx}`} className="flex items-center space-x-2 border p-3 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+              <RadioGroupItem value={String(idx)} id={`option-${idx}`} />
+              <span className="flex-1 font-normal">{option}</span>
+            </label>
           ))}
         </RadioGroup>
       );
@@ -685,6 +765,9 @@ const ExamSimulator = () => {
                 <Flag className="h-4 w-4 mr-2" />
                 {questionStates[currentQuestion?.id]?.isMarkedForReview ? "Marked" : "Mark for Review"}
               </Button>
+              {showMarksInSim && currentQuestion && (
+                <MarksQuestionBadge config={scoringConfigs.get(currentQuestion.id) ?? null} />
+              )}
             </div>
 
             <Card className="border-t-4 border-t-primary">
@@ -911,7 +994,9 @@ const ExamSimulator = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction>Continue</AlertDialogAction>
+            <AlertDialogAction onClick={() => setShowTimeWarning(false)}>
+              Continue ({timeWarningCountdown}s)
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -927,7 +1012,7 @@ const ExamSimulator = () => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={submitExam}>Submit</AlertDialogAction>
+            <AlertDialogAction onClick={() => { timerWorkerRef.current?.postMessage({ type: "STOP" }); submitExam(); }}>Submit</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

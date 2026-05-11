@@ -11,6 +11,7 @@ import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
 import UpdatePasswordModal from "@/components/UpdatePasswordModal";
 import OnboardingModal from "@/components/OnboardingModal";
+import SEO from "@/components/SEO";
 
 const Auth = () => {
   const [email, setEmail] = useState("");
@@ -139,6 +140,12 @@ const Auth = () => {
 
   return (
     <div className="min-h-screen relative overflow-hidden flex items-center justify-center p-4">
+      <SEO
+        title="Creator Sign In | MockSetu"
+        description="Sign in to your MockSetu creator account to publish and manage mock tests."
+        path="/auth"
+        noindex
+      />
       {/* Deep gradient background */}
       <div className="absolute inset-0 bg-gradient-to-br from-[#0a0618] via-[#110d2a] to-[#0d1a33]" />
       {/* Ambient glow orbs */}

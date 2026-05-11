@@ -11,6 +11,7 @@ import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
 import UpdatePasswordModal from "@/components/UpdatePasswordModal";
 import OnboardingModal from "@/components/OnboardingModal";
+import SEO from "@/components/SEO";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -205,6 +206,12 @@ const StudentAuth = () => {
 
   return (
     <div className="min-h-screen relative overflow-hidden flex items-center justify-center p-4">
+      <SEO
+        title="Sign In or Sign Up Free | MockSetu"
+        description="Create your free MockSetu account to take timed mock tests for JEE, NEET, CAT, GATE, and UPSC."
+        path="/student-auth"
+        noindex
+      />
       {/* Deep gradient background */}
       <div className="absolute inset-0 bg-gradient-to-br from-[#0a1628] via-[#0d1a33] to-[#0a0f1e]" />
       {/* Ambient glow orbs — teal/indigo tone for student portal */}

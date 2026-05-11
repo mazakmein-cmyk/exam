@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check, Globe, Lock } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check, Globe, Lock, AlertCircle, Scale } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import PdfSnipper from "@/components/PdfSnipper";
@@ -52,6 +52,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import MarksConfigPanel from "@/components/marks/MarksConfigPanel";
+import { useMarksModule } from "@/hooks/useMarksModule";
+import { MarksQuestionBadge } from "@/components/marks/MarksQuestionBadge";
+import { formatMarks } from "@/services/scoringEngine";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -69,6 +75,7 @@ type Exam = {
   user_id: string;
   is_published: boolean;
   supported_languages?: string[];
+  primary_language?: string;
 };
 
 type Section = {
@@ -92,6 +99,8 @@ type Question = {
   image_url?: string | null;
   image_urls?: string[] | null;
   correct_answer: any;
+  question_group_id?: string | null;
+  is_excluded?: boolean | null;
 };
 
 export default function ExamDetail() {
@@ -110,7 +119,9 @@ export default function ExamDetail() {
   // Language State
   const [activeLanguage, setActiveLanguage] = useState("en");
   const [supportedLanguages, setSupportedLanguages] = useState<string[]>(["en"]);
+  const [primaryLanguage, setPrimaryLanguage] = useState<string>("en");
   const isMultiLang = supportedLanguages.length > 1;
+  const isPrimaryLanguage = activeLanguage === primaryLanguage;
 
   // Form State
   const [examTitle, setExamTitle] = useState("");
@@ -156,6 +167,9 @@ export default function ExamDetail() {
   const [showDeleteQuestionDialog, setShowDeleteQuestionDialog] = useState(false);
   const [isExamDetailsCollapsed, setIsExamDetailsCollapsed] = useState(false);
   const [isSectionsCollapsed, setIsSectionsCollapsed] = useState(false);
+  const [showMarksSheet, setShowMarksSheet] = useState(false);
+  const [marksDeepLinkQuestionId, setMarksDeepLinkQuestionId] = useState<string | undefined>(undefined);
+  const [marksDeepLinkSectionId, setMarksDeepLinkSectionId] = useState<string | undefined>(undefined);
   const [isQuestionsCollapsed, setIsQuestionsCollapsed] = useState(false);
   const questionFormRef = useRef<HTMLDivElement>(null);
 
@@ -196,6 +210,54 @@ export default function ExamDetail() {
   // Section Switch Confirmation State
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
   const [showUnsavedSectionDialog, setShowUnsavedSectionDialog] = useState(false);
+
+  // ── Marks Module: resolve scoring config per question for badge display ──
+  const marksSectionIds = useMemo(() => sections.map(s => s.id), [sections]);
+  const marksQuestionIds = useMemo(() => questions.map(q => q.id), [questions]);
+  const marksQuestionSectionMap = useMemo(() => {
+    const m = new Map<string, string>();
+    questions.forEach(q => m.set(q.id, q.section_id));
+    return m;
+  }, [questions]);
+  const marksModule = useMarksModule(examId, marksSectionIds, marksQuestionIds, marksQuestionSectionMap);
+  const marksResolvedConfigs = useMemo(() => {
+    const m = new Map<string, ReturnType<typeof marksModule.resolveQuestionConfig>>();
+    for (const q of questions) {
+      m.set(q.id, marksModule.resolveQuestionConfig(q.id, q.section_id));
+    }
+    return m;
+  }, [questions, marksModule.resolveQuestionConfig]);
+
+  // --- Validation helper: returns true if a question has detectable issues ---
+  // Returns all validation errors for a question as human-readable strings.
+  // Add new conditions here — each entry is shown as a one-liner to the user.
+  const getQuestionErrors = (q: Question): string[] => {
+    const errors: string[] = [];
+
+    const hasContent = (q.text && q.text.replace(/<[^>]+>/g, '').trim() !== '') || !!q.image_url || (Array.isArray(q.image_urls) && q.image_urls.length > 0);
+    if (!hasContent) {
+      errors.push("Question is empty — add text or attach an image.");
+    }
+
+    if (q.answer_type === 'single' || q.answer_type === 'multi') {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const nonEmptyOpts = opts.filter((o: string) => typeof o === 'string' && o.trim() !== '');
+      if (nonEmptyOpts.length < 2) {
+        errors.push(`Only ${nonEmptyOpts.length} option${nonEmptyOpts.length === 1 ? '' : 's'} filled — add at least 2 answer choices.`);
+      }
+    }
+
+    const hasCorrectAnswer = Array.isArray(q.correct_answer)
+      ? q.correct_answer.length > 0 && q.correct_answer.some((a: string) => a && a.trim() !== '')
+      : !!(q.correct_answer && String(q.correct_answer).trim() !== '');
+    if (!hasCorrectAnswer) {
+      errors.push("No correct answer marked — select one before publishing.");
+    }
+
+    return errors;
+  };
+
+  const isQuestionInvalid = (q: Question): boolean => getQuestionErrors(q).length > 0;
 
   const isQuestionDirty = () => {
     return (
@@ -263,7 +325,9 @@ export default function ExamDetail() {
 
       // Set language state
       const examLangs = (examData as any).supported_languages || ["en"];
+      const examPrimaryLang = (examData as any).primary_language || examLangs[0];
       setSupportedLanguages(examLangs);
+      setPrimaryLanguage(examPrimaryLang);
       if (!examLangs.includes(lang)) {
         setActiveLanguage(examLangs[0]);
       }
@@ -440,6 +504,15 @@ export default function ExamDetail() {
   };
 
   const handleShare = async () => {
+    if (!exam?.is_published) {
+      toast({
+        title: "Cannot Share Exam",
+        description: "Publish the exam to share the exam.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const shareUrl = `${window.location.origin}/exam/${examId}/intro`;
     try {
       await navigator.clipboard.writeText(shareUrl);
@@ -496,7 +569,7 @@ export default function ExamDetail() {
         return;
       }
 
-      // Create a copy of the exam
+      // Create a copy of the exam (including multi-language fields)
       const { data: newExam, error: examError } = await supabase
         .from("exams")
         .insert({
@@ -507,48 +580,83 @@ export default function ExamDetail() {
           instruction_translations: exam.instruction_translations,
           exam_category: exam.exam_category,
           user_id: user.id,
+          supported_languages: (exam as any).supported_languages || ["en"],
+          primary_language: (exam as any).primary_language || "en",
         })
         .select()
         .single();
 
       if (examError) throw examError;
 
-      // Duplicate all sections and their questions
-      for (const section of sections) {
+      // Duplicate ALL sections (all languages), maintaining section_group_id links
+      // Map old section_group_id → new section_group_id
+      const groupIdMap = new Map<string, string>();
+      const sectionIdMap = new Map<string, string>(); // old section id → new section id
+
+      for (const sec of allSections) {
+        let newGroupId: string | null = null;
+        if (sec.section_group_id) {
+          if (!groupIdMap.has(sec.section_group_id)) {
+            groupIdMap.set(sec.section_group_id, crypto.randomUUID());
+          }
+          newGroupId = groupIdMap.get(sec.section_group_id)!;
+        }
+
         const { data: newSection, error: sectionError } = await supabase
           .from("sections")
           .insert({
             exam_id: newExam.id,
-            name: section.name,
-            time_minutes: section.time_minutes,
+            name: sec.name,
+            time_minutes: sec.time_minutes,
+            sort_order: sec.sort_order,
+            language: sec.language || "en",
+            section_group_id: newGroupId,
           })
           .select()
           .single();
 
         if (sectionError) throw sectionError;
+        sectionIdMap.set(sec.id, newSection.id);
+      }
 
-        // Get questions for this section
+      // Duplicate questions for all sections, maintaining question_group_id links
+      const questionGroupIdMap = new Map<string, string>();
+
+      for (const sec of allSections) {
+        const newSectionId = sectionIdMap.get(sec.id);
+        if (!newSectionId) continue;
+
         const { data: sectionQuestions, error: questionsError } = await supabase
           .from("parsed_questions")
           .select("*")
-          .eq("section_id", section.id);
+          .eq("section_id", sec.id);
 
         if (questionsError) throw questionsError;
 
-        // Duplicate questions to the new section
         if (sectionQuestions && sectionQuestions.length > 0) {
-          const newQuestions = sectionQuestions.map((q: any) => ({
-            section_id: newSection.id,
-            q_no: q.q_no,
-            text: q.text,
-            options: q.options,
-            answer_type: q.answer_type,
-            image_url: q.image_url,
-            correct_answer: q.correct_answer,
-            requires_review: q.requires_review || false,
-            is_excluded: q.is_excluded || false,
-            is_finalized: q.is_finalized || true,
-          }));
+          const newQuestions = sectionQuestions.map((q: any) => {
+            let newQuestionGroupId: string | null = null;
+            if (q.question_group_id) {
+              if (!questionGroupIdMap.has(q.question_group_id)) {
+                questionGroupIdMap.set(q.question_group_id, crypto.randomUUID());
+              }
+              newQuestionGroupId = questionGroupIdMap.get(q.question_group_id)!;
+            }
+            return {
+              section_id: newSectionId,
+              q_no: q.q_no,
+              text: q.text,
+              options: q.options,
+              answer_type: q.answer_type,
+              image_url: q.image_url,
+              image_urls: q.image_urls,
+              correct_answer: q.correct_answer,
+              requires_review: q.requires_review || false,
+              is_excluded: q.is_excluded || false,
+              is_finalized: q.is_finalized || true,
+              question_group_id: newQuestionGroupId,
+            };
+          });
 
           const { error: insertError } = await supabase
             .from("parsed_questions")
@@ -1006,7 +1114,10 @@ export default function ExamDetail() {
 
       const { data, error } = await supabase
         .from("parsed_questions")
-        .insert(newQuestion)
+        .insert({
+          ...newQuestion,
+          question_group_id: isMultiLang ? crypto.randomUUID() : null,
+        })
         .select()
         .single();
 
@@ -1018,7 +1129,7 @@ export default function ExamDetail() {
       setQuestions([...questions, data]);
 
       // Multi-language sync: create placeholder questions in other language sections
-      if (isMultiLang && section.section_group_id) {
+      if (isMultiLang && section.section_group_id && data.question_group_id) {
         const siblingGroupSections = allSections.filter(
           s => s.section_group_id === section.section_group_id && s.id !== section.id
         );
@@ -1035,13 +1146,16 @@ export default function ExamDetail() {
             .insert({
               section_id: sibSec.id,
               q_no: (count || 0) + 1,
-              text: "",  // Empty placeholder
+              text: "",  // Empty placeholder — translator fills content
               answer_type: newQuestionType,
-              options: (newQuestionType === "single" || newQuestionType === "multi") ? ["Option A", "Option B"] : null,
-              correct_answer: null,
+              options: (newQuestionType === "single" || newQuestionType === "multi")
+                ? newQuestion.options?.map(() => "") || ["", ""]  // Same count of options, empty text
+                : null,
+              correct_answer: newQuestionCorrect,  // Same correct answer (index-based works across languages)
               requires_review: true,
               is_excluded: false,
               is_finalized: false,
+              question_group_id: data.question_group_id,  // Link to primary question
             });
         }
       }
@@ -1092,24 +1206,38 @@ export default function ExamDetail() {
       if (error) throw error;
 
       // Multi-language sync: delete the corresponding question in sibling sections
-      if (isMultiLang && section?.section_group_id && qNo) {
-        const siblingGroupSections = allSections.filter(
-          s => s.section_group_id === section.section_group_id && s.id !== section.id
-        );
-
-        for (const sibSec of siblingGroupSections) {
-          // Find the question with the same q_no in the sibling section
-          const { data: sibQuestions } = await supabase
-            .from("parsed_questions")
-            .select("id")
-            .eq("section_id", sibSec.id)
-            .eq("q_no", qNo);
-
-          if (sibQuestions && sibQuestions.length > 0) {
+      if (isMultiLang && section?.section_group_id && questionToDelete) {
+        const groupId = (questionToDelete as any).question_group_id;
+        if (groupId) {
+          // Use question_group_id for reliable cross-language deletion
+          const siblingGroupSections = allSections.filter(
+            s => s.section_group_id === section.section_group_id && s.id !== section.id
+          );
+          const sibSectionIds = siblingGroupSections.map(s => s.id);
+          if (sibSectionIds.length > 0) {
             await supabase
               .from("parsed_questions")
               .delete()
-              .eq("id", sibQuestions[0].id);
+              .eq("question_group_id", groupId)
+              .in("section_id", sibSectionIds);
+          }
+        } else if (qNo) {
+          // Fallback for legacy questions without question_group_id
+          const siblingGroupSections = allSections.filter(
+            s => s.section_group_id === section.section_group_id && s.id !== section.id
+          );
+          for (const sibSec of siblingGroupSections) {
+            const { data: sibQuestions } = await supabase
+              .from("parsed_questions")
+              .select("id")
+              .eq("section_id", sibSec.id)
+              .eq("q_no", qNo);
+            if (sibQuestions && sibQuestions.length > 0) {
+              await supabase
+                .from("parsed_questions")
+                .delete()
+                .eq("id", sibQuestions[0].id);
+            }
           }
         }
       }
@@ -1152,7 +1280,8 @@ export default function ExamDetail() {
         correct_answer: q.correct_answer,
         requires_review: q.requires_review,
         is_excluded: q.is_excluded,
-        is_finalized: q.is_finalized
+        is_finalized: q.is_finalized,
+        question_group_id: q.question_group_id,
       }));
 
       const { error } = await supabase.from('parsed_questions').upsert(updates);
@@ -1186,8 +1315,51 @@ export default function ExamDetail() {
         }));
 
         saveQuestionOrder(updatedItems);
+
+        // Multi-language sync: reorder questions in sibling sections
+        if (isMultiLang && section?.section_group_id) {
+          syncQuestionReorderToSiblings(items, oldIndex, newIndex);
+        }
+
         return updatedItems;
       });
+    }
+  };
+
+  // Sync question reorder to sibling language sections
+  const syncQuestionReorderToSiblings = async (currentItems: Question[], oldIndex: number, newIndex: number) => {
+    if (!section?.section_group_id) return;
+    try {
+      const siblingGroupSections = allSections.filter(
+        s => s.section_group_id === section.section_group_id && s.id !== section.id
+      );
+
+      for (const sibSec of siblingGroupSections) {
+        // Fetch sibling questions ordered by q_no
+        const { data: sibQuestions } = await supabase
+          .from("parsed_questions")
+          .select("id, q_no")
+          .eq("section_id", sibSec.id)
+          .order("q_no", { ascending: true });
+
+        if (sibQuestions && sibQuestions.length > 0) {
+          // Apply the same reorder
+          const reorderedSibQuestions = arrayMove(sibQuestions, oldIndex, newIndex);
+          const updates = reorderedSibQuestions.map((q, idx) => ({
+            id: q.id,
+            q_no: idx + 1,
+          }));
+
+          for (const upd of updates) {
+            await supabase
+              .from("parsed_questions")
+              .update({ q_no: upd.q_no })
+              .eq("id", upd.id);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error syncing question reorder to siblings:", err);
     }
   };
 
@@ -1389,13 +1561,23 @@ export default function ExamDetail() {
         text: (questionFormat === "passage" && (passageText || passageImage))
           ? `<div class="passage-section">${passageImage ? `<img src="${passageImage}" class="passage-image mb-4 w-full h-auto rounded-lg" />` : ""}${passageText}</div><div class="question-section">${newQuestionText || ""}</div>`
           : (newQuestionText || ""),
-        answer_type: newQuestionType,
         image_urls: newQuestionImages, // Updated
-        correct_answer: newQuestionCorrect,
       };
 
+      // Only save structural fields when editing in primary language
+      if (!isMultiLang || isPrimaryLanguage) {
+        updateData.answer_type = newQuestionType;
+        updateData.correct_answer = newQuestionCorrect;
+      }
+
       if (newQuestionType === "single" || newQuestionType === "multi") {
-        updateData.options = newQuestionOptions.filter(opt => opt.trim() !== "");
+        if (!isMultiLang || isPrimaryLanguage) {
+          // Primary: save full options (structural change)
+          updateData.options = newQuestionOptions.filter(opt => opt.trim() !== "");
+        } else {
+          // Secondary: save option TEXT only (same count, translated content)
+          updateData.options = newQuestionOptions;
+        }
       }
 
       const { data, error } = await supabase
@@ -1829,23 +2011,69 @@ export default function ExamDetail() {
             <Save className="h-4 w-4" />
           </Button>
 
-          <Button 
-            onClick={() => { setPublishAction({ isPublishing: !exam?.is_published }); setShowPublishDialog(true); }} 
-            className="hidden sm:flex"
-            variant={exam?.is_published ? "outline" : "default"}
-            size="sm"
-          >
-            <Globe className="mr-2 h-4 w-4" />
-            {exam?.is_published ? "Unpublish" : "Publish"}
-          </Button>
-          <Button 
-            onClick={() => { setPublishAction({ isPublishing: !exam?.is_published }); setShowPublishDialog(true); }} 
-            className="sm:hidden"
-            variant={exam?.is_published ? "outline" : "default"}
-            size="icon"
-          >
-            <Globe className="h-4 w-4" />
-          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="hidden sm:inline-flex">
+                  <Button
+                    onClick={() => {
+                      if (isMultiLang && !isPrimaryLanguage) {
+                        toast({
+                          title: "Marks are managed in the primary language",
+                          description: `Switch to ${AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage} to configure marks.`,
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      setShowMarksSheet(true);
+                    }}
+                    disabled={exam?.is_published}
+                    variant={isMultiLang && !isPrimaryLanguage ? "outline" : "default"}
+                    size="sm"
+                  >
+                    <Scale className="mr-2 h-4 w-4" />
+                    Marks
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {exam?.is_published && (
+                <TooltipContent side="bottom">
+                  Unpublish the exam to edit marks
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="sm:hidden inline-flex">
+                  <Button
+                    onClick={() => {
+                      if (isMultiLang && !isPrimaryLanguage) {
+                        toast({
+                          title: "Marks are managed in the primary language",
+                          description: `Switch to ${AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage} to configure marks.`,
+                          variant: "default",
+                        });
+                        return;
+                      }
+                      setShowMarksSheet(true);
+                    }}
+                    disabled={exam?.is_published}
+                    variant={isMultiLang && !isPrimaryLanguage ? "outline" : "default"}
+                    size="icon"
+                  >
+                    <Scale className="h-4 w-4" />
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {exam?.is_published && (
+                <TooltipContent side="bottom">
+                  Unpublish the exam to edit marks
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1854,6 +2082,10 @@ export default function ExamDetail() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => { setPublishAction({ isPublishing: !exam?.is_published }); setShowPublishDialog(true); }}>
+                <Globe className="mr-2 h-4 w-4" />
+                {exam?.is_published ? "Unpublish" : "Publish"}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate(`/analytics?examId=${examId}&from=edit`)}>
                 <BarChart className="mr-2 h-4 w-4" />
                 Analytics
@@ -1888,20 +2120,41 @@ export default function ExamDetail() {
                   <button
                     key={langCode}
                     onClick={() => handleLanguageSwitch(langCode)}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1 ${
                       activeLanguage === langCode
                         ? "bg-white text-primary shadow-sm"
                         : "text-muted-foreground hover:text-foreground hover:bg-white/50"
                     }`}
                   >
                     {langInfo?.label || langCode}
-                    {langInfo?.nativeLabel && langInfo.nativeLabel !== langInfo.label && (
+                    {langCode === primaryLanguage && (
+                      <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 px-1 py-0.5 rounded ml-1">Primary</span>
+                    )}
+                    {langInfo?.nativeLabel && langInfo.nativeLabel !== langInfo.label && langCode !== primaryLanguage && (
                       <span className="ml-1 text-xs opacity-60">({langInfo.nativeLabel})</span>
                     )}
                   </button>
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Secondary Language Info Banner */}
+      {isMultiLang && !isPrimaryLanguage && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-3">
+          <div className="container mx-auto max-w-[1600px] flex items-center gap-3">
+            <Lock className="h-4 w-4 text-amber-600 shrink-0" />
+            <p className="text-sm text-amber-800">
+              <span className="font-semibold">Secondary language view.</span> You can edit question text, option text, and images. To change question structure, correct answers, or marks,{" "}
+              <button
+                className="underline font-semibold text-amber-900 hover:text-amber-700"
+                onClick={() => handleLanguageSwitch(primaryLanguage)}
+              >
+                switch to {AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage} (Primary)
+              </button>.
+            </p>
           </div>
         </div>
       )}
@@ -2136,12 +2389,22 @@ export default function ExamDetail() {
                     >
                       {questions.map((q, idx) => {
                         const isExpanded = expandedQuestionId === q.id;
+                        const questionErrors = getQuestionErrors(q);
+                        const hasError = questionErrors.length > 0;
                         return (
-                          <SortableQuestionItem key={q.id} id={q.id}>
-                            <div className="border rounded-lg bg-white">
+                          <SortableQuestionItem key={q.id} id={q.id} disabled={isMultiLang && !isPrimaryLanguage}>
+                            <div className={`border rounded-lg bg-white transition-colors ${hasError ? 'border-red-300' : ''}`}>
                               <div className="flex items-start gap-4 p-4 group">
-                                <div className="flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
+                                <div className="relative flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
                                   {idx + 1}
+                                  {hasError && (
+                                    <span
+                                      className="absolute -top-1.5 -right-1.5 flex items-center justify-center"
+                                      title="This question has issues: missing text, options, or correct answer"
+                                    >
+                                      <AlertCircle className="h-4 w-4 text-red-500 fill-white" />
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex-1 space-y-2 min-w-0">
                                   {q.image_url && (
@@ -2161,6 +2424,41 @@ export default function ExamDetail() {
                                     <p className="font-medium">Question with image</p>
                                   )}
                                   <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
+                                  {hasError && (
+                                    <p className="text-xs text-red-500 font-medium">{questionErrors[0]}</p>
+                                  )}
+                                </div>
+                                {/* Marks Schema Badge */}
+                                <div
+                                  className="flex items-center gap-1.5 shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                  title="Click to edit marks for this question"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (exam?.is_published) {
+                                      toast({
+                                        title: "Cannot Edit Marks",
+                                        description: "Unpublish the exam to edit marks.",
+                                        variant: "destructive",
+                                      });
+                                      return;
+                                    }
+                                    if (isMultiLang && !isPrimaryLanguage) {
+                                      toast({
+                                        title: "Marks are managed in the primary language",
+                                        description: `Switch to ${AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage} to configure marks.`,
+                                        variant: "destructive",
+                                      });
+                                      return;
+                                    }
+                                    setMarksDeepLinkQuestionId(q.id);
+                                    setMarksDeepLinkSectionId(section?.id);
+                                    setShowMarksSheet(true);
+                                  }}
+                                >
+                                  <MarksQuestionBadge config={marksResolvedConfigs.get(q.id) ?? null} size="sm" />
+                                  {marksResolvedConfigs.get(q.id) && (
+                                    <Edit className="h-3 w-3 text-muted-foreground/40 group-hover:text-purple-500 transition-colors shrink-0" />
+                                  )}
                                 </div>
                                 <div className="flex gap-2">
                                   <Button
@@ -2182,14 +2480,16 @@ export default function ExamDetail() {
                                   >
                                     <Edit className="h-4 w-4" />
                                   </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="text-destructive opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
-                                    onClick={() => handleDeleteQuestionClick(q.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
+                                  {(!isMultiLang || isPrimaryLanguage) && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-destructive opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                                      onClick={() => handleDeleteQuestionClick(q.id)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
 
@@ -2260,15 +2560,74 @@ export default function ExamDetail() {
                                     <div className="p-3 bg-green-50 border border-green-200 rounded-md">
                                       {Array.isArray(q.correct_answer) ? (
                                         <div className="space-y-1">
-                                          {q.correct_answer.map((ans: string, ansIdx: number) => (
-                                            <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
-                                          ))}
+                                          {q.correct_answer.map((ans: string, ansIdx: number) => {
+                                            const idx = Number(ans);
+                                            const resolved = !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
+                                              ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
+                                              : ans;
+                                            return (
+                                              <div key={ansIdx} className="text-sm font-medium text-green-700">{"\u2022"} {resolved}</div>
+                                            );
+                                          })}
                                         </div>
                                       ) : (
-                                        <p className="text-sm font-medium text-green-700">{q.correct_answer || "Not specified"}</p>
+                                        <p className="text-sm font-medium text-green-700">
+                                          {q.correct_answer !== null && q.correct_answer !== undefined && q.correct_answer !== ""
+                                            ? (() => { const idx = Number(q.correct_answer); return !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
+                                              ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
+                                              : q.correct_answer; })()
+                                            : "Not specified"}
+                                        </p>
                                       )}
                                     </div>
                                   </div>
+
+                                  {/* Marking Schema */}
+                                  {(() => {
+                                    const resolvedConfig = marksResolvedConfigs.get(q.id);
+                                    if (!resolvedConfig) return null;
+                                    return (
+                                      <div>
+                                        <Label className="mb-2 block font-semibold">Marking Schema</Label>
+                                        <div className="p-3 bg-purple-50 border border-purple-200 rounded-md">
+                                          <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-4">
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="text-xs font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 tabular-nums">+{formatMarks(resolvedConfig.marks_correct)}</span>
+                                                <span className="text-xs text-muted-foreground">Correct</span>
+                                              </div>
+                                              <div className="flex items-center gap-1.5">
+                                                <span className={`text-xs font-bold text-white rounded-full px-2 py-0.5 tabular-nums ${resolvedConfig.marks_wrong > 0 ? 'bg-red-500' : 'bg-muted text-muted-foreground'}`}>−{formatMarks(resolvedConfig.marks_wrong)}</span>
+                                                <span className="text-xs text-muted-foreground">Wrong</span>
+                                              </div>
+                                              {resolvedConfig.marks_skipped > 0 && (
+                                                <div className="flex items-center gap-1.5">
+                                                  <span className="text-xs font-bold text-white bg-gray-400 rounded-full px-2 py-0.5 tabular-nums">−{formatMarks(resolvedConfig.marks_skipped)}</span>
+                                                  <span className="text-xs text-muted-foreground">Skipped</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                            {!exam?.is_published && isPrimaryLanguage && (
+                                              <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-100 h-7 px-2"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setMarksDeepLinkQuestionId(q.id);
+                                                  setMarksDeepLinkSectionId(section?.id);
+                                                  setShowMarksSheet(true);
+                                                }}
+                                              >
+                                                <Edit className="h-3 w-3 mr-1" />
+                                                Edit Marks
+                                              </Button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               )}
                             </div>
@@ -2282,7 +2641,30 @@ export default function ExamDetail() {
             )}
           </Card>
 
-          {/* Add Question Form */}
+          {/* Add/Edit Question Form */}
+          {isMultiLang && !isPrimaryLanguage && !editingQuestionId ? (
+            /* Secondary Language: Lock the Add Question card */
+            <Card>
+              <CardContent className="py-12">
+                <div className="text-center space-y-3">
+                  <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto">
+                    <Lock className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-lg font-semibold">Questions Can Only Be Added in the Primary Language</h3>
+                  <p className="text-muted-foreground max-w-md mx-auto text-sm">
+                    New questions must be created in {AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage}. They will automatically appear here for translation.
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => handleLanguageSwitch(primaryLanguage)}
+                  >
+                    Switch to {AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage} (Primary)
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
           <Card ref={questionFormRef}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
               <CardTitle>{editingQuestionId ? "Edit Question" : "Add Question"}</CardTitle>
@@ -2451,6 +2833,7 @@ export default function ExamDetail() {
                       showImageUpload={true}
                       isEditing={!!editingQuestionId}
                       lang={activeLanguage}
+                      lockStructure={isMultiLang && !isPrimaryLanguage && !!editingQuestionId}
                     />
                   </div>
                 </TabsContent>
@@ -2576,7 +2959,7 @@ export default function ExamDetail() {
                                   {Array.isArray(q.correct_answer) ? (
                                     <div className="space-y-1">
                                       {q.correct_answer.map((ans: string, ansIdx: number) => (
-                                        <div key={ansIdx} className="text-sm font-medium text-green-700">\u2022 {ans}</div>
+                                        <div key={ansIdx} className="text-sm font-medium text-green-700">{"\u2022"} {ans}</div>
                                       ))}
                                     </div>
                                   ) : (
@@ -2615,6 +2998,7 @@ export default function ExamDetail() {
               </Tabs>
             </CardContent>
           </Card>
+          )}
         </div>
           </div>
         </div>
@@ -2768,8 +3152,70 @@ export default function ExamDetail() {
           onSuccess={(isPublishing, publishedLangs) => {
             setExam(prev => prev ? { ...prev, is_published: isPublishing, published_languages: publishedLangs } as any : null);
           }}
+          onNavigateToQuestion={async (sectionId, qNo) => {
+            setShowPublishDialog(false);
+
+            // Find target section across ALL languages
+            const targetSection = allSections.find(s => s.id === sectionId);
+            if (!targetSection) return;
+
+            // Switch language if the error is in a different language than currently active
+            const targetLang = targetSection.language || "en";
+            if (targetLang !== activeLanguage) {
+              setActiveLanguage(targetLang);
+              const langSections = allSections
+                .filter(s => s.language === targetLang)
+                .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+              setSections(langSections);
+            }
+
+            // Switch to the target section
+            setSection(targetSection);
+
+            // Fetch questions for that section directly (state is async, can't rely on it)
+            const { data: questionsData } = await supabase
+              .from("parsed_questions")
+              .select("*")
+              .eq("section_id", sectionId)
+              .order("q_no", { ascending: true });
+
+            if (!questionsData) return;
+            setQuestions(questionsData);
+
+            const target = questionsData.find((q: any) => q.q_no === qNo);
+            if (!target) return;
+
+            setTimeout(() => {
+              const el = document.getElementById(target.id);
+              if (!el) return;
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
+              el.classList.add("ring-2", "ring-offset-2", "ring-red-400", "transition-shadow");
+              setTimeout(() => el.classList.remove("ring-2", "ring-offset-2", "ring-red-400", "transition-shadow"), 3000);
+            }, 300);
+          }}
         />
       )}
+
+      {/* Marks Config Sheet */}
+      <Sheet open={showMarksSheet} onOpenChange={(open) => {
+        setShowMarksSheet(open);
+        if (!open) {
+          // Clear deep-link state when sheet closes
+          setMarksDeepLinkQuestionId(undefined);
+          setMarksDeepLinkSectionId(undefined);
+        }
+      }}>
+        <SheetContent side="right" className="w-full max-w-lg sm:max-w-xl p-0 overflow-hidden">
+          {examId && (
+            <MarksConfigPanel
+              examId={examId}
+              onClose={() => setShowMarksSheet(false)}
+              initialQuestionId={marksDeepLinkQuestionId}
+              initialSectionId={marksDeepLinkSectionId}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

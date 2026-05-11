@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Shield, ChevronRight, ArrowUp } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import SEO from "@/components/SEO";
 
 const EFFECTIVE_DATE = "30 March 2025";
 const CONTACT_EMAIL = "privacy@mocksetu.in";
@@ -79,6 +80,11 @@ const PrivacyPolicy = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <SEO
+        title="Privacy Policy | MockSetu"
+        description="Read MockSetu's privacy policy — how we collect, use, and protect student and creator data on our free mock test and exam simulator platform."
+        path="/privacy-policy"
+      />
       <Navbar />
 
       {/* Hero */}

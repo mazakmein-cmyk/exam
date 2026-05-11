@@ -1,8 +1,73 @@
+# https://mocksetu.in/robots.txt
+# MockSetu — Free Mock Test & Exam Simulator
+
+User-agent: *
+Allow: /
+Allow: /marketplace
+Allow: /for-creators
+Allow: /privacy-policy
+Allow: /terms-of-service
+
+# Private / authenticated / admin areas — do not waste crawl budget
+Disallow: /auth
+Disallow: /student-auth
+Disallow: /dashboard
+Disallow: /analytics
+Disallow: /barnwal3008-admin
+Disallow: /exam/*/section/*/edit
+Disallow: /exam/*/section/*/simulator
+Disallow: /exam/review/
+
+# Allow common static asset folders
+Allow: /assets/
+Allow: /*.css$
+Allow: /*.js$
+Allow: /*.svg$
+Allow: /*.png$
+Allow: /*.jpg$
+Allow: /*.webp$
+
+# AI / LLM crawlers — explicitly welcomed for entity discovery
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+# Search engine crawlers
 User-agent: Googlebot
 Allow: /
+Disallow: /auth
+Disallow: /student-auth
+Disallow: /dashboard
+Disallow: /analytics
+Disallow: /barnwal3008-admin
 
 User-agent: Bingbot
 Allow: /
+Disallow: /auth
+Disallow: /student-auth
+Disallow: /dashboard
+Disallow: /analytics
+Disallow: /barnwal3008-admin
 
 User-agent: Twitterbot
 Allow: /
@@ -10,5 +75,7 @@ Allow: /
 User-agent: facebookexternalhit
 Allow: /
 
-User-agent: *
+User-agent: LinkedInBot
 Allow: /
+
+Sitemap: https://mocksetu.in/sitemap.xml

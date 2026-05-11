@@ -150,5 +150,128 @@ export const saveExamAttempt = async ({
         if (insertError) throw insertError;
     }
 
+    // ── MARKS MODULE: Non-fatal additive scoring ──
+    // Does not affect existing `score` column. Writes to `marks_score`, `marks_max`, and `question_marks_log`.
+    // KEY: For multi-language exams, scoring config is set on the PRIMARY language's sections/questions.
+    // We resolve to primary IDs here so Hindi (or any secondary) students get the correct marks config.
+    try {
+        const { getQuestionScoringConfigs, getSectionScoringDefaults, getExamScoringDefault,
+                getExamIdForSection, saveMarksLog, updateAttemptMarks } = await import('./scoringService');
+        const { calculateMarks } = await import('./scoringEngine');
+
+        const examIdForMarks = await getExamIdForSection(sectionId);
+        if (examIdForMarks) {
+            // Resolve primary language section and question IDs for scoring config lookup
+            let configSectionId = sectionId;
+            let configQuestionIds = questionIds;
+            // Map: current question ID → config question ID (primary's question ID)
+            let questionIdToConfigId = new Map<string, string>();
+            questionIds.forEach(id => questionIdToConfigId.set(id, id)); // default: self
+
+            try {
+                // Check if this section belongs to a multi-language exam with a primary language
+                const { data: currentSection } = await supabase
+                    .from("sections")
+                    .select("section_group_id, language")
+                    .eq("id", sectionId)
+                    .single();
+
+                const { data: examForLang } = await supabase
+                    .from("exams")
+                    .select("primary_language")
+                    .eq("id", examIdForMarks)
+                    .single();
+
+                const primaryLang = examForLang?.primary_language;
+
+                if (primaryLang && currentSection?.language && currentSection.language !== primaryLang && currentSection.section_group_id) {
+                    // This is a SECONDARY language submission — resolve to primary section
+                    const { data: primarySection } = await supabase
+                        .from("sections")
+                        .select("id")
+                        .eq("section_group_id", currentSection.section_group_id)
+                        .eq("language", primaryLang)
+                        .single();
+
+                    if (primarySection) {
+                        configSectionId = primarySection.id;
+
+                        // Resolve primary question IDs via question_group_id
+                        const { data: currentQuestions } = await supabase
+                            .from("parsed_questions")
+                            .select("id, question_group_id")
+                            .in("id", questionIds);
+
+                        const groupIds = (currentQuestions || [])
+                            .map(q => q.question_group_id)
+                            .filter(Boolean) as string[];
+
+                        if (groupIds.length > 0) {
+                            const { data: primaryQuestions } = await supabase
+                                .from("parsed_questions")
+                                .select("id, question_group_id")
+                                .eq("section_id", primarySection.id)
+                                .in("question_group_id", groupIds);
+
+                            if (primaryQuestions && primaryQuestions.length > 0) {
+                                // Build mapping: current question's group → primary question ID
+                                const groupToPrimary = new Map(primaryQuestions.map(pq => [pq.question_group_id, pq.id]));
+                                configQuestionIds = [];
+                                for (const cq of (currentQuestions || [])) {
+                                    const primaryId = cq.question_group_id ? groupToPrimary.get(cq.question_group_id) : undefined;
+                                    if (primaryId) {
+                                        questionIdToConfigId.set(cq.id, primaryId);
+                                        configQuestionIds.push(primaryId);
+                                    } else {
+                                        configQuestionIds.push(cq.id); // fallback to self
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (resolveErr) {
+                // Non-fatal: if resolution fails, fall back to current section/question IDs
+                console.warn('[Marks] Primary language resolution failed, using current IDs:', resolveErr);
+            }
+
+            const [qConfigs, sConfigs, eConfig] = await Promise.all([
+                getQuestionScoringConfigs(configQuestionIds),
+                getSectionScoringDefaults([configSectionId]),
+                getExamScoringDefault(examIdForMarks),
+            ]);
+
+            if (qConfigs.size > 0 || sConfigs.size > 0 || eConfig) {
+                // Build questions array using the CONFIG IDs for scoring lookup
+                // but keep the actual question data (answer_type, correct_answer) from the submitted questions
+                const questionsForMarks = (questionData || []).map(q => ({
+                    id: questionIdToConfigId.get(q.id) || q.id, // Use primary question ID for config lookup
+                    section_id: configSectionId,  // Use primary section ID for config lookup
+                    answer_type: (q as any).answer_type || 'single',
+                    correct_answer: q.correct_answer,
+                }));
+                const { total, max, perQuestion } = calculateMarks(
+                    questionsForMarks, questionStates, qConfigs, sConfigs, eConfig
+                );
+
+                // Remap perQuestion keys back to current question IDs for logging
+                const remappedPerQuestion: typeof perQuestion = [];
+                const configToCurrentId = new Map<string, string>();
+                questionIdToConfigId.forEach((configId, currentId) => configToCurrentId.set(configId, currentId));
+                for (const entry of perQuestion) {
+                    remappedPerQuestion.push({
+                        ...entry,
+                        questionId: configToCurrentId.get(entry.questionId) || entry.questionId,
+                    });
+                }
+
+                await saveMarksLog(finalAttemptId!, remappedPerQuestion);
+                await updateAttemptMarks(finalAttemptId!, total, max);
+            }
+        }
+    } catch (marksErr) {
+        console.warn('[Marks] Non-fatal scoring error:', marksErr);
+    }
+
     return finalAttemptId;
 };

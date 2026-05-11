@@ -8,6 +8,7 @@ import { LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, BarCh
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
+import SEO from "@/components/SEO";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -517,6 +518,12 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <SEO
+        title="Creator Dashboard | MockSetu"
+        description="Manage your published mock tests and exam content on MockSetu."
+        path="/dashboard"
+        noindex
+      />
       <nav className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
         <div className="container mx-auto max-w-7xl px-6">
           <div className="flex h-16 items-center justify-between">

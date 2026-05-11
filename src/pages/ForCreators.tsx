@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import SEO from "@/components/SEO";
 
 /* ═══════════════════════════════════════════════
    SECTION: Animated observe-on-scroll wrapper
@@ -195,6 +196,21 @@ const ForCreators = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <SEO
+        title="For Educators & Creators — Publish Mock Tests Free | MockSetu"
+        description="Turn any exam PDF into a full timed online mock test in minutes. MockSetu lets coaching institutes, educators, and creators publish JEE, NEET, CAT, GATE, and UPSC mocks free, with analytics and instant scoring."
+        path="/for-creators"
+        keywords="publish mock test, online test creator, exam authoring platform, mock test for coaching, online assessment platform, test maker, MCQ test creator, exam PDF to online test"
+        jsonLd={{
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          "name": "MockSetu for Educators & Creators",
+          "url": "https://mocksetu.in/for-creators",
+          "description": "Free authoring platform for educators to publish timed mock tests from any exam PDF with built-in analytics.",
+          "audience": { "@type": "EducationalAudience", "audienceType": "Educator" },
+          "isPartOf": { "@id": "https://mocksetu.in/#website" }
+        }}
+      />
       <Navbar navButtonLabel="Student Home" navButtonLink="/" />
 
       {/* ════════════════════════════════════════

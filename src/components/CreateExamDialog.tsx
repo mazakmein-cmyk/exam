@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TransliterateInput } from "@/components/TransliterateInput";
 import { TransliterateTextarea } from "@/components/TransliterateTextarea";
-import { Plus, X, Upload, Globe } from "lucide-react";
+import { Plus, X, Upload, Globe, Crown, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
@@ -36,6 +37,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
   const [examInstruction, setExamInstruction] = useState("");
   const [examCategory, setExamCategory] = useState<string>("");
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["en"]);
+  const [primaryLanguage, setPrimaryLanguage] = useState<string>("en");
   const [sections, setSections] = useState<Section[]>([]);
   const [newSectionName, setNewSectionName] = useState("");
   const [newSectionTime, setNewSectionTime] = useState("");
@@ -55,7 +57,12 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           });
           return prev;
         }
-        return prev.filter((l) => l !== langCode);
+        const updated = prev.filter((l) => l !== langCode);
+        // If the removed language was primary, reassign primary to first remaining
+        if (primaryLanguage === langCode) {
+          setPrimaryLanguage(updated[0]);
+        }
+        return updated;
       }
       return [...prev, langCode];
     });
@@ -142,6 +149,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           instruction_translations: examInstruction ? { en: examInstruction } : {},
           exam_category: examCategory || null,
           supported_languages: selectedLanguages,
+          primary_language: primaryLanguage,
         })
         .select()
         .single();
@@ -220,6 +228,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       setExamDescription("");
       setExamInstruction("");
       setSelectedLanguages(["en"]);
+      setPrimaryLanguage("en");
       setSections([]);
       setUploadingPdf(false);
       onOpenChange(false);
@@ -313,6 +322,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
         instruction_translations: examInstruction ? { en: examInstruction } : {},
         exam_category: examCategory || null,
         supported_languages: selectedLanguages,
+        primary_language: primaryLanguage,
       })
       .select()
       .single();
@@ -369,6 +379,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
     setExamDescription("");
     setExamInstruction("");
     setSelectedLanguages(["en"]);
+    setPrimaryLanguage("en");
     setSections([]);
     setLoading(false);
     onOpenChange(false);
@@ -470,12 +481,53 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                   ))}
                 </div>
                 {selectedLanguages.length > 1 && (
-                  <div className="flex items-center gap-2 p-2.5 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
-                    <Globe className="h-4 w-4 text-blue-600 shrink-0" />
-                    <p className="text-xs text-blue-700 dark:text-blue-300">
-                      Multi-language exam — you'll be able to create content in each language from the Edit Exam page using the language switcher.
-                    </p>
-                  </div>
+                  <>
+                    {/* Primary Language Selector */}
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800 space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <Crown className="h-4 w-4 text-amber-600 shrink-0" />
+                        <span className="text-sm font-medium text-amber-800 dark:text-amber-200">Select Primary Language</span>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-3.5 w-3.5 text-amber-500 cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              The primary language controls question structure, correct answers, and scoring. Other languages only need translated content.
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedLanguages.map((langCode) => {
+                          const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === langCode);
+                          const isSelected = primaryLanguage === langCode;
+                          return (
+                            <button
+                              key={langCode}
+                              type="button"
+                              onClick={() => setPrimaryLanguage(langCode)}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                isSelected
+                                  ? "bg-amber-600 text-white shadow-sm"
+                                  : "bg-white dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50"
+                              }`}
+                            >
+                              {isSelected && <Crown className="h-3 w-3" />}
+                              {langInfo?.label || langCode}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 p-2.5 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+                      <Globe className="h-4 w-4 text-blue-600 shrink-0" />
+                      <p className="text-xs text-blue-700 dark:text-blue-300">
+                        Multi-language exam — you'll be able to create content in each language from the Edit Exam page using the language switcher.
+                      </p>
+                    </div>
+                  </>
                 )}
               </div>
             </div>

@@ -9,6 +9,9 @@ import { ArrowLeft, Clock, CheckCircle2, XCircle, Circle, Upload, ChevronDown, C
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { ExamMarksSummary } from "@/components/marks/ExamMarksSummary";
+import { MarksAwardedBadge } from "@/components/marks/MarksAwardedBadge";
+import { formatDuration } from "@/lib/utils";
 
 interface Response {
   id: string;
@@ -58,6 +61,10 @@ export default function ExamReview() {
   // Expand/collapse state for sections and questions
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [expandedQuestions, setExpandedQuestions] = useState<Record<string, boolean>>({});
+
+  // Marks module state
+  const [marksLog, setMarksLog] = useState<Map<string, number>>(new Map());
+  const [totalMarks, setTotalMarks] = useState<{score: number | null, max: number | null}>({score: null, max: null});
 
   useEffect(() => {
     fetchReviewData();
@@ -366,6 +373,21 @@ export default function ExamReview() {
         // Non-critical: don't block the page if ranking fails
       }
 
+      // ── Marks Module: Fetch marks log ──
+      try {
+        const { getAttemptMarksLog } = await import('@/services/scoringService');
+        const log = await getAttemptMarksLog(selectedAttemptIds);
+        if (log.size > 0) {
+          setMarksLog(log);
+          const totalAwarded = Array.from(log.values()).reduce((a, b) => a + b, 0);
+          // Get marks_max from the attempts
+          const maxSum = selectedAttempts.reduce((sum: number, a: any) => sum + (Number(a.marks_max) || 0), 0);
+          setTotalMarks({ score: Math.round(totalAwarded * 100) / 100, max: maxSum > 0 ? maxSum : null });
+        }
+      } catch (marksErr) {
+        // Non-fatal
+      }
+
     } catch (error: any) {
       console.error("Error fetching review data:", error);
       toast({
@@ -442,7 +464,22 @@ export default function ExamReview() {
     return response.is_correct ? "Correct" : "Wrong";
   };
 
-  const formatAnswer = (answer: any, answerType: string) => {
+  // Helper to check if a value is an index (numeric string or number)
+  const isIndexValue = (val: any): boolean => {
+    if (val === null || val === undefined || val === "") return false;
+    return !isNaN(Number(val)) && String(val).trim() !== "";
+  };
+
+  // Resolve an answer to display text — handles both index-based and text-based formats
+  const resolveAnswerToText = (answer: any, options?: any[]): string => {
+    if (answer === null || answer === undefined || answer === "") return "Not answered";
+    if (isIndexValue(answer) && options && options[Number(answer)]) {
+      return `${String.fromCharCode(65 + Number(answer))}. ${options[Number(answer)]}`;
+    }
+    return String(answer);
+  };
+
+  const formatAnswer = (answer: any, answerType: string, options?: any[]) => {
     if (!answer) return "Not answered";
     if (
       answerType === "single" ||
@@ -451,7 +488,10 @@ export default function ExamReview() {
       answerType === "multiple_choice" ||
       answerType === "true_false"
     ) {
-      return Array.isArray(answer) ? answer.join(", ") : answer;
+      if (Array.isArray(answer)) {
+        return answer.map(a => resolveAnswerToText(a, options)).join(", ");
+      }
+      return resolveAnswerToText(answer, options);
     }
     return String(answer);
   };
@@ -476,7 +516,7 @@ export default function ExamReview() {
     return acc;
   }, {});
 
-  // Render options with highlighting
+  // Render options with highlighting (handles both index-based and text-based answers)
   const renderOptions = (response: Response) => {
     const { options, answer_type, correct_answer } = response.question;
     const selectedAnswer = response.selected_answer;
@@ -486,15 +526,19 @@ export default function ExamReview() {
     }
 
     const isMultiple = answer_type === "multi" || answer_type === "multiple";
-    const selectedArray = isMultiple && Array.isArray(selectedAnswer) ? selectedAnswer : [selectedAnswer];
-    const correctArray = isMultiple && Array.isArray(correct_answer) ? correct_answer : [correct_answer];
+    
+    // Normalize selected and correct to arrays of strings for comparison
+    const rawSelected = isMultiple && Array.isArray(selectedAnswer) ? selectedAnswer : [selectedAnswer];
+    const rawCorrect = isMultiple && Array.isArray(correct_answer) ? correct_answer : [correct_answer];
 
     return (
       <div className="space-y-2 mt-4">
         <p className="font-semibold text-sm text-muted-foreground">Options:</p>
         {options.map((option: string, idx: number) => {
-          const isSelected = selectedArray.includes(option);
-          const isCorrect = correctArray.includes(option);
+          const idxStr = String(idx);
+          // Check if selected/correct by index OR by text (backward compatibility)
+          const isSelected = rawSelected.some(s => String(s) === idxStr || String(s) === option);
+          const isCorrect = rawCorrect.some(c => String(c) === idxStr || String(c) === option);
 
           let bgClass = "bg-background";
           let borderClass = "border-border";
@@ -653,16 +697,17 @@ export default function ExamReview() {
               <div>
                 <p className="text-sm text-muted-foreground">Avg Time/Question</p>
                 <p className="text-2xl font-bold">
-                  {Math.round(stats.avg_time_per_question)}s
+                  {formatDuration(Math.round(stats.avg_time_per_question))}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Time</p>
                 <p className="text-2xl font-bold">
-                  {Math.floor(stats.time_spent_seconds / 60)}m {stats.time_spent_seconds % 60}s
+                  {formatDuration(stats.time_spent_seconds)}
                 </p>
               </div>
             </div>
+              <ExamMarksSummary marksScore={totalMarks.score} marksMax={totalMarks.max} />
           </Card>
         )}
 
@@ -696,7 +741,7 @@ export default function ExamReview() {
                     <div className="flex items-center text-sm text-muted-foreground ml-2 px-2 py-0.5 bg-muted rounded-md border">
                       <Clock className="w-3 h-3 mr-1.5" />
                       <span className="font-medium">
-                        {Math.floor(sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0) / 60)}m {sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0) % 60}s
+                        {formatDuration(sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0))}
                       </span>
                       <span className="mx-1 text-muted-foreground/50">/</span>
                       <span>{section.time_minutes}m</span>
@@ -741,8 +786,11 @@ export default function ExamReview() {
                               </Badge>
                             </div>
                             <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              {marksLog.has(response.question_id) && (
+                                <MarksAwardedBadge marksAwarded={marksLog.get(response.question_id)!} />
+                              )}
                               <Clock className="w-4 h-4" />
-                              {response.time_spent_seconds}s
+                              {formatDuration(response.time_spent_seconds)}
                             </div>
                           </div>
 
@@ -843,7 +891,7 @@ export default function ExamReview() {
                                           <div>
                                             <span className="font-semibold">Your Answer: </span>
                                             <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
-                                              {formatAnswer(response.selected_answer, response.question.answer_type)}
+                                              {formatAnswer(response.selected_answer, response.question.answer_type, response.question.options)}
                                             </span>
                                           </div>
 
@@ -851,7 +899,7 @@ export default function ExamReview() {
                                             <div>
                                               <span className="font-semibold">Correct Answer: </span>
                                               <span className="text-green-600 font-medium">
-                                                {formatAnswer(response.question.correct_answer, response.question.answer_type)}
+                                                {formatAnswer(response.question.correct_answer, response.question.answer_type, response.question.options)}
                                               </span>
                                             </div>
                                           )}
@@ -908,7 +956,7 @@ export default function ExamReview() {
                                       <div>
                                         <span className="font-semibold">Your Answer: </span>
                                         <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
-                                          {formatAnswer(response.selected_answer, response.question.answer_type)}
+                                          {formatAnswer(response.selected_answer, response.question.answer_type, response.question.options)}
                                         </span>
                                       </div>
 
@@ -916,7 +964,7 @@ export default function ExamReview() {
                                         <div>
                                           <span className="font-semibold">Correct Answer: </span>
                                           <span className="text-green-600 font-medium">
-                                            {formatAnswer(response.question.correct_answer, response.question.answer_type)}
+                                            {formatAnswer(response.question.correct_answer, response.question.answer_type, response.question.options)}
                                           </span>
                                         </div>
                                       )}

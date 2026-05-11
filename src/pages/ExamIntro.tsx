@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, BookOpen, Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { formatMarks } from "@/services/scoringEngine";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -33,6 +34,7 @@ const ExamIntro = () => {
     const [allSections, setAllSections] = useState<any[]>([]);
     const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
     const [publishedLanguages, setPublishedLanguages] = useState<string[]>([]);
+    const [markingScheme, setMarkingScheme] = useState<{correct: number, wrong: number, skipped: number} | null>(null);
 
     const fromPage = searchParams.get("from");
 
@@ -84,6 +86,21 @@ const ExamIntro = () => {
             if (sectionsError) throw sectionsError;
 
             setAllSections(sections || []);
+
+            // Fetch marks config for marking scheme display
+            try {
+                const { getExamScoringDefault } = await import('@/services/scoringService');
+                const scheme = await getExamScoringDefault(examId!);
+                if (scheme) {
+                    setMarkingScheme({
+                        correct: scheme.marks_correct,
+                        wrong: scheme.marks_wrong,
+                        skipped: scheme.marks_skipped,
+                    });
+                }
+            } catch (e) {
+                // Non-fatal
+            }
         } catch (error: any) {
             toast({
                 title: "Error",
@@ -205,6 +222,36 @@ const ExamIntro = () => {
                                     Instructions
                                 </h3>
                                 <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{displayInstruction}</p>
+                            </div>
+                        )}
+
+                        {/* Marking Scheme */}
+                        {markingScheme && (
+                            <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
+                                <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm mb-3">
+                                    <svg className="h-4 w-4 text-[#6C3EF4]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 3v18m-6-6 6 6 6-6" />
+                                    </svg>
+                                    Marking Scheme
+                                </h3>
+                                <div className="flex items-center gap-4 text-sm">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 text-xs">+{formatMarks(markingScheme.correct)}</span>
+                                        <span className="text-muted-foreground">Correct</span>
+                                    </div>
+                                    {markingScheme.wrong > 0 && (
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="font-bold text-white bg-red-600 rounded-full px-2 py-0.5 text-xs">−{formatMarks(markingScheme.wrong)}</span>
+                                            <span className="text-muted-foreground">Wrong</span>
+                                        </div>
+                                    )}
+                                    {markingScheme.skipped > 0 && (
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="font-bold text-muted-foreground bg-muted rounded-full px-2 py-0.5 text-xs">−{formatMarks(markingScheme.skipped)}</span>
+                                            <span className="text-muted-foreground">Skipped</span>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
 

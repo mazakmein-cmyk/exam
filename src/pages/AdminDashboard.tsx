@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { Lock, Users, UserCheck, LogOut, Eye } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import SEO from "@/components/SEO";
 
 const AdminDashboard = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -208,6 +209,7 @@ const AdminDashboard = () => {
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">
+            <SEO title="Admin | MockSetu" description="Internal admin console." path="/barnwal3008-admin" noindex />
             <div className="max-w-5xl mx-auto space-y-8">
                 <div className="flex items-center justify-between">
                     <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>

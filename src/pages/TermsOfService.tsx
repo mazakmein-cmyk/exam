@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { FileText, ChevronRight, ArrowUp } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import SEO from "@/components/SEO";
 
 const EFFECTIVE_DATE = "30 March 2025";
 const CONTACT_EMAIL = "legal@mocksetu.in";
@@ -92,6 +93,11 @@ const TermsOfService = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <SEO
+        title="Terms of Service | MockSetu"
+        description="Read MockSetu's terms of service — the rules and guidelines for using our free mock test platform and exam simulator for JEE, NEET, CAT, GATE, and UPSC."
+        path="/terms-of-service"
+      />
       <Navbar />
 
       {/* Hero */}

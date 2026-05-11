@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Start-Process \"C:\\\\Program Files\\\\BraveSoftware\\\\Brave-Browser\\\\Application\\\\brave.exe\" -ArgumentList \"http://localhost:5173\" -ErrorAction SilentlyContinue)",
+      "Bash(npx tsc *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Shivm\\\\Downloads\\\\pp-2\\\\paper-to-practise-main\\\\src\\\\components\\\\marks\\\\\" -File)"
+    ]
+  }
+}

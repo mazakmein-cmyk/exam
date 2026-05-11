@@ -28,6 +28,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, Search } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface QuestionFormProps {
     text: string;
@@ -37,7 +38,7 @@ interface QuestionFormProps {
     options: string[];
     setOptions: (options: string[]) => void;
     correct: string | string[];
-    setCorrect: (value: string | string[]) => void;
+    setCorrect: (value: string | string[] | number | number[]) => void;
     images: string[];
     onImageUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onAdd: () => void;
@@ -45,6 +46,7 @@ interface QuestionFormProps {
     isEditing?: boolean;
     onImageRemove?: (index: number) => void;
     lang?: string;
+    lockStructure?: boolean;
 }
 
 const ToolbarIcon = ({ icon: Icon, label, onClick, isActive }: { icon: any, label: string, onClick?: () => void, isActive?: boolean }) => (
@@ -96,8 +98,18 @@ export function QuestionForm({
     showImageUpload = true,
     isEditing = false,
     onImageRemove,
-    lang = "en"
+    lang = "en",
+    lockStructure = false,
 }: QuestionFormProps) {
+    const { toast } = useToast();
+
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            onImageUpload?.(e);
+            toast({ title: "Image attached", description: "Your image has been attached successfully." });
+        }
+    };
+
     const [isQuestionFocused, setIsQuestionFocused] = useState(false);
 
     // Link Popover State
@@ -1336,11 +1348,13 @@ export function QuestionForm({
     };
 
     const handleMultiCorrectToggle = (option: string) => {
-        const currentCorrect = Array.isArray(correct) ? correct : [];
-        if (currentCorrect.includes(option)) {
-            setCorrect(currentCorrect.filter(opt => opt !== option));
+        const idx = options.indexOf(option);
+        const idxStr = String(idx);
+        const currentCorrect = Array.isArray(correct) ? correct.map(String) : [];
+        if (currentCorrect.includes(idxStr)) {
+            setCorrect(currentCorrect.filter(opt => opt !== idxStr));
         } else {
-            setCorrect([...currentCorrect, option]);
+            setCorrect([...currentCorrect, idxStr]);
         }
     };
 
@@ -1666,28 +1680,29 @@ export function QuestionForm({
         <div className="space-y-6">
             <div className="space-y-2">
                 <Label>Question Image {showImageUpload ? "" : "(Snipped from PDF)"}</Label>
-                {showImageUpload && (
-                    <div className="flex items-center gap-4">
-                        <Button variant="outline" className="relative" onClick={() => document.getElementById('img-upload')?.click()}>
+
+                {/* Single hidden file input — always present */}
+                <input
+                    id="img-upload"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageUpload}
+                />
+
+                {/* Show Upload button only when no image attached yet */}
+                {showImageUpload && images.length === 0 && (
+                    <div>
+                        <Button variant="outline" onClick={() => document.getElementById('img-upload')?.click()}>
                             <Upload className="mr-2 h-4 w-4" />
                             Upload Image
-                            <input
-                                id="img-upload"
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={onImageUpload}
-                            />
                         </Button>
-                        {images.length > 0 && (
-                            <span className="text-sm text-green-600 flex items-center">
-                                <Check className="mr-1 h-4 w-4" /> {images.length} Image{images.length !== 1 ? 's' : ''} attached
-                            </span>
-                        )}
                     </div>
                 )}
+
+                {/* After image attached: previews + "Add More" button inline */}
                 {images.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-2 flex flex-wrap gap-2 items-center">
                         {images.map((img, idx) => (
                             <div key={idx} className="border rounded-md p-2 bg-slate-50 w-fit relative group">
                                 <img src={img} alt={`Preview ${idx + 1}`} className="h-32 object-contain" />
@@ -1702,6 +1717,16 @@ export function QuestionForm({
                                 )}
                             </div>
                         ))}
+                        {showImageUpload && (
+                            <div
+                                onClick={() => document.getElementById('img-upload')?.click()}
+                                className="border-2 border-dashed border-slate-300 rounded-md flex flex-col items-center justify-center h-32 w-24 cursor-pointer hover:border-primary hover:bg-slate-50 transition-colors"
+                                title="Add another image"
+                            >
+                                <Plus className="h-5 w-5 text-slate-400" />
+                                <span className="text-xs text-slate-400 mt-1">Add More</span>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -2641,8 +2666,8 @@ export function QuestionForm({
 
             <div className="space-y-2">
                 <Label>Question Type</Label>
-                <Select value={type} onValueChange={setType}>
-                    <SelectTrigger>
+                <Select value={type} onValueChange={setType} disabled={lockStructure}>
+                    <SelectTrigger className={lockStructure ? "opacity-60 cursor-not-allowed" : ""}>
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -2652,6 +2677,9 @@ export function QuestionForm({
                         <SelectItem value="text">Text</SelectItem>
                     </SelectContent>
                 </Select>
+                {lockStructure && (
+                    <p className="text-xs text-amber-600">Question type is managed in the primary language.</p>
+                )}
             </div>
 
             {(type === "single" || type === "multi") && (
@@ -2669,7 +2697,7 @@ export function QuestionForm({
                                     setOptions(newOpts);
                                 }}
                             />
-                            {idx > 1 && (
+                            {idx > 1 && !lockStructure && (
                                 <Button
                                     variant="ghost"
                                     size="icon"
@@ -2683,13 +2711,15 @@ export function QuestionForm({
                             )}
                         </div>
                     ))}
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setOptions([...options, ""])}
-                    >
-                        <Plus className="mr-2 h-4 w-4" /> Add Option
-                    </Button>
+                    {!lockStructure && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setOptions([...options, ""])}
+                        >
+                            <Plus className="mr-2 h-4 w-4" /> Add Option
+                        </Button>
+                    )}
                     <Button
                         variant="outline"
                         size="sm"
@@ -2709,35 +2739,66 @@ export function QuestionForm({
 
             <div className="space-y-2">
                 <Label>Correct Answer{type === "multi" ? "s" : ""}</Label>
-                {type === "single" ? (
-                    <Select value={correct as string} onValueChange={setCorrect}>
+                {lockStructure ? (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-md">
+                        <p className="text-sm text-amber-700">
+                            Correct answer is managed in the primary language and cannot be changed here.
+                        </p>
+                        {type === "single" && correct !== "" && correct !== null && correct !== undefined ? (
+                            <p className="text-sm font-medium text-amber-800 mt-1">
+                                Current: {String.fromCharCode(65 + Number(correct))}. {options[Number(correct)] || ""}
+                            </p>
+                        ) : type === "multi" && Array.isArray(correct) && correct.length > 0 ? (
+                            <div className="mt-1 space-y-0.5">
+                                {correct.map((c: any, i: number) => (
+                                    <p key={i} className="text-sm font-medium text-amber-800">
+                                        • {String.fromCharCode(65 + Number(c))}. {options[Number(c)] || ""}
+                                    </p>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-sm font-medium text-amber-800 mt-1">Current: {String(correct) || "Not set"}</p>
+                        )}
+                    </div>
+                ) : type === "single" ? (
+                    <Select value={String(correct)} onValueChange={(val) => setCorrect(val)}>
                         <SelectTrigger>
-                            <SelectValue placeholder="Select correct option" />
+                            <SelectValue placeholder="Select correct option">
+                                {correct !== "" && correct !== null && correct !== undefined
+                                    ? `${String.fromCharCode(65 + Number(correct))}. ${options[Number(correct)] || ""}`
+                                    : "Select correct option"}
+                            </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                             {options.map((opt, idx) => (
-                                opt && <SelectItem key={idx} value={opt}>{opt}</SelectItem>
+                                opt && <SelectItem key={idx} value={String(idx)}>{String.fromCharCode(65 + idx)}. {opt}</SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
                 ) : type === "multi" ? (
                     <div className="space-y-2 border rounded-md p-3">
-                        {options.filter(opt => opt.trim() !== "").map((opt, idx) => (
-                            <div key={idx} className="flex items-center space-x-2">
-                                <Checkbox
-                                    id={`option-${idx}`}
-                                    checked={Array.isArray(correct) && correct.includes(opt)}
-                                    onCheckedChange={() => handleMultiCorrectToggle(opt)}
-                                />
-                                <label
-                                    htmlFor={`option-${idx}`}
-                                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                                >
-                                    {opt}
-                                </label>
-                            </div>
-                        ))}
-                        {options.filter(opt => opt.trim() !== "").length === 0 && (
+                        {options.map((opt, idx) => {
+                            const idxStr = String(idx);
+                            const isEmpty = opt.trim() === "";
+                            const currentCorrect = Array.isArray(correct) ? correct.map(String) : [];
+                            return (
+                                <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
+                                    <Checkbox
+                                        id={`option-${idx}`}
+                                        checked={currentCorrect.includes(idxStr)}
+                                        onCheckedChange={() => handleMultiCorrectToggle(opt)}
+                                        disabled={isEmpty}
+                                    />
+                                    <label
+                                        htmlFor={`option-${idx}`}
+                                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                    >
+                                        {String.fromCharCode(65 + idx)}. {opt || "(empty)"}
+                                    </label>
+                                </div>
+                            );
+                        })}
+                        {options.every(opt => opt.trim() === "") && (
                             <p className="text-sm text-muted-foreground">Add options above to select correct answers</p>
                         )}
                     </div>

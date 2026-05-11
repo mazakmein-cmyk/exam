@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, BookOpen, Store, Search, ArrowLeft, Share2, MoreVertical } from "lucide-react";
 import Navbar from "@/components/Navbar";
+import SEO from "@/components/SEO";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
 import {
     DropdownMenu,
@@ -114,6 +115,27 @@ const Marketplace = () => {
 
     return (
         <div className="min-h-screen bg-background">
+            <SEO
+                title="Free Mock Test Library — JEE, NEET, CAT, GATE, UPSC | MockSetu"
+                description="Browse MockSetu's free mock test library. Timed JEE, NEET, CAT, GATE & UPSC mocks with answer keys, instant scoring, and deep analytics. Practice unlimited online mock tests."
+                path="/marketplace"
+                keywords="mock test library, free mock tests, online test series, JEE mock test, NEET mock test, CAT mock test, GATE mock test, UPSC mock test, exam practice papers, MCQ practice"
+                jsonLd={{
+                    "@context": "https://schema.org",
+                    "@type": "CollectionPage",
+                    "name": "MockSetu Exam Library",
+                    "description": "Free collection of timed mock tests and exam simulations for JEE, NEET, CAT, GATE, and UPSC aspirants.",
+                    "url": "https://mocksetu.in/marketplace",
+                    "isPartOf": { "@id": "https://mocksetu.in/#website" },
+                    "about": [
+                        { "@type": "Thing", "name": "JEE Main Mock Test" },
+                        { "@type": "Thing", "name": "NEET Mock Test" },
+                        { "@type": "Thing", "name": "CAT Mock Test" },
+                        { "@type": "Thing", "name": "GATE Mock Test" },
+                        { "@type": "Thing", "name": "UPSC Mock Test" }
+                    ]
+                }}
+            />
             <Navbar navButtonLabel="Analytics" navButtonLink="/analytics?from=marketplace" />
             <OnboardingModal
                 isOpen={showOnboardingModal}
