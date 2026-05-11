@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Timer, BarChart3, FileCheck, Zap, BookMarked, Shield } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Timer, BarChart3, FileCheck, Zap, BookMarked, Shield, ArrowRight } from "lucide-react";
+
+const EXAM_QUICK_LINKS = [
+  { slug: "jee-main", label: "JEE Main", accent: "#F59E0B" },
+  { slug: "neet-ug", label: "NEET UG", accent: "#10B981" },
+  { slug: "cat", label: "CAT", accent: "#6C3EF4" },
+  { slug: "gate", label: "GATE", accent: "#3B82F6" },
+  { slug: "upsc-prelims", label: "UPSC Prelims", accent: "#EC4899" },
+];
 
 const features = [
   {
@@ -158,6 +167,30 @@ const Features = () => {
           {features.map((feature, index) => (
             <FeatureCard key={index} feature={feature} index={index} />
           ))}
+        </div>
+
+        {/* Exam quick-links — internal-link strip for SEO + topical authority */}
+        <div className="mt-16 sm:mt-20">
+          <p className="text-center text-[12px] font-bold tracking-widest text-foreground/40 uppercase mb-5">
+            Free mocks by exam
+          </p>
+          <div className="flex flex-wrap justify-center gap-2.5">
+            {EXAM_QUICK_LINKS.map(({ slug, label, accent }) => (
+              <Link
+                key={slug}
+                to={`/mock-test/${slug}`}
+                className="group inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border/60 bg-card hover:border-primary/30 hover:shadow-sm transition-all text-[13px] font-semibold text-foreground/80 hover:text-foreground"
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ background: accent }}
+                  aria-hidden="true"
+                />
+                {label} Mock Test
+                <ArrowRight className="h-3 w-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
     </section>

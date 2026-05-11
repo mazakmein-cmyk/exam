@@ -20,6 +20,9 @@ import AuthStateListener from "./components/AuthStateListener";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 import ForCreators from "./pages/ForCreators";
+import ExamLandingPage from "./pages/ExamLandingPage";
+import Blog from "./pages/Blog";
+import BlogPost from "./pages/BlogPost";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +56,9 @@ const router = createBrowserRouter([
       { path: "/privacy-policy", element: <PrivacyPolicy /> },
       { path: "/terms-of-service", element: <TermsOfService /> },
       { path: "/for-creators", element: <ForCreators /> },
+      { path: "/mock-test/:examSlug", element: <ExamLandingPage /> },
+      { path: "/blog", element: <Blog /> },
+      { path: "/blog/:slug", element: <BlogPost /> },
       { path: "*", element: <NotFound /> },
     ],
   },

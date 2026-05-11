@@ -7,6 +7,9 @@ Allow: /marketplace
 Allow: /for-creators
 Allow: /privacy-policy
 Allow: /terms-of-service
+Allow: /mock-test/
+Allow: /blog
+Allow: /blog/
 
 # Private / authenticated / admin areas — do not waste crawl budget
 Disallow: /auth

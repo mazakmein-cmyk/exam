@@ -68,16 +68,16 @@ const Footer = () => {
             </ul>
           </nav>
 
-          {/* Exam Prep Resources (footer-only blog/guide links) */}
+          {/* Exam Prep Resources (footer-only deep links) */}
           <nav aria-label="Exam preparation resources">
             <h4 className="text-[11px] font-bold tracking-widest text-foreground/40 uppercase mb-4">Exam Prep</h4>
             <ul className="space-y-3">
               {[
-                { label: "JEE Main Mock Tests", to: "/marketplace?exam=jee-main", rel: "JEE Main exam preparation mock tests" },
-                { label: "NEET Mock Tests", to: "/marketplace?exam=neet", rel: "NEET UG mock test series" },
-                { label: "CAT Mock Tests", to: "/marketplace?exam=cat", rel: "CAT MBA mock test series" },
-                { label: "GATE Mock Tests", to: "/marketplace?exam=gate", rel: "GATE engineering mock tests" },
-                { label: "UPSC Mock Tests", to: "/marketplace?exam=upsc", rel: "UPSC civil services prelims mock tests" },
+                { label: "JEE Main Mock Test", to: "/mock-test/jee-main", rel: "Free JEE Main mock test simulator" },
+                { label: "NEET UG Mock Test", to: "/mock-test/neet-ug", rel: "Free NEET UG mock test simulator" },
+                { label: "CAT Mock Test", to: "/mock-test/cat", rel: "Free CAT mock test simulator" },
+                { label: "GATE Mock Test", to: "/mock-test/gate", rel: "Free GATE mock test simulator" },
+                { label: "UPSC Prelims Mock", to: "/mock-test/upsc-prelims", rel: "Free UPSC Prelims mock test simulator" },
               ].map(({ label, to, rel }) => (
                 <li key={to}>
                   <Link
@@ -89,6 +89,14 @@ const Footer = () => {
                   </Link>
                 </li>
               ))}
+              <li className="pt-2 border-t border-border/40 mt-3">
+                <Link
+                  to="/blog"
+                  className="text-[13px] font-semibold text-primary/90 hover:text-primary transition-colors"
+                >
+                  Blog &amp; Guides →
+                </Link>
+              </li>
             </ul>
           </nav>
 
