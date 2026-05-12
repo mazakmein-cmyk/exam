@@ -529,7 +529,7 @@ const Dashboard = () => {
           <div className="flex h-16 items-center justify-between">
             <div
               className="flex items-center gap-2.5 cursor-pointer group"
-              onClick={() => navigate("/dashboard")}
+              onClick={() => navigate("/")}
             >
               <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#6C3EF4]/20 to-[#A855F7]/10 border border-[#6C3EF4]/20 flex items-center justify-center">
                 <svg width="18" height="18" viewBox="0 0 28 28" fill="none">
