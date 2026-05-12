@@ -181,7 +181,7 @@ const ExamIntro = () => {
                         <ArrowLeft className="h-4 w-4" />
                         {fromPage === "marketplace" ? "Back to Exam Library" : "Back to Dashboard"}
                     </button>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
                         <svg width="18" height="18" viewBox="0 0 28 28" fill="none">
                             <defs>
                                 <linearGradient id="intro-logo" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
