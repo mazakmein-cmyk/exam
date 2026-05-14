@@ -9,6 +9,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import MockSetuLogo from "@/components/MockSetuLogo";
 import ProfileDialog from "@/components/ProfileDialog";
 
@@ -35,6 +42,25 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
   }, []);
 
   const isHome = location.pathname === "/";
+
+  // Get user initial for avatar
+  const getUserInitial = () => {
+    const email = session?.user?.email || "";
+    return email.charAt(0).toUpperCase() || "U";
+  };
+
+  const AvatarButton = ({ size = "w-9 h-9", textSize = "text-sm" }: { size?: string; textSize?: string }) => (
+    <button
+      className={`${size} rounded-full flex items-center justify-center ${textSize} font-semibold transition-all duration-200 ring-2 ring-offset-2 ring-offset-transparent focus:outline-none ${
+        isHome && !scrolled
+          ? "bg-white/20 text-white ring-white/30 hover:bg-white/30 hover:ring-white/50"
+          : "bg-gradient-to-br from-[#6C3EF4] to-[#A855F7] text-white ring-[#6C3EF4]/30 hover:ring-[#6C3EF4]/60 hover:shadow-lg hover:shadow-[#6C3EF4]/20"
+      }`}
+      aria-label="User menu"
+    >
+      {getUserInitial()}
+    </button>
+  );
 
   return (
     <>
@@ -77,30 +103,30 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
               </Link>
 
               {session ? (
-                <>
-                  <button
-                    onClick={() => setShowProfile(true)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      isHome && !scrolled
-                        ? "text-white/70 hover:text-white hover:bg-white/10"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                    }`}
-                  >
-                    <User className="h-4 w-4" />
-                    Profile
-                  </button>
-                  <button
-                    onClick={async () => { await supabase.auth.signOut(); navigate("/"); }}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      isHome && !scrolled
-                        ? "text-white/70 hover:text-white hover:bg-white/10"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                    }`}
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Sign Out
-                  </button>
-                </>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <div className="ml-2">
+                      <AvatarButton />
+                    </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48 rounded-xl shadow-xl shadow-black/10 border-border/60">
+                    <DropdownMenuItem
+                      onClick={() => setShowProfile(true)}
+                      className="flex items-center gap-2.5 py-2.5 cursor-pointer"
+                    >
+                      <User className="h-4 w-4 text-[#6C3EF4]" />
+                      User Profile
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={async () => { await supabase.auth.signOut(); navigate("/"); }}
+                      className="flex items-center gap-2.5 py-2.5 text-red-500 focus:text-red-500 cursor-pointer"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Sign Out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               ) : (
                 <Link
                   to={location.pathname === "/marketplace" ? "/student-auth?from=marketplace" : "/student-auth"}
@@ -114,7 +140,35 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
             </div>
 
             {/* Mobile hamburger */}
-            <div className="md:hidden">
+            <div className="md:hidden flex items-center gap-2">
+              {/* Mobile avatar */}
+              {session && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <div>
+                      <AvatarButton size="w-8 h-8" textSize="text-xs" />
+                    </div>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44 rounded-xl shadow-xl shadow-black/10 border-border/60">
+                    <DropdownMenuItem
+                      onClick={() => setShowProfile(true)}
+                      className="flex items-center gap-2.5 py-2.5 cursor-pointer"
+                    >
+                      <User className="h-4 w-4 text-[#6C3EF4]" />
+                      User Profile
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={async () => { await supabase.auth.signOut(); navigate("/"); }}
+                      className="flex items-center gap-2.5 py-2.5 text-red-500 focus:text-red-500 cursor-pointer"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Sign Out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
               <Sheet open={isOpen} onOpenChange={setIsOpen}>
                 <SheetTrigger asChild>
                   <button
@@ -139,23 +193,7 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
                       </div>
                     </Link>
 
-                    {session ? (
-                      <>
-                        <button
-                          onClick={() => { setShowProfile(true); setIsOpen(false); }}
-                          className="flex items-center justify-between px-3 py-3 rounded-xl hover:bg-secondary transition-colors text-sm font-medium w-full"
-                        >
-                          <span className="flex items-center gap-2"><User className="h-4 w-4" /> Profile</span>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        <button
-                          onClick={async () => { await supabase.auth.signOut(); navigate("/"); setIsOpen(false); }}
-                          className="flex items-center gap-2 px-3 py-3 rounded-xl hover:bg-red-50 text-red-500 transition-colors text-sm font-medium w-full"
-                        >
-                          <LogOut className="h-4 w-4" /> Sign Out
-                        </button>
-                      </>
-                    ) : (
+                    {!session && (
                       <Link
                         to={location.pathname === "/marketplace" ? "/student-auth?from=marketplace" : "/student-auth"}
                         onClick={() => setIsOpen(false)}

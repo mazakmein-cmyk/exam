@@ -13,6 +13,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -69,6 +70,12 @@ const Dashboard = () => {
 
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  // Get user initial for avatar
+  const getUserInitial = () => {
+    const email = user?.email || "";
+    return email.charAt(0).toUpperCase() || "U";
+  };
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -548,14 +555,34 @@ const Dashboard = () => {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" onClick={() => setShowProfile(true)}>
-                <User className="mr-2 h-4 w-4" />
-                Profile
-              </Button>
-              <Button variant="ghost" onClick={handleSignOut}>
-                <LogOut className="mr-2 h-4 w-4" />
-                Sign Out
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    id="dashboard-avatar-trigger"
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold bg-gradient-to-br from-[#6C3EF4] to-[#A855F7] text-white ring-2 ring-[#6C3EF4]/30 ring-offset-2 ring-offset-transparent hover:ring-[#6C3EF4]/60 hover:shadow-lg hover:shadow-[#6C3EF4]/20 transition-all duration-200 focus:outline-none"
+                    aria-label="User menu"
+                  >
+                    {getUserInitial()}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48 rounded-xl shadow-xl shadow-black/10 border-border/60">
+                  <DropdownMenuItem
+                    onClick={() => setShowProfile(true)}
+                    className="flex items-center gap-2.5 py-2.5 cursor-pointer"
+                  >
+                    <User className="h-4 w-4 text-[#6C3EF4]" />
+                    User Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={handleSignOut}
+                    className="flex items-center gap-2.5 py-2.5 text-red-500 focus:text-red-500 cursor-pointer"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign Out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
