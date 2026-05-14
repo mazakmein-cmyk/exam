@@ -116,25 +116,39 @@ const Marketplace = () => {
     return (
         <div className="min-h-screen bg-background">
             <SEO
-                title="Free Mock Test Library — JEE, NEET, CAT, GATE, UPSC | MockSetu"
-                description="Browse MockSetu's free mock test library. Timed JEE, NEET, CAT, GATE & UPSC mocks with answer keys, instant scoring, and deep analytics. Practice unlimited online mock tests."
+                title="Free Mock Test Library — JEE, NEET, CAT, GATE, UPSC | MockSetu (Mockset)"
+                description="Browse the MockSetu (Mockset) free mock test library. Timed JEE, NEET, CAT, GATE & UPSC mocks with answer keys, instant scoring, and deep analytics. Practice unlimited online mock tests on the leading online assessment platform."
                 path="/marketplace"
-                keywords="mock test library, free mock tests, online test series, JEE mock test, NEET mock test, CAT mock test, GATE mock test, UPSC mock test, exam practice papers, MCQ practice"
-                jsonLd={{
-                    "@context": "https://schema.org",
-                    "@type": "CollectionPage",
-                    "name": "MockSetu Exam Library",
-                    "description": "Free collection of timed mock tests and exam simulations for JEE, NEET, CAT, GATE, and UPSC aspirants.",
-                    "url": "https://mocksetu.in/marketplace",
-                    "isPartOf": { "@id": "https://mocksetu.in/#website" },
-                    "about": [
-                        { "@type": "Thing", "name": "JEE Main Mock Test" },
-                        { "@type": "Thing", "name": "NEET Mock Test" },
-                        { "@type": "Thing", "name": "CAT Mock Test" },
-                        { "@type": "Thing", "name": "GATE Mock Test" },
-                        { "@type": "Thing", "name": "UPSC Mock Test" }
-                    ]
-                }}
+                keywords="mockset, MockSetu marketplace, mockset library, mock test library, free mock tests, online test series, JEE mock test, NEET mock test, CAT mock test, GATE mock test, UPSC mock test, exam practice papers, MCQ practice, online assessment platform, coding assessment library, aptitude preparation"
+                jsonLd={[
+                    {
+                        "@context": "https://schema.org",
+                        "@type": "CollectionPage",
+                        "name": "MockSetu (Mockset) Exam Library",
+                        "alternateName": "Mockset Free Mock Test Library",
+                        "description": "Free collection of timed mock tests and exam simulations on MockSetu (Mockset) for JEE, NEET, CAT, GATE, and UPSC aspirants.",
+                        "url": "https://mocksetu.in/marketplace",
+                        "isPartOf": { "@id": "https://mocksetu.in/#website" },
+                        "about": [
+                            { "@type": "Thing", "name": "JEE Main Mock Test" },
+                            { "@type": "Thing", "name": "NEET Mock Test" },
+                            { "@type": "Thing", "name": "CAT Mock Test" },
+                            { "@type": "Thing", "name": "GATE Mock Test" },
+                            { "@type": "Thing", "name": "UPSC Mock Test" },
+                            { "@type": "Thing", "name": "Mockset Mock Test Series" },
+                            { "@type": "Thing", "name": "Online Assessment Platform" }
+                        ],
+                        "publisher": { "@id": "https://mocksetu.in/#organization" }
+                    },
+                    {
+                        "@context": "https://schema.org",
+                        "@type": "BreadcrumbList",
+                        "itemListElement": [
+                            { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mocksetu.in/" },
+                            { "@type": "ListItem", "position": 2, "name": "Mock Test Library", "item": "https://mocksetu.in/marketplace" }
+                        ]
+                    }
+                ]}
             />
             <Navbar navButtonLabel="Analytics" navButtonLink="/analytics?from=marketplace" />
             <OnboardingModal
@@ -158,7 +172,10 @@ const Marketplace = () => {
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 text-[11px] font-semibold text-[#A855F7] uppercase tracking-wider">Public Library</span>
                         </div>
                         <h1 className="text-3xl font-bold tracking-tight text-foreground">Exam Library</h1>
-                        <p className="text-muted-foreground text-sm mt-1">Browse and take mock exams shared by the community</p>
+                        <p className="text-muted-foreground text-sm mt-1">
+                            Browse and take free MockSetu mock tests shared by the community — the same Mockset exam simulator,
+                            now with thousands of timed JEE, NEET, CAT, GATE &amp; UPSC papers.
+                        </p>
                     </div>
                 </div>
 

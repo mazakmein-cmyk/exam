@@ -3,7 +3,17 @@
     "allow": [
       "PowerShell(Start-Process \"C:\\\\Program Files\\\\BraveSoftware\\\\Brave-Browser\\\\Application\\\\brave.exe\" -ArgumentList \"http://localhost:5173\" -ErrorAction SilentlyContinue)",
       "Bash(npx tsc *)",
-      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Shivm\\\\Downloads\\\\pp-2\\\\paper-to-practise-main\\\\src\\\\components\\\\marks\\\\\" -File)"
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Shivm\\\\Downloads\\\\pp-2\\\\paper-to-practise-main\\\\src\\\\components\\\\marks\\\\\" -File)",
+      "Bash(git -C \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main\" status)",
+      "Bash(git -C \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main\" log --oneline -5)",
+      "Bash(git -C \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main\" diff HEAD -- public/robots.txt)",
+      "Bash(git -C \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main\" log origin/main --oneline -3)",
+      "Bash(git -C \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main\" show origin/main:public/sitemap.xml)",
+      "Bash(git -C \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main\" show origin/main:public/robots.txt)",
+      "PowerShell(gh auth status)",
+      "PowerShell(git config user.name)",
+      "PowerShell(git config user.email)",
+      "PowerShell(cmdkey /list)"
     ]
   }
 }

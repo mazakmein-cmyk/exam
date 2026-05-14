@@ -43,22 +43,23 @@ const StudentAuth = () => {
     const checkUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        if (session.user.user_metadata?.user_type === 'student') {
+        if (session.user.user_metadata?.user_type === 'student' && !isExamSubmit) {
           navigate("/marketplace");
         }
       }
     };
     checkUser();
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "PASSWORD_RECOVERY") {
         setShowUpdatePasswordModal(true);
       } else if (event === "SIGNED_IN" && session) {
-        if (session.user.user_metadata?.user_type === 'student') {
+        if (session.user.user_metadata?.user_type === 'student' && !isExamSubmit) {
           navigate("/marketplace");
         }
       }
     });
-  }, [navigate]);
+    return () => subscription.unsubscribe();
+  }, [navigate, isExamSubmit]);
 
   useEffect(() => {
     if (!isExamSubmit) return;
@@ -129,7 +130,13 @@ const StudentAuth = () => {
     if (!user) return;
     const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
     if (!profile) {
-      setShowOnboardingModal(true);
+      if (isExamSubmit) {
+        // Post-exam flow: save the attempt first and overlay onboarding on the review page.
+        sessionStorage.setItem('needsOnboarding', '1');
+        await handlePendingExamSubmission();
+      } else {
+        setShowOnboardingModal(true);
+      }
     } else {
       await handlePendingExamSubmission();
     }

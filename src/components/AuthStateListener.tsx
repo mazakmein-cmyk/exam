@@ -60,7 +60,16 @@ const AuthStateListener = () => {
                     if (userType === 'creator') {
                         navigate('/dashboard');
                     } else if (userType === 'student') {
-                        navigate('/marketplace');
+                        // Post-exam-submit flow: leave navigation to StudentAuth so it can
+                        // save pending submissions to the DB before sending the user to the
+                        // review page. Detect via either URL trigger or pending payload.
+                        const params = new URLSearchParams(window.location.search);
+                        const isExamSubmitFlow = params.get('trigger') === 'exam_submit'
+                            || !!sessionStorage.getItem('pendingExamSubmissions')
+                            || !!sessionStorage.getItem('pendingExamSubmission');
+                        if (!isExamSubmitFlow) {
+                            navigate('/marketplace');
+                        }
                     }
                 }
             }

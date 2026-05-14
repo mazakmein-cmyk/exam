@@ -11,10 +11,10 @@ const Index = () => {
   return (
     <div className="min-h-screen">
       <SEO
-        title="MockSetu — Free Mock Test & Exam Simulator for JEE, NEET, CAT, GATE, UPSC"
-        description="MockSetu is a free online mock test platform and exam simulator. Take timed JEE, NEET, CAT, GATE, and UPSC mocks with deep analytics, instant scoring, and real exam-day conditions."
+        title="MockSetu (Mockset) — Free Mock Test & Exam Simulator for JEE, NEET, CAT, GATE, UPSC"
+        description="MockSetu — also searched as Mockset — is a free online mock test platform and exam simulator. Take timed JEE, NEET, CAT, GATE, and UPSC mocks with deep analytics, instant scoring, and real exam-day conditions."
         path="/"
-        keywords="MockSetu, Mockset, mock test, free mock test, online mock test, exam simulator, JEE mock test, NEET mock test, CAT mock test, GATE mock test, UPSC mock test, test series"
+        keywords="MockSetu, Mockset, mockset, mock setu, mockset app, mockset login, mock test, free mock test, online mock test, exam simulator, JEE mock test, NEET mock test, CAT mock test, GATE mock test, UPSC mock test, test series, online assessment platform, AI mock interview, technical interview practice, placement preparation, aptitude preparation"
       />
       <Navbar />
       <Hero />

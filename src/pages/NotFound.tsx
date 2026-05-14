@@ -12,8 +12,8 @@ const NotFound = () => {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-100">
       <SEO
-        title="Page Not Found (404) | MockSetu"
-        description="The page you're looking for doesn't exist on MockSetu. Head back to the home page to start free mock tests for JEE, NEET, CAT, GATE, and UPSC."
+        title="Page Not Found (404) | MockSetu (Mockset)"
+        description="The page you're looking for doesn't exist on MockSetu (Mockset). Head back to the home page to start free mock tests for JEE, NEET, CAT, GATE, and UPSC."
         path={location.pathname}
         noindex
       />
@@ -24,9 +24,9 @@ const NotFound = () => {
           Return to MockSetu Home
         </a>
         <p className="mt-6 text-sm text-gray-500">
-          Looking for free mock tests?{" "}
+          Looking for free mock tests on Mockset?{" "}
           <a href="/marketplace" className="text-blue-500 underline hover:text-blue-700">
-            Browse the exam library
+            Browse the MockSetu exam library
           </a>
           .
         </p>

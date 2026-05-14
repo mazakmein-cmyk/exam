@@ -197,19 +197,30 @@ const ForCreators = () => {
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        title="For Educators & Creators — Publish Mock Tests Free | MockSetu"
-        description="Turn any exam PDF into a full timed online mock test in minutes. MockSetu lets coaching institutes, educators, and creators publish JEE, NEET, CAT, GATE, and UPSC mocks free, with analytics and instant scoring."
+        title="For Educators & Creators — Publish Mock Tests Free | MockSetu (Mockset)"
+        description="Turn any exam PDF into a full timed online mock test in minutes. MockSetu (Mockset) lets coaching institutes, educators, and creators publish JEE, NEET, CAT, GATE, and UPSC mocks free, with built-in analytics and instant scoring on the leading online assessment platform."
         path="/for-creators"
-        keywords="publish mock test, online test creator, exam authoring platform, mock test for coaching, online assessment platform, test maker, MCQ test creator, exam PDF to online test"
-        jsonLd={{
-          "@context": "https://schema.org",
-          "@type": "WebPage",
-          "name": "MockSetu for Educators & Creators",
-          "url": "https://mocksetu.in/for-creators",
-          "description": "Free authoring platform for educators to publish timed mock tests from any exam PDF with built-in analytics.",
-          "audience": { "@type": "EducationalAudience", "audienceType": "Educator" },
-          "isPartOf": { "@id": "https://mocksetu.in/#website" }
-        }}
+        keywords="mockset for creators, MockSetu creator, publish mock test on mockset, online test creator, exam authoring platform, mock test for coaching, online assessment platform, test maker, MCQ test creator, exam PDF to online test, coding assessment authoring, AI mock interview platform"
+        jsonLd={[
+          {
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "name": "MockSetu (Mockset) for Educators & Creators",
+            "url": "https://mocksetu.in/for-creators",
+            "description": "Free authoring platform for educators to publish timed mock tests from any exam PDF with built-in analytics — powered by MockSetu (Mockset).",
+            "audience": { "@type": "EducationalAudience", "audienceType": "Educator" },
+            "isPartOf": { "@id": "https://mocksetu.in/#website" },
+            "about": { "@id": "https://mocksetu.in/#organization" }
+          },
+          {
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mocksetu.in/" },
+              { "@type": "ListItem", "position": 2, "name": "For Educators & Creators", "item": "https://mocksetu.in/for-creators" }
+            ]
+          }
+        ]}
       />
       <Navbar navButtonLabel="Student Home" navButtonLink="/" />
 
@@ -511,7 +522,7 @@ const ForCreators = () => {
                 {" "}in 4 steps.
               </h2>
               <p className="mt-4 text-[16px] text-muted-foreground max-w-md mx-auto">
-                No tech skills required. If you can create a PDF, you can create an exam on MockSetu.
+                No tech skills required. If you can create a PDF, you can create an exam on MockSetu (Mockset).
               </p>
             </div>
           </Reveal>

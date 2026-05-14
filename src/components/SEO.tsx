@@ -14,6 +14,15 @@ const SITE_URL = "https://mocksetu.in";
 const DEFAULT_OG_IMAGE = `${SITE_URL}/mocksetu-logo.png`;
 const MANAGED_TAG_ATTR = "data-mocksetu-seo";
 
+/**
+ * Brand-alternate keyword tail appended to every page's <meta name="keywords">.
+ * This reinforces "mockset" (a common misspelling / alternate query of MockSetu)
+ * as a brand synonym across the entire site without polluting page-specific copy.
+ * Pages can still pass their own topical keywords via the `keywords` prop.
+ */
+const BRAND_KEYWORD_TAIL =
+  "MockSetu, Mockset, mockset, mock setu, mockset app, mockset login, mockset mock test, mockset exam simulator";
+
 const upsertMeta = (selector: string, attr: "name" | "property", key: string, value: string) => {
   let el = document.head.querySelector<HTMLMetaElement>(selector);
   if (!el) {
@@ -50,6 +59,32 @@ const appendJsonLd = (payload: Record<string, unknown> | Record<string, unknown>
   document.head.appendChild(script);
 };
 
+/**
+ * WebPage JSON-LD with isPartOf -> #website and about -> #organization (which
+ * carries the MockSetu / Mockset alternateName chain). Appended on every page
+ * so search engines see a consistent brand-disambiguation signal on every URL.
+ */
+const buildWebPageJsonLd = (url: string, title: string, description: string) => ({
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "@id": `${url}#webpage`,
+  url,
+  name: title,
+  description,
+  inLanguage: "en-IN",
+  isPartOf: { "@id": "https://mocksetu.in/#website" },
+  about: { "@id": "https://mocksetu.in/#organization" },
+  primaryImageOfPage: { "@type": "ImageObject", url: DEFAULT_OG_IMAGE },
+});
+
+const mergeKeywords = (pageKeywords?: string) => {
+  if (!pageKeywords) return BRAND_KEYWORD_TAIL;
+  // De-dupe naively against the brand tail to avoid stuffing the same token twice.
+  const lower = pageKeywords.toLowerCase();
+  if (lower.includes("mockset") && lower.includes("mocksetu")) return pageKeywords;
+  return `${pageKeywords}, ${BRAND_KEYWORD_TAIL}`;
+};
+
 const SEO = ({ title, description, path, keywords, ogImage, noindex, jsonLd }: SEOProps) => {
   useEffect(() => {
     const url = `${SITE_URL}${path}`;
@@ -58,13 +93,15 @@ const SEO = ({ title, description, path, keywords, ogImage, noindex, jsonLd }: S
     document.title = title;
 
     upsertMeta('meta[name="description"]', "name", "description", description);
-    if (keywords) upsertMeta('meta[name="keywords"]', "name", "keywords", keywords);
+    upsertMeta('meta[name="keywords"]', "name", "keywords", mergeKeywords(keywords));
 
     upsertMeta(
       'meta[name="robots"]',
       "name",
       "robots",
-      noindex ? "noindex, nofollow" : "index, follow, max-image-preview:large, max-snippet:-1"
+      noindex
+        ? "noindex, nofollow"
+        : "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
     );
 
     upsertLink("canonical", url);
@@ -79,6 +116,11 @@ const SEO = ({ title, description, path, keywords, ogImage, noindex, jsonLd }: S
     upsertMeta('meta[name="twitter:image"]', "name", "twitter:image", image);
 
     clearManagedJsonLd();
+    // Always emit a WebPage node that ties this URL into the brand graph
+    // (organization carries Mockset/MockSetu alternateNames declared in index.html).
+    if (!noindex) {
+      appendJsonLd(buildWebPageJsonLd(url, title, description));
+    }
     if (jsonLd) {
       const payloads = Array.isArray(jsonLd) ? jsonLd : [jsonLd];
       payloads.forEach(appendJsonLd);

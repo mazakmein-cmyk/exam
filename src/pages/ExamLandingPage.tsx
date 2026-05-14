@@ -12,17 +12,20 @@ const buildJsonLd = (exam: ExamLanding) => {
     {
       "@context": "https://schema.org",
       "@type": "Course",
-      name: `${exam.examName} Mock Test Series — MockSetu`,
+      name: `${exam.examName} Mock Test Series — MockSetu (Mockset)`,
+      alternateName: `${exam.examShort} Mockset Mock Test Series`,
       description: exam.metaDescription,
       provider: {
         "@type": "Organization",
         name: "MockSetu",
+        alternateName: ["Mockset", "Mock Setu"],
         "@id": "https://mocksetu.in/#organization",
         sameAs: "https://mocksetu.in/",
       },
       url,
       educationalLevel: "Higher Education",
       inLanguage: "en-IN",
+      isPartOf: { "@id": "https://mocksetu.in/#website" },
       hasCourseInstance: {
         "@type": "CourseInstance",
         courseMode: "Online",

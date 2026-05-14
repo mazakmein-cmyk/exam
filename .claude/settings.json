@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(git credential-manager list 2>&1)",
+      "PowerShell(git-credential-manager github list 2>&1)",
+      "PowerShell(git credential-manager github list)"
+    ]
+  }
+}

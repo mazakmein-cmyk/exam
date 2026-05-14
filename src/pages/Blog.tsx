@@ -9,28 +9,41 @@ const Blog = () => {
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        title="MockSetu Blog — Mock Test Strategy, Exam Guides & Study Plans"
-        description="In-depth guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, and UPSC aspirants. Written for serious students who want to actually rank."
+        title="MockSetu (Mockset) Blog — Mock Test Strategy, Exam Guides & Study Plans"
+        description="In-depth MockSetu (Mockset) guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, and UPSC aspirants. Written for serious students who want to actually rank."
         path="/blog"
-        keywords="exam preparation blog, mock test strategy blog, JEE preparation, NEET preparation, CAT preparation, GATE preparation, UPSC preparation, study plan"
-        jsonLd={{
-          "@context": "https://schema.org",
-          "@type": "Blog",
-          name: "MockSetu Blog",
-          url: "https://mocksetu.in/blog",
-          description:
-            "In-depth guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, and UPSC aspirants.",
-          publisher: { "@id": "https://mocksetu.in/#organization" },
-          blogPost: BLOG_LIST.map((p) => ({
-            "@type": "BlogPosting",
-            headline: p.title,
-            description: p.excerpt,
-            url: `https://mocksetu.in/blog/${p.slug}`,
-            datePublished: p.publishedAt,
-            dateModified: p.updatedAt,
-            author: { "@type": "Organization", name: "MockSetu" },
-          })),
-        }}
+        keywords="mockset blog, MockSetu blog, exam preparation blog, mock test strategy blog, JEE preparation, NEET preparation, CAT preparation, GATE preparation, UPSC preparation, study plan, mockset study plan"
+        jsonLd={[
+          {
+            "@context": "https://schema.org",
+            "@type": "Blog",
+            name: "MockSetu Blog",
+            alternateName: "Mockset Blog",
+            url: "https://mocksetu.in/blog",
+            description:
+              "In-depth MockSetu (Mockset) guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, and UPSC aspirants.",
+            inLanguage: "en-IN",
+            publisher: { "@id": "https://mocksetu.in/#organization" },
+            isPartOf: { "@id": "https://mocksetu.in/#website" },
+            blogPost: BLOG_LIST.map((p) => ({
+              "@type": "BlogPosting",
+              headline: p.title,
+              description: p.excerpt,
+              url: `https://mocksetu.in/blog/${p.slug}`,
+              datePublished: p.publishedAt,
+              dateModified: p.updatedAt,
+              author: { "@type": "Organization", name: "MockSetu", alternateName: "Mockset" },
+            })),
+          },
+          {
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            itemListElement: [
+              { "@type": "ListItem", position: 1, name: "Home", item: "https://mocksetu.in/" },
+              { "@type": "ListItem", position: 2, name: "Blog", item: "https://mocksetu.in/blog" },
+            ],
+          },
+        ]}
       />
       <Navbar />
 
@@ -60,7 +73,7 @@ const Blog = () => {
           </h1>
           <p className="text-[16px] sm:text-[18px] text-white/55 max-w-2xl mx-auto leading-[1.7]">
             In-depth, no-fluff guides for serious JEE, NEET, CAT, GATE, and UPSC aspirants. Written
-            by the team that built MockSetu.
+            by the team that built MockSetu (also known as Mockset) — India&rsquo;s free exam simulator.
           </p>
         </div>
       </section>

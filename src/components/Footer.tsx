@@ -38,12 +38,20 @@ const Footer = () => {
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <MockSetuMark />
-              <span className="text-[15px] font-bold tracking-[-0.02em] text-foreground">
+              <span
+                className="text-[15px] font-bold tracking-[-0.02em] text-foreground"
+                aria-label="MockSetu — also known as Mockset"
+              >
                 Mock<span className="text-gradient">Setu</span>
               </span>
             </div>
-            <p className="text-[13px] text-muted-foreground leading-[1.65] max-w-[220px]">
-              The smartest free <strong className="font-semibold text-foreground/80">mock test</strong> &amp; exam simulator for JEE, NEET, CAT, GATE &amp; UPSC students.
+            <p className="text-[13px] text-muted-foreground leading-[1.65] max-w-[240px]">
+              <strong className="font-semibold text-foreground/85">MockSetu</strong>
+              <span className="text-foreground/55"> (also searched as </span>
+              <strong className="font-semibold text-foreground/75">Mockset</strong>
+              <span className="text-foreground/55">)</span> — the smartest free{" "}
+              <strong className="font-semibold text-foreground/80">mock test</strong> &amp; exam
+              simulator for JEE, NEET, CAT, GATE &amp; UPSC students.
             </p>
           </div>
 
@@ -145,7 +153,7 @@ const Footer = () => {
         {/* Bottom bar */}
         <div className="mt-12 pt-6 border-t border-border/50 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-[12px] text-muted-foreground/70">
-            © 2026 MockSetu. Built for students, by educators.
+            © 2026 MockSetu (Mockset). Built for students, by educators.
           </p>
           <p className="text-[12px] text-muted-foreground/70">
             Made with ❤️ to help students crack their exams.

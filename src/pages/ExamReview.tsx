@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Clock, CheckCircle2, XCircle, Circle, Upload, ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowLeft, Clock, CheckCircle2, XCircle, Circle, Upload, ChevronDown, ChevronRight, Award, Target, Timer } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { ExamMarksSummary } from "@/components/marks/ExamMarksSummary";
 import { MarksAwardedBadge } from "@/components/marks/MarksAwardedBadge";
+import { formatMarks } from "@/services/scoringEngine";
 import { formatDuration } from "@/lib/utils";
+import OnboardingModal from "@/components/OnboardingModal";
 
 interface Response {
   id: string;
@@ -65,6 +66,12 @@ export default function ExamReview() {
   // Marks module state
   const [marksLog, setMarksLog] = useState<Map<string, number>>(new Map());
   const [totalMarks, setTotalMarks] = useState<{score: number | null, max: number | null}>({score: null, max: null});
+
+  // Post-exam onboarding overlay: set by StudentAuth when a fresh signup/signin
+  // lands here without a profile row. Modal is non-dismissable (see OnboardingModal).
+  const [showOnboardingModal, setShowOnboardingModal] = useState(
+    () => typeof window !== 'undefined' && sessionStorage.getItem('needsOnboarding') === '1'
+  );
 
   useEffect(() => {
     fetchReviewData();
@@ -659,57 +666,133 @@ export default function ExamReview() {
         </div>
 
         {/* Stats Summary */}
-        {stats && (
-          <Card className="p-6 mb-6 bg-card">
-            {/* Header: Exam Name + Rank badge */}
-            <div className="flex items-start justify-between mb-6">
-              <div>
-                {examName ? (
-                  <>
-                    <h2 className="text-2xl font-bold">{examName}</h2>
-                    <p className="text-sm text-muted-foreground">Exam Summary</p>
-                  </>
-                ) : (
-                  <h2 className="text-2xl font-bold">Exam Summary</h2>
+        {stats && (() => {
+          const marksScore = totalMarks.score;
+          const marksMax = totalMarks.max;
+          const hasMarks = marksScore !== null && marksScore !== undefined;
+          const marksPct = hasMarks && marksMax && marksMax > 0
+            ? Math.round((marksScore! / marksMax) * 100)
+            : null;
+          const isNegativeMarks = hasMarks && marksScore! < 0;
+          const performanceTone = marksPct === null
+            ? "Marks awarded"
+            : marksPct >= 80 ? "Excellent performance"
+            : marksPct >= 60 ? "Strong performance"
+            : marksPct >= 40 ? "Keep practicing"
+            : "Needs work";
+          const performanceColor = isNegativeMarks ? "text-destructive"
+            : marksPct === null ? "text-primary"
+            : marksPct >= 60 ? "text-success"
+            : marksPct >= 40 ? "text-primary"
+            : "text-warning";
+
+          return (
+            <Card className="p-6 mb-6 bg-card overflow-hidden">
+              {/* Header: Exam Name + Rank badge */}
+              <div className="flex items-start justify-between mb-6 gap-4">
+                <div>
+                  {examName ? (
+                    <>
+                      <h2 className="text-2xl font-bold">{examName}</h2>
+                      <p className="text-sm text-muted-foreground">Exam Summary</p>
+                    </>
+                  ) : (
+                    <h2 className="text-2xl font-bold">Exam Summary</h2>
+                  )}
+                </div>
+                {rank !== null && (
+                  <div className="text-center bg-primary/10 rounded-xl px-5 py-3 shrink-0">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Rank</p>
+                    <p className="text-3xl font-bold text-primary">#{rank}</p>
+                    <p className="text-xs text-muted-foreground">out of {totalExamAttempts}</p>
+                  </div>
                 )}
               </div>
-              {rank !== null && (
-                <div className="text-center bg-primary/10 rounded-xl px-5 py-3">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Rank</p>
-                  <p className="text-3xl font-bold text-primary">#{rank}</p>
-                  <p className="text-xs text-muted-foreground">out of {totalExamAttempts}</p>
+
+              {/* HERO: Marks (primary metric) */}
+              {hasMarks && (
+                <div className="relative mb-6 rounded-2xl p-6 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/15">
+                  <div className="flex items-center justify-between gap-6 flex-wrap">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary shrink-0">
+                        <Award className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-primary/80">Marks Scored</p>
+                        <div className="flex items-baseline gap-2 mt-1">
+                          <span className={`text-5xl font-extrabold leading-none tracking-tight ${isNegativeMarks ? "text-destructive" : "text-foreground"}`}>
+                            {formatMarks(marksScore!)}
+                          </span>
+                          {marksMax !== null && marksMax !== undefined && (
+                            <span className="text-2xl font-semibold text-muted-foreground">
+                              / {formatMarks(marksMax)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1.5">{performanceTone}</p>
+                      </div>
+                    </div>
+                    {marksPct !== null && (
+                      <div className="text-right">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Performance</p>
+                        <p className={`text-4xl font-bold ${performanceColor}`}>{marksPct}%</p>
+                      </div>
+                    )}
+                  </div>
+                  {marksPct !== null && (
+                    <div className="mt-5">
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-primary to-[hsl(280_80%_60%)] transition-all"
+                          style={{ width: `${Math.min(100, Math.max(0, marksPct))}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-              <div>
-                <p className="text-sm text-muted-foreground">Score</p>
-                <p className="text-2xl font-bold">
-                  {stats.score}/{stats.total_questions}
-                </p>
+              {/* Secondary Stats Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-border bg-card p-4 transition-all hover:shadow-md hover:border-primary/30">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    <p className="text-[11px] font-medium uppercase tracking-wide leading-tight">Total Correct Questions</p>
+                  </div>
+                  <p className="text-2xl font-bold mt-2">
+                    {stats.score}
+                    <span className="text-base font-medium text-muted-foreground">/{stats.total_questions}</span>
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-card p-4 transition-all hover:shadow-md hover:border-primary/30">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Target className="h-4 w-4 shrink-0" />
+                    <p className="text-[11px] font-medium uppercase tracking-wide leading-tight">Accuracy</p>
+                  </div>
+                  <p className="text-2xl font-bold mt-2">{stats.accuracy_percentage}%</p>
+                </div>
+                <div className="rounded-xl border border-border bg-card p-4 transition-all hover:shadow-md hover:border-primary/30">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Timer className="h-4 w-4 shrink-0" />
+                    <p className="text-[11px] font-medium uppercase tracking-wide leading-tight">Avg Time/Question</p>
+                  </div>
+                  <p className="text-2xl font-bold mt-2">
+                    {formatDuration(Math.round(stats.avg_time_per_question))}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-card p-4 transition-all hover:shadow-md hover:border-primary/30">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Clock className="h-4 w-4 shrink-0" />
+                    <p className="text-[11px] font-medium uppercase tracking-wide leading-tight">Total Time</p>
+                  </div>
+                  <p className="text-2xl font-bold mt-2">
+                    {formatDuration(stats.time_spent_seconds)}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Accuracy</p>
-                <p className="text-2xl font-bold">{stats.accuracy_percentage}%</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Avg Time/Question</p>
-                <p className="text-2xl font-bold">
-                  {formatDuration(Math.round(stats.avg_time_per_question))}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Time</p>
-                <p className="text-2xl font-bold">
-                  {formatDuration(stats.time_spent_seconds)}
-                </p>
-              </div>
-            </div>
-              <ExamMarksSummary marksScore={totalMarks.score} marksMax={totalMarks.max} />
-          </Card>
-        )}
+            </Card>
+          );
+        })()}
 
         {/* Questions Review - Collapsible Sections */}
         <div className="space-y-4">
@@ -984,6 +1067,14 @@ export default function ExamReview() {
           })}
         </div>
       </div>
+
+      <OnboardingModal
+        isOpen={showOnboardingModal}
+        onComplete={() => {
+          sessionStorage.removeItem('needsOnboarding');
+          setShowOnboardingModal(false);
+        }}
+      />
     </div>
   );
 }
