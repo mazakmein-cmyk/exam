@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, BookOpen, Globe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { formatMarks } from "@/services/scoringEngine";
+import { formatMarks, type ScoringConfig } from "@/services/scoringEngine";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -24,6 +24,17 @@ type Exam = {
     supported_languages?: string[];
 };
 
+// Per-section marking display for exams that vary scoring across sections.
+// `primarySectionId` is keyed against the PRIMARY language section because
+// scoring config is stored on primary-language rows (secondary languages
+// resolve via section_group_id at scoring time — see examService).
+type SectionMarkingDisplay = {
+    primarySectionId: string;
+    namesByLanguage: Record<string, string>;
+    questionCount: number;
+    config: ScoringConfig | null;
+};
+
 const ExamIntro = () => {
     const { examId } = useParams();
     const navigate = useNavigate();
@@ -35,6 +46,13 @@ const ExamIntro = () => {
     const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
     const [publishedLanguages, setPublishedLanguages] = useState<string[]>([]);
     const [markingScheme, setMarkingScheme] = useState<{correct: number, wrong: number, skipped: number} | null>(null);
+    const [sectionMarking, setSectionMarking] = useState<SectionMarkingDisplay[]>([]);
+    const [hasSectionVariation, setHasSectionVariation] = useState(false);
+    const [hasQuestionOverrides, setHasQuestionOverrides] = useState(false);
+    const [primaryLanguage, setPrimaryLanguage] = useState<string>("en");
+    const [totalMaxMarks, setTotalMaxMarks] = useState<number>(0);
+    const [totalQuestionCount, setTotalQuestionCount] = useState<number>(0);
+    const [unscoredQuestionCount, setUnscoredQuestionCount] = useState<number>(0);
 
     const fromPage = searchParams.get("from");
 
@@ -75,10 +93,12 @@ const ExamIntro = () => {
                 setSelectedLanguage(pubLangs[0]);
             }
 
-            // Fetch ALL Sections
+            // Fetch ALL Sections (include name + section_group_id so the marking
+            // scheme display below can show per-section breakdowns and resolve
+            // localized section names for multi-language exams).
             const { data: sections, error: sectionsError } = await supabase
                 .from("sections")
-                .select("id, language, sort_order")
+                .select("id, name, language, sort_order, section_group_id")
                 .eq("exam_id", examId)
                 .order("sort_order", { ascending: true })
                 .order("created_at", { ascending: true });
@@ -87,19 +107,144 @@ const ExamIntro = () => {
 
             setAllSections(sections || []);
 
-            // Fetch marks config for marking scheme display
+            // Fetch marks config for marking scheme display.
+            // Layered lookup: exam default + per-section overrides + per-question overrides.
+            // If sections vary in their effective config, the intro renders a per-section
+            // breakdown instead of a single +/-/skip card so students aren't surprised
+            // mid-exam by a section with different marks.
             try {
-                const { getExamScoringDefault } = await import('@/services/scoringService');
-                const scheme = await getExamScoringDefault(examId!);
-                if (scheme) {
-                    setMarkingScheme({
-                        correct: scheme.marks_correct,
-                        wrong: scheme.marks_wrong,
-                        skipped: scheme.marks_skipped,
+                const { getExamScoringDefault, getSectionScoringDefaults, getQuestionScoringConfigs }
+                    = await import('@/services/scoringService');
+
+                // Scoring config lives on PRIMARY-language sections/questions; secondary
+                // languages resolve via section_group_id at scoring time. So fetch primary.
+                const primaryLang: string = (examData as any).primary_language || "en";
+                const supportedLangs: string[] = (examData as any).supported_languages || ["en"];
+                const isMultiLang = supportedLangs.length > 1;
+                setPrimaryLanguage(primaryLang);
+
+                const allSecs = sections || [];
+                const primarySecs = isMultiLang
+                    ? allSecs.filter((s: any) => s.language === primaryLang)
+                    : allSecs;
+                const primarySecIds = primarySecs.map((s: any) => s.id);
+
+                // Question rows per primary section. Kept around (not just IDs) so the
+                // total-marks loop below can resolve each question's effective config
+                // (question override → section override → exam default → null).
+                let allQuestionRows: { id: string; section_id: string }[] = [];
+                const questionCounts = new Map<string, number>();
+                if (primarySecIds.length > 0) {
+                    const { data: qsData } = await supabase
+                        .from("parsed_questions")
+                        .select("id, section_id")
+                        .in("section_id", primarySecIds);
+                    allQuestionRows = ((qsData || []) as any[]).map((q) => ({
+                        id: q.id as string,
+                        section_id: q.section_id as string,
+                    }));
+                    allQuestionRows.forEach((q) => {
+                        questionCounts.set(q.section_id, (questionCounts.get(q.section_id) || 0) + 1);
                     });
                 }
+                const allQuestionIds = allQuestionRows.map((q) => q.id);
+
+                const [examDefault, sectionConfigs, questionConfigs] = await Promise.all([
+                    getExamScoringDefault(examId!),
+                    getSectionScoringDefaults(primarySecIds),
+                    getQuestionScoringConfigs(allQuestionIds),
+                ]);
+
+                if (examDefault) {
+                    setMarkingScheme({
+                        correct: examDefault.marks_correct,
+                        wrong: examDefault.marks_wrong,
+                        skipped: examDefault.marks_skipped,
+                    });
+                }
+
+                // Build per-section marking. Strip show_marks_in_simulator from the
+                // exam default so the effective config matches ScoringConfig shape.
+                const fallbackFromExam: ScoringConfig | null = examDefault ? {
+                    marks_correct: examDefault.marks_correct,
+                    marks_wrong: examDefault.marks_wrong,
+                    marks_skipped: examDefault.marks_skipped,
+                    mcq_mode: examDefault.mcq_mode,
+                    mcq_wrong_penalty: examDefault.mcq_wrong_penalty,
+                    rounding_strategy: examDefault.rounding_strategy,
+                } : null;
+
+                const sectionMarkingArr: SectionMarkingDisplay[] = primarySecs
+                    .map((s: any) => {
+                        const effective = sectionConfigs.get(s.id) ?? fallbackFromExam;
+
+                        // Localized names: walk siblings via section_group_id
+                        const namesByLang: Record<string, string> = { [primaryLang]: s.name };
+                        if (isMultiLang && s.section_group_id) {
+                            allSecs.forEach((other: any) => {
+                                if (
+                                    other.section_group_id === s.section_group_id
+                                    && other.language
+                                    && other.language !== primaryLang
+                                ) {
+                                    namesByLang[other.language] = other.name;
+                                }
+                            });
+                        }
+
+                        return {
+                            primarySectionId: s.id,
+                            namesByLanguage: namesByLang,
+                            questionCount: questionCounts.get(s.id) || 0,
+                            config: effective,
+                        };
+                    })
+                    .filter((sm: SectionMarkingDisplay) => sm.questionCount > 0);
+
+                setSectionMarking(sectionMarkingArr);
+
+                // Section-level variation: do any two sections have different effective configs?
+                const configsAreEqual = (a: ScoringConfig | null, b: ScoringConfig | null) => {
+                    if (!a || !b) return a === b;
+                    return a.marks_correct === b.marks_correct
+                        && a.marks_wrong === b.marks_wrong
+                        && a.marks_skipped === b.marks_skipped
+                        && a.mcq_mode === b.mcq_mode
+                        && a.mcq_wrong_penalty === b.mcq_wrong_penalty
+                        && a.rounding_strategy === b.rounding_strategy;
+                };
+                if (sectionMarkingArr.length > 1) {
+                    const first = sectionMarkingArr[0].config;
+                    setHasSectionVariation(
+                        !sectionMarkingArr.every((sm) => configsAreEqual(sm.config, first))
+                    );
+                }
+
+                setHasQuestionOverrides(questionConfigs.size > 0);
+
+                // Problem 5: total possible marks across all questions, using each
+                // question's effective scoring config (question override → section
+                // override → exam default). Questions with no config at any level
+                // contribute 0 and are flagged as unscored so the student is warned
+                // about partial coverage on the intro screen.
+                let computedTotalMax = 0;
+                let computedUnscored = 0;
+                for (const q of allQuestionRows) {
+                    const effective =
+                        questionConfigs.get(q.id) ??
+                        sectionConfigs.get(q.section_id) ??
+                        fallbackFromExam;
+                    if (effective) {
+                        computedTotalMax += effective.marks_correct;
+                    } else {
+                        computedUnscored++;
+                    }
+                }
+                setTotalMaxMarks(Math.round(computedTotalMax * 100) / 100);
+                setTotalQuestionCount(allQuestionRows.length);
+                setUnscoredQuestionCount(computedUnscored);
             } catch (e) {
-                // Non-fatal
+                // Non-fatal — exam still loads without marking display
             }
         } catch (error: any) {
             toast({
@@ -226,32 +371,96 @@ const ExamIntro = () => {
                         )}
 
                         {/* Marking Scheme */}
-                        {markingScheme && (
+                        {(markingScheme || hasSectionVariation || hasQuestionOverrides) && (
                             <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                                <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm mb-3">
-                                    <svg className="h-4 w-4 text-[#6C3EF4]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 3v18m-6-6 6 6 6-6" />
-                                    </svg>
-                                    Marking Scheme
-                                </h3>
-                                <div className="flex items-center gap-4 text-sm">
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 text-xs">+{formatMarks(markingScheme.correct)}</span>
-                                        <span className="text-muted-foreground">Correct</span>
-                                    </div>
-                                    {markingScheme.wrong > 0 && (
-                                        <div className="flex items-center gap-1.5">
-                                            <span className="font-bold text-white bg-red-600 rounded-full px-2 py-0.5 text-xs">−{formatMarks(markingScheme.wrong)}</span>
-                                            <span className="text-muted-foreground">Wrong</span>
-                                        </div>
-                                    )}
-                                    {markingScheme.skipped > 0 && (
-                                        <div className="flex items-center gap-1.5">
-                                            <span className="font-bold text-muted-foreground bg-muted rounded-full px-2 py-0.5 text-xs">−{formatMarks(markingScheme.skipped)}</span>
-                                            <span className="text-muted-foreground">Skipped</span>
-                                        </div>
+                                <div className="mb-3">
+                                    <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
+                                        <svg className="h-4 w-4 text-[#6C3EF4]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M12 3v18m-6-6 6 6 6-6" />
+                                        </svg>
+                                        Marking Scheme
+                                    </h3>
+                                    {totalMaxMarks > 0 && (
+                                        <p className="text-[11px] text-muted-foreground mt-1 tabular-nums">
+                                            <span className="font-bold text-foreground">{formatMarks(totalMaxMarks)}</span> marks total
+                                            {totalQuestionCount > 0 && ` · ${totalQuestionCount} question${totalQuestionCount === 1 ? "" : "s"}`}
+                                            {unscoredQuestionCount > 0 && (
+                                                <span className="text-amber-700 dark:text-amber-400 ml-1">
+                                                    · {unscoredQuestionCount} unscored
+                                                </span>
+                                            )}
+                                        </p>
                                     )}
                                 </div>
+
+                                {hasSectionVariation ? (
+                                    // Per-section breakdown: marking varies between sections,
+                                    // so a single +/-/skip row would mislead the student.
+                                    <div className="space-y-2">
+                                        {sectionMarking.map((sm) => {
+                                            const name =
+                                                sm.namesByLanguage[displayLanguage]
+                                                || sm.namesByLanguage[primaryLanguage]
+                                                || Object.values(sm.namesByLanguage)[0]
+                                                || "Section";
+                                            return (
+                                                <div key={sm.primarySectionId} className="flex items-center justify-between gap-3 text-sm">
+                                                    <div className="text-foreground font-medium min-w-0 truncate">
+                                                        {name}
+                                                        <span className="text-muted-foreground font-normal ml-2 text-xs">({sm.questionCount} Q)</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 shrink-0">
+                                                        {sm.config ? (
+                                                            <>
+                                                                <span className="font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 text-xs">+{formatMarks(sm.config.marks_correct)}</span>
+                                                                {sm.config.marks_wrong > 0 && (
+                                                                    <span className="font-bold text-white bg-red-600 rounded-full px-2 py-0.5 text-xs">−{formatMarks(sm.config.marks_wrong)}</span>
+                                                                )}
+                                                                {sm.config.marks_skipped > 0 && (
+                                                                    <span className="font-bold text-muted-foreground bg-muted rounded-full px-2 py-0.5 text-xs">−{formatMarks(sm.config.marks_skipped)}</span>
+                                                                )}
+                                                            </>
+                                                        ) : (
+                                                            <span className="text-xs text-muted-foreground italic">unscored</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : markingScheme ? (
+                                    // Uniform scheme — preserved exactly as before.
+                                    <div className="flex items-center gap-4 text-sm">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 text-xs">+{formatMarks(markingScheme.correct)}</span>
+                                            <span className="text-muted-foreground">Correct</span>
+                                        </div>
+                                        {markingScheme.wrong > 0 && (
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="font-bold text-white bg-red-600 rounded-full px-2 py-0.5 text-xs">−{formatMarks(markingScheme.wrong)}</span>
+                                                <span className="text-muted-foreground">Wrong</span>
+                                            </div>
+                                        )}
+                                        {markingScheme.skipped > 0 && (
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="font-bold text-muted-foreground bg-muted rounded-full px-2 py-0.5 text-xs">−{formatMarks(markingScheme.skipped)}</span>
+                                                <span className="text-muted-foreground">Skipped</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : hasQuestionOverrides ? (
+                                    // Only question-level overrides exist — no overall scheme to summarize.
+                                    // Students still see per-question badges in the simulator.
+                                    <p className="text-xs text-muted-foreground italic">
+                                        Marks vary by question — check each question's badge during the exam.
+                                    </p>
+                                ) : null}
+
+                                {hasQuestionOverrides && (markingScheme || hasSectionVariation) && (
+                                    <p className="text-[11px] text-muted-foreground/70 mt-3 italic">
+                                        * Some individual questions may have different marks from those shown above.
+                                    </p>
+                                )}
                             </div>
                         )}
 

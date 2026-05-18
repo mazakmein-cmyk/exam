@@ -57,7 +57,7 @@ export function applyRounding(
       return Math.ceil(value * 100) / 100;
     case "none":
     default:
-      return Math.round(value * 100) / 100; // cap at 2 dp regardless
+      return value;
   }
 }
 

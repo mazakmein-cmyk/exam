@@ -4,9 +4,11 @@ interface OptimizedImageProps {
   src: string;
   alt: string;
   className?: string;
+  /** Set true for above-the-fold images (hero, first question). Default lazy. */
+  priority?: boolean;
 }
 
-const OptimizedImage = ({ src, alt, className = "" }: OptimizedImageProps) => {
+const OptimizedImage = ({ src, alt, className = "", priority = false }: OptimizedImageProps) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -49,7 +51,9 @@ const OptimizedImage = ({ src, alt, className = "" }: OptimizedImageProps) => {
         className={`${className} ${isLoaded ? "img-fade-in" : "opacity-0 absolute top-0 left-0"}`}
         onLoad={() => setIsLoaded(true)}
         onError={() => setHasError(true)}
-        loading="eager"
+        loading={priority ? "eager" : "lazy"}
+        decoding="async"
+        fetchPriority={priority ? "high" : "auto"}
       />
     </div>
   );

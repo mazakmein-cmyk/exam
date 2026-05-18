@@ -14,10 +14,20 @@ import {
 } from "@/components/ui/alert-dialog";
 
 interface LangError {
-  type: "no_sections" | "no_questions" | "blank_questions";
+  type:
+    | "no_sections"
+    | "no_questions"
+    | "blank_questions"
+    | "section_missing_in_lang"
+    | "question_count_mismatch"
+    | "empty_text_parity"
+    | "option_count_mismatch"
+    | "answer_type_mismatch"
+    | "not_linked_to_primary";
   sectionName: string;
   sectionId: string;
   qNos: number[];
+  detail?: string;
 }
 
 interface PublishExamDialogProps {
@@ -45,7 +55,10 @@ export default function PublishExamDialog({
   const [supportedLangsToPublish, setSupportedLangsToPublish] = useState<string[]>([]);
   const [selectedLangsForPublish, setSelectedLangsForPublish] = useState<string[]>([]);
   const [validating, setValidating] = useState(true);
-  const [marksWarning, setMarksWarning] = useState<string | null>(null);
+  // marksWarning carries severity so the dialog can render an error-level
+  // banner (red) when the exam has NO marking scheme configured at any layer,
+  // distinct from the amber warning shown for partial coverage.
+  const [marksWarning, setMarksWarning] = useState<{ severity: "warning" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -75,7 +88,7 @@ export default function PublishExamDialog({
 
       const { data: sections, error: sectionsError } = await supabase
         .from("sections")
-        .select("id, name, language")
+        .select("id, name, language, section_group_id, sort_order")
         .eq("exam_id", examId);
 
       if (sectionsError) throw sectionsError;
@@ -136,6 +149,142 @@ export default function PublishExamDialog({
         errorsMap[lang] = langErrors;
       }
 
+      // ── Per-language parity gate (non-primary must mirror primary) ──
+      // For each non-primary language, verify section + question parity
+      // with primary: same sections (linked by section_group_id), same
+      // question counts, non-empty text, matching options/answer_type, and
+      // proper question_group_id linkage. Failures join the same channel
+      // as existing errors so the UI surfaces them without restructuring.
+      const primaryLangForParity = (examData as any)?.primary_language || "en";
+      if (supportedLangs.length > 1) {
+        const allSecIds = (sections as any[]).map((s) => s.id);
+        const { data: allQs } = await supabase
+          .from("parsed_questions")
+          .select(
+            "id, section_id, q_no, text, options, answer_type, question_group_id, image_url, image_urls"
+          )
+          .in("section_id", allSecIds)
+          .order("q_no", { ascending: true });
+
+        const qsBySection = new Map<string, any[]>();
+        for (const q of (allQs || []) as any[]) {
+          const arr = qsBySection.get(q.section_id) || [];
+          arr.push(q);
+          qsBySection.set(q.section_id, arr);
+        }
+
+        const primarySections = (sections as any[]).filter(
+          (s) => s.language === primaryLangForParity
+        );
+
+        for (const lang of supportedLangs) {
+          if (lang === primaryLangForParity) continue;
+          const langName = getLangName(lang);
+          const langErrors = errorsMap[lang] || [];
+
+          for (const primSec of primarySections) {
+            const groupId = primSec.section_group_id;
+            const secSec = groupId
+              ? (sections as any[]).find(
+                  (s) => s.language === lang && s.section_group_id === groupId
+                )
+              : undefined;
+
+            if (!secSec) {
+              langErrors.push({
+                type: "section_missing_in_lang",
+                sectionName: primSec.name,
+                sectionId: primSec.id,
+                qNos: [],
+              });
+              continue;
+            }
+
+            const primQs = qsBySection.get(primSec.id) || [];
+            const secQs = qsBySection.get(secSec.id) || [];
+
+            if (primQs.length !== secQs.length) {
+              langErrors.push({
+                type: "question_count_mismatch",
+                sectionName: primSec.name,
+                sectionId: secSec.id,
+                qNos: [],
+                detail: `has ${secQs.length} question${secQs.length === 1 ? "" : "s"} in ${langName}; primary has ${primQs.length}`,
+              });
+            }
+
+            const overlap = Math.min(primQs.length, secQs.length);
+            const emptyTextQNos: number[] = [];
+            const optionMismatchQNos: number[] = [];
+            const answerTypeMismatchQNos: number[] = [];
+            const notLinkedQNos: number[] = [];
+
+            for (let i = 0; i < overlap; i++) {
+              const p = primQs[i];
+              const s = secQs[i];
+
+              if (!s.question_group_id || s.question_group_id !== p.question_group_id) {
+                notLinkedQNos.push(s.q_no);
+              }
+              const sText = typeof s.text === "string" ? s.text : "";
+              const stripped = sText.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+              const sHasImage =
+                !!s.image_url ||
+                (Array.isArray(s.image_urls) && s.image_urls.length > 0);
+              if (stripped === "" && !sHasImage) {
+                emptyTextQNos.push(s.q_no);
+              }
+              const pOptsLen = Array.isArray(p.options) ? p.options.length : 0;
+              const sOptsLen = Array.isArray(s.options) ? s.options.length : 0;
+              if (pOptsLen !== sOptsLen) {
+                optionMismatchQNos.push(s.q_no);
+              }
+              if (p.answer_type !== s.answer_type) {
+                answerTypeMismatchQNos.push(s.q_no);
+              }
+            }
+
+            if (emptyTextQNos.length > 0) {
+              langErrors.push({
+                type: "empty_text_parity",
+                sectionName: primSec.name,
+                sectionId: secSec.id,
+                qNos: emptyTextQNos,
+              });
+            }
+            if (optionMismatchQNos.length > 0) {
+              langErrors.push({
+                type: "option_count_mismatch",
+                sectionName: primSec.name,
+                sectionId: secSec.id,
+                qNos: optionMismatchQNos,
+                detail: `Q${optionMismatchQNos.join(", Q")} ${optionMismatchQNos.length > 1 ? "have" : "has"} a different option count vs primary`,
+              });
+            }
+            if (answerTypeMismatchQNos.length > 0) {
+              langErrors.push({
+                type: "answer_type_mismatch",
+                sectionName: primSec.name,
+                sectionId: secSec.id,
+                qNos: answerTypeMismatchQNos,
+                detail: `Q${answerTypeMismatchQNos.join(", Q")} ${answerTypeMismatchQNos.length > 1 ? "have" : "has"} a different answer type vs primary`,
+              });
+            }
+            if (notLinkedQNos.length > 0) {
+              langErrors.push({
+                type: "not_linked_to_primary",
+                sectionName: primSec.name,
+                sectionId: secSec.id,
+                qNos: notLinkedQNos,
+                detail: `Q${notLinkedQNos.join(", Q")} not linked to primary (question_group_id mismatch)`,
+              });
+            }
+          }
+
+          errorsMap[lang] = langErrors;
+        }
+      }
+
       setPublishLangErrors(errorsMap);
 
       const currentlyPublished = (examData as any)?.published_languages || [];
@@ -150,18 +299,61 @@ export default function PublishExamDialog({
         const allSectionIds = primarySections.map((s: any) => s.id);
         const { data: allQsData } = await supabase
           .from("parsed_questions")
-          .select("id")
+          .select("id, section_id")
           .in("section_id", allSectionIds);
         if (allQsData && allQsData.length > 0) {
-          const { data: configData } = await supabase
-            .from("question_scoring_config" as any)
-            .select("id")
-            .in("question_id", allQsData.map((q: any) => q.id));
-          const configuredCount = configData?.length ?? 0;
-          if (configuredCount > 0 && configuredCount < allQsData.length) {
-            setMarksWarning(
-              `${allQsData.length - configuredCount} of ${allQsData.length} questions are unscored and will count as 0 marks.`
-            );
+          // A question is "scored" if any of these exist:
+          //   - exam-level default      (exam_scoring_defaults row)
+          //   - section-level override  (section_scoring_defaults row for its section)
+          //   - question-level override (question_scoring_config row for itself)
+          // Previously this code only checked question-level overrides, so an exam
+          // with a perfectly fine exam-level default looked "0% scored" and silently
+          // showed no warning — and an exam with no marks anywhere also showed
+          // nothing, letting creators publish completely unscored exams.
+          const [examDefaultRes, sectionDefaultsRes, questionConfigsRes] = await Promise.all([
+            supabase
+              .from("exam_scoring_defaults" as any)
+              .select("id")
+              .eq("exam_id", examId)
+              .maybeSingle(),
+            allSectionIds.length > 0
+              ? supabase
+                  .from("section_scoring_defaults" as any)
+                  .select("section_id")
+                  .in("section_id", allSectionIds)
+              : Promise.resolve({ data: [] as any[] } as any),
+            supabase
+              .from("question_scoring_config" as any)
+              .select("question_id")
+              .in("question_id", allQsData.map((q: any) => q.id)),
+          ]);
+
+          const hasExamDefault = !!(examDefaultRes as any).data;
+          const sectionIdsWithConfig = new Set<string>(
+            (((sectionDefaultsRes as any).data) || []).map((r: any) => r.section_id)
+          );
+          const questionIdsWithConfig = new Set<string>(
+            (((questionConfigsRes as any).data) || []).map((r: any) => r.question_id)
+          );
+
+          let unscored = 0;
+          for (const q of allQsData as any[]) {
+            const hasQ = questionIdsWithConfig.has(q.id);
+            const hasS = sectionIdsWithConfig.has(q.section_id);
+            if (!hasQ && !hasS && !hasExamDefault) unscored++;
+          }
+
+          if (unscored === allQsData.length) {
+            setMarksWarning({
+              severity: "error",
+              text:
+                "No marking scheme is configured for this exam. Students will submit and see their results without any marks.",
+            });
+          } else if (unscored > 0) {
+            setMarksWarning({
+              severity: "warning",
+              text: `${unscored} of ${allQsData.length} questions are unscored and will count as 0 marks.`,
+            });
           } else {
             setMarksWarning(null);
           }
@@ -231,8 +423,24 @@ export default function PublishExamDialog({
   const getErrorMessage = (err: LangError, langName: string): string => {
     if (err.type === "no_sections") return `No sections set up for ${langName} yet`;
     if (err.type === "no_questions") return `"${err.sectionName}" has no questions yet`;
-    const qList = err.qNos.map((n) => `Q${n}`).join(", ");
-    return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "are" : "is"} missing ${langName} text`;
+    if (err.type === "blank_questions") {
+      const qList = err.qNos.map((n) => `Q${n}`).join(", ");
+      return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "are" : "is"} missing ${langName} text`;
+    }
+    if (err.type === "section_missing_in_lang") {
+      return `Section "${err.sectionName}" missing in ${langName}`;
+    }
+    if (err.type === "question_count_mismatch") {
+      return `"${err.sectionName}" ${err.detail ?? "— question count differs from primary"}`;
+    }
+    if (err.type === "empty_text_parity") {
+      const qList = err.qNos.map((n) => `Q${n}`).join(", ");
+      return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "have" : "has"} empty text in ${langName}`;
+    }
+    if (err.type === "option_count_mismatch" || err.type === "answer_type_mismatch" || err.type === "not_linked_to_primary") {
+      return `"${err.sectionName}" — ${err.detail ?? "parity issue vs primary"}`;
+    }
+    return "Validation issue";
   };
 
   return (
@@ -250,9 +458,15 @@ export default function PublishExamDialog({
                 <div className="space-y-4 text-sm text-muted-foreground outline-none">
                   <p>Select the languages you want to publish for "{examName}".</p>
                   {marksWarning && (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-xs text-amber-700 dark:text-amber-400">
+                    <div
+                      className={
+                        marksWarning.severity === "error"
+                          ? "flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800 p-3 text-xs text-red-700 dark:text-red-400"
+                          : "flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-xs text-amber-700 dark:text-amber-400"
+                      }
+                    >
                       <span className="shrink-0 mt-0.5">⚠</span>
-                      <span>{marksWarning}</span>
+                      <span>{marksWarning.text}</span>
                     </div>
                   )}
                   <div className="rounded-md border p-4 space-y-4">

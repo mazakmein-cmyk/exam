@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Save, Check, AlertCircle, Trash2, MoveUp, MoveDown, XCircle, FileText, X, Plus, Upload, Image as ImageIcon, LayoutTemplate } from "lucide-react";
-import PdfSnipper from "@/components/PdfSnipper";
+const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
 
 interface ParsedQuestion {
   id: string;
@@ -427,7 +427,9 @@ export default function ManualFixEditor() {
         {/* Left Column: PDF Viewer (only if split view is enabled and PDF exists) */}
         {splitView && showPdf && pdfUrl && (
           <div className="w-1/2 h-full">
-            <PdfSnipper pdfUrl={pdfUrl} onSnip={handleSnip} />
+            <Suspense fallback={<div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading PDF viewer…</div>}>
+              <PdfSnipper pdfUrl={pdfUrl} onSnip={handleSnip} />
+            </Suspense>
           </div>
         )}
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -21,10 +21,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check, Globe, Lock, AlertCircle, Scale } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
-import PdfSnipper from "@/components/PdfSnipper";
+import JsonUploadDialog from "@/components/JsonUploadDialog";
+import type { ParseReport } from "@/services/jsonImportParser";
+import {
+  upsertExamDefault,
+  upsertSectionDefault,
+  upsertQuestionConfig,
+  getExamScoringDefault,
+} from "@/services/scoringService";
+const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
 import { QuestionForm } from "@/components/QuestionForm";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
@@ -133,6 +141,9 @@ export default function ExamDetail() {
   // Publish Dialog States
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishAction, setPublishAction] = useState<{ isPublishing: boolean } | null>(null);
+
+  // JSON Upload Dialog State
+  const [showJsonUploadDialog, setShowJsonUploadDialog] = useState(false);
 
   // Add Question State
   const [newQuestionText, setNewQuestionText] = useState("");
@@ -299,12 +310,19 @@ export default function ExamDetail() {
     const lang = langOverride || activeLanguage;
     try {
       setLoading(true);
-      // Fetch Exam
-      const { data: examData, error: examError } = await supabase
-        .from("exams")
-        .select("*")
-        .eq("id", examId)
-        .single();
+      // Parallelize exam + sections — both keyed by examId, independent.
+      const [
+        { data: examData, error: examError },
+        { data: allSectionsData, error: sectionsError },
+      ] = await Promise.all([
+        supabase.from("exams").select("*").eq("id", examId).single(),
+        supabase
+          .from("sections")
+          .select("*")
+          .eq("exam_id", examId)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true }),
+      ]);
 
       if (examError) throw examError;
       setExam(examData as unknown as Exam);
@@ -340,14 +358,6 @@ export default function ExamDetail() {
         description_translations: descTrans,
         instruction_translations: instTrans
       };
-
-      // Fetch ALL Sections (all languages)
-      const { data: allSectionsData, error: sectionsError } = await supabase
-        .from("sections")
-        .select("*")
-        .eq("exam_id", examId)
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true });
 
       if (sectionsError) throw sectionsError;
 
@@ -1752,6 +1762,312 @@ export default function ExamDetail() {
     }
   };
 
+  // ─── JSON Upload commit handler ─────────────────────────────────────
+  const commitJson = async (
+    report: ParseReport,
+    mode: "replace" | "append",
+    language: string
+  ): Promise<{ ok: boolean }> => {
+    if (!exam || !examId) return { ok: false };
+    if (exam.is_published) {
+      toast({
+        title: "Cannot upload",
+        description: "Unpublish the exam to edit questions.",
+        variant: "destructive",
+      });
+      return { ok: false };
+    }
+
+    const isPrimary = language === primaryLanguage;
+    const matched = report.perSection.filter(
+      (s) => s.matchedSectionId !== null && s.accepted.length > 0
+    );
+    if (matched.length === 0) {
+      toast({
+        title: "Nothing to import",
+        description: "No matched sections with questions were found.",
+        variant: "destructive",
+      });
+      return { ok: false };
+    }
+
+    try {
+      const sectionIdsForLang = report.perSection
+        .filter((s) => s.matchedSectionId)
+        .map((s) => s.matchedSectionId!) as string[];
+
+      // [1] Replace handling — per-language scope
+      if (mode === "replace" && sectionIdsForLang.length > 0) {
+        const { data: existing } = await supabase
+          .from("parsed_questions")
+          .select("question_group_id")
+          .in("section_id", sectionIdsForLang);
+
+        const groupIds = (existing || [])
+          .map((q: any) => q.question_group_id)
+          .filter((g: any) => g != null) as string[];
+
+        const { error: delErr } = await supabase
+          .from("parsed_questions")
+          .delete()
+          .in("section_id", sectionIdsForLang);
+        if (delErr) throw delErr;
+
+        // Primary replace → also delete siblings linked by question_group_id
+        if (isPrimary && groupIds.length > 0) {
+          const siblingSectionIds = allSections
+            .filter((s) => s.language !== language)
+            .map((s) => s.id);
+          if (siblingSectionIds.length > 0) {
+            const uniqueGroupIds = Array.from(new Set(groupIds));
+            await supabase
+              .from("parsed_questions")
+              .delete()
+              .in("question_group_id", uniqueGroupIds)
+              .in("section_id", siblingSectionIds);
+          }
+        }
+      }
+
+      let totalCreated = 0;
+      let totalSections = 0;
+
+      for (const sec of matched) {
+        const matchedSectionId = sec.matchedSectionId!;
+        const accepted = sec.accepted;
+        const matchedSec = allSections.find((s) => s.id === matchedSectionId);
+
+        // Compute startQNo for append (Replace cleared the section)
+        let startQNo = 1;
+        if (mode === "append") {
+          const { data: maxRow } = await supabase
+            .from("parsed_questions")
+            .select("q_no")
+            .eq("section_id", matchedSectionId)
+            .order("q_no", { ascending: false })
+            .limit(1);
+          startQNo =
+            (maxRow && maxRow.length > 0 ? Number((maxRow[0] as any).q_no ?? 0) : 0) + 1;
+        }
+
+        if (isPrimary) {
+          const siblingSections = matchedSec?.section_group_id
+            ? allSections.filter(
+                (s) =>
+                  s.section_group_id === matchedSec!.section_group_id &&
+                  s.id !== matchedSectionId
+              )
+            : [];
+
+          for (let i = 0; i < accepted.length; i++) {
+            const aq = accepted[i];
+            const qNo = startQNo + i;
+            const groupId = isMultiLang ? crypto.randomUUID() : null;
+
+            const { data: inserted, error: insErr } = await supabase
+              .from("parsed_questions")
+              .insert({
+                section_id: matchedSectionId,
+                q_no: qNo,
+                text: aq.text,
+                answer_type: aq.answer_type,
+                options: aq.options,
+                correct_answer: aq.correct_answer,
+                question_group_id: groupId,
+                requires_review: false,
+                is_excluded: false,
+                is_finalized: true,
+              } as any)
+              .select()
+              .single();
+            if (insErr) throw insErr;
+
+            if (aq.marks_config) {
+              try {
+                await upsertQuestionConfig((inserted as any).id, aq.marks_config);
+              } catch (mcfgErr) {
+                console.error("Failed to set per-question marks:", mcfgErr);
+              }
+            }
+
+            // Sibling placeholder propagation / back-fill
+            if (groupId) {
+              for (const sibSec of siblingSections) {
+                const { data: existingSib } = await supabase
+                  .from("parsed_questions")
+                  .select("id")
+                  .eq("section_id", sibSec.id)
+                  .eq("q_no", qNo)
+                  .maybeSingle();
+                if (existingSib) {
+                  await supabase
+                    .from("parsed_questions")
+                    .update({
+                      question_group_id: groupId,
+                      answer_type: aq.answer_type,
+                      correct_answer: aq.correct_answer,
+                    } as any)
+                    .eq("id", (existingSib as any).id);
+                } else {
+                  await supabase.from("parsed_questions").insert({
+                    section_id: sibSec.id,
+                    q_no: qNo,
+                    text: "",
+                    answer_type: aq.answer_type,
+                    options: aq.options.map(() => ""),
+                    correct_answer: aq.correct_answer,
+                    requires_review: true,
+                    is_excluded: false,
+                    is_finalized: false,
+                    question_group_id: groupId,
+                  } as any);
+                }
+              }
+            }
+            totalCreated++;
+          }
+        } else {
+          // Secondary: pair to primary by position; permissive
+          let primaryQuestions: any[] = [];
+          if (matchedSec?.section_group_id) {
+            const primSec = allSections.find(
+              (s) =>
+                s.section_group_id === matchedSec.section_group_id &&
+                s.language === primaryLanguage
+            );
+            if (primSec) {
+              const { data } = await supabase
+                .from("parsed_questions")
+                .select("id, q_no, question_group_id, correct_answer, answer_type")
+                .eq("section_id", primSec.id)
+                .order("q_no", { ascending: true });
+              primaryQuestions = (data || []) as any[];
+            }
+          }
+
+          for (let i = 0; i < accepted.length; i++) {
+            const aq = accepted[i];
+            const primaryQ = primaryQuestions[i];
+
+            let qNo: number;
+            if (primaryQ) {
+              qNo = Number(primaryQ.q_no);
+            } else {
+              // Extra question beyond primary's count — pick next free q_no in this section
+              const { data: maxRow } = await supabase
+                .from("parsed_questions")
+                .select("q_no")
+                .eq("section_id", matchedSectionId)
+                .order("q_no", { ascending: false })
+                .limit(1);
+              qNo =
+                (maxRow && maxRow.length > 0 ? Number((maxRow[0] as any).q_no ?? 0) : 0) + 1;
+            }
+
+            const { data: existingRow } = await supabase
+              .from("parsed_questions")
+              .select("id")
+              .eq("section_id", matchedSectionId)
+              .eq("q_no", qNo)
+              .maybeSingle();
+
+            const payload: any = {
+              text: aq.text,
+              options: aq.options,
+              answer_type: primaryQ ? primaryQ.answer_type : aq.answer_type,
+              correct_answer: primaryQ ? primaryQ.correct_answer : aq.correct_answer,
+              question_group_id: primaryQ ? primaryQ.question_group_id : null,
+              requires_review: false,
+              is_finalized: true,
+            };
+
+            if (existingRow) {
+              await supabase
+                .from("parsed_questions")
+                .update(payload)
+                .eq("id", (existingRow as any).id);
+            } else {
+              await supabase.from("parsed_questions").insert({
+                section_id: matchedSectionId,
+                q_no: qNo,
+                is_excluded: false,
+                ...payload,
+              } as any);
+            }
+            totalCreated++;
+          }
+        }
+
+        totalSections++;
+      }
+
+      // [3] Exam-level marks config (primary only)
+      if (isPrimary && report.marksConfig?.exam_default) {
+        const cfg = report.marksConfig.exam_default;
+        const existingDefault = await getExamScoringDefault(examId);
+        if (!existingDefault) {
+          await upsertExamDefault(examId, cfg);
+        } else {
+          const matchesExisting =
+            (cfg.marks_correct === undefined || cfg.marks_correct === existingDefault.marks_correct) &&
+            (cfg.marks_wrong === undefined || cfg.marks_wrong === existingDefault.marks_wrong) &&
+            (cfg.marks_skipped === undefined ||
+              cfg.marks_skipped === existingDefault.marks_skipped) &&
+            (cfg.mcq_mode === undefined || cfg.mcq_mode === existingDefault.mcq_mode) &&
+            (cfg.mcq_wrong_penalty === undefined ||
+              cfg.mcq_wrong_penalty === existingDefault.mcq_wrong_penalty) &&
+            (cfg.rounding_strategy === undefined ||
+              cfg.rounding_strategy === existingDefault.rounding_strategy);
+          if (!matchesExisting) {
+            for (const sec of matched) {
+              await upsertSectionDefault(sec.matchedSectionId!, cfg);
+            }
+          }
+        }
+      }
+
+      // [3b] Section-level marks (primary only)
+      if (isPrimary) {
+        for (const sec of matched) {
+          if (sec.sectionMarksConfig) {
+            await upsertSectionDefault(sec.matchedSectionId!, sec.sectionMarksConfig);
+          }
+        }
+      }
+
+      // [4] Refresh active section's questions + marks
+      if (section) {
+        const { data: refreshedQs } = await supabase
+          .from("parsed_questions")
+          .select("*")
+          .eq("section_id", section.id)
+          .order("q_no", { ascending: true });
+        setQuestions((refreshedQs || []) as any);
+      }
+      await marksModule.refresh();
+
+      toast({
+        title: "Import complete",
+        description: `Created ${totalCreated} question${totalCreated === 1 ? "" : "s"} across ${totalSections} section${totalSections === 1 ? "" : "s"} in ${language}`,
+      });
+      if (report.marksIgnoredReason) {
+        toast({
+          title: "Marks ignored",
+          description: report.marksIgnoredReason,
+        });
+      }
+      return { ok: true };
+    } catch (err: any) {
+      console.error("commitJson error:", err);
+      toast({
+        title: "Import failed",
+        description: err?.message ?? String(err),
+        variant: "destructive",
+      });
+      return { ok: false };
+    }
+  };
+
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0 || !section) return;
     const file = e.target.files[0];
@@ -2097,6 +2413,13 @@ export default function ExamDetail() {
               <DropdownMenuItem onClick={handleDuplicateExam}>
                 <Copy className="mr-2 h-4 w-4" />
                 Duplicate
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setShowJsonUploadDialog(true)}
+                disabled={!!exam?.is_published || aiParsingStatus === "parsing"}
+              >
+                <FileJson className="mr-2 h-4 w-4" />
+                Upload JSON
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleDeleteExam} className="text-destructive focus:text-destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
@@ -2724,11 +3047,13 @@ export default function ExamDetail() {
 
                   {section?.pdf_url ? (
                     <div className="border rounded-lg overflow-hidden h-[600px]">
-                      <PdfSnipper
-                        pdfUrl={section.pdf_url}
-                        onSnip={handleSnip}
-                        onSnipPassage={questionFormat === "passage" ? handleSnipPassage : undefined}
-                      />
+                      <Suspense fallback={<div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading PDF viewer…</div>}>
+                        <PdfSnipper
+                          pdfUrl={section.pdf_url}
+                          onSnip={handleSnip}
+                          onSnipPassage={questionFormat === "passage" ? handleSnipPassage : undefined}
+                        />
+                      </Suspense>
                     </div>
                   ) : (
                     <div className="text-center py-12 border rounded-lg bg-slate-50 text-muted-foreground">
@@ -3141,6 +3466,19 @@ export default function ExamDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* JSON Upload Dialog */}
+      {exam && examId && (
+        <JsonUploadDialog
+          open={showJsonUploadDialog}
+          onOpenChange={setShowJsonUploadDialog}
+          examId={examId}
+          supportedLanguages={supportedLanguages}
+          primaryLanguage={primaryLanguage}
+          docsUrl="/json-upload-guide"
+          commitJson={commitJson}
+        />
+      )}
+
       {/* Publish Dialog Component */}
       {publishAction && exam && (
         <PublishExamDialog
@@ -3212,6 +3550,7 @@ export default function ExamDetail() {
               onClose={() => setShowMarksSheet(false)}
               initialQuestionId={marksDeepLinkQuestionId}
               initialSectionId={marksDeepLinkSectionId}
+              onConfigChange={marksModule.refresh}
             />
           )}
         </SheetContent>

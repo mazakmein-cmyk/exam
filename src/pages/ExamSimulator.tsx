@@ -3,7 +3,8 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu } from "lucide-react";
+import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -177,14 +178,31 @@ const ExamSimulator = () => {
 
     setIsLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-
-      // Check if exam is published (for public access)
-      const { data: examData } = await supabase
-        .from("exams")
-        .select("is_published")
-        .eq("id", examId)
-        .single();
+      // Parallelize all independent fetches — none depend on each other's results.
+      // Auth check, exam-published gate, sections, and questions all keyed by examId/sectionId.
+      const [
+        { data: { user } },
+        { data: examData },
+        { data: allSectionsData },
+        { data: sectionData },
+        { data: questionsData },
+      ] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase.from("exams").select("is_published, primary_language").eq("id", examId).single(),
+        supabase
+          .from("sections")
+          .select("*")
+          .eq("exam_id", examId)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true }),
+        supabase.from("sections").select("*").eq("id", sectionId).single(),
+        supabase
+          .from("parsed_questions")
+          .select("*")
+          .eq("section_id", sectionId)
+          .eq("is_excluded", false)
+          .order("q_no", { ascending: true }),
+      ]);
 
       const isPublicExam = examData?.is_published === true;
 
@@ -198,33 +216,11 @@ const ExamSimulator = () => {
         return;
       }
 
-      // Fetch all sections for the exam to determine order
-      // Filter by language if multi-language
-      const { data: allSectionsData } = await supabase
-        .from("sections")
-        .select("*")
-        .eq("exam_id", examId)
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: true });
-
       // Filter to only sections matching the language, or all if single-lang (legacy)
       const allSecs = allSectionsData || [];
       const langSections = allSecs.filter(s => (s as any).language === lang);
       // Use language-filtered sections if available, otherwise fall back to all
       setAllSections(langSections.length > 0 ? langSections : allSecs);
-
-      const { data: sectionData } = await supabase
-        .from("sections")
-        .select("*")
-        .eq("id", sectionId)
-        .single();
-
-      const { data: questionsData } = await supabase
-        .from("parsed_questions")
-        .select("*")
-        .eq("section_id", sectionId)
-        .eq("is_excluded", false)
-        .order("q_no", { ascending: true });
 
       // Sort questions: use final_order if available, otherwise fallback to q_no
       const sortedQuestions = (questionsData || []).sort((a, b) => {
@@ -241,14 +237,70 @@ const ExamSimulator = () => {
         // This prevents orphan attempt records from page loads, previews, and bot visits
         setTimeRemaining(sectionData.time_minutes * 60);
 
-        // Fetch scoring configs for marks badges
+        // Fetch scoring configs for marks badges.
+        // Scoring config lives on PRIMARY-language sections/questions only.
+        // For secondary-language attempts, resolve each current question_id to its
+        // primary sibling via question_group_id, fetch configs by primary IDs,
+        // then rekey the result map back to current IDs so the badge lookup
+        // `scoringConfigs.get(currentQuestion.id)` resolves.
         try {
           const { getQuestionScoringConfigs, getExamScoringDefault } = await import('@/services/scoringService');
           const examDefault = await getExamScoringDefault(examId!);
           setShowMarksInSim(examDefault?.show_marks_in_simulator ?? true);
           if (examDefault?.show_marks_in_simulator !== false) {
-            const configs = await getQuestionScoringConfigs(sortedQuestions.map((q: any) => q.id));
-            setScoringConfigs(configs);
+            const primaryLang = (examData as any)?.primary_language as string | null;
+            const currentLang = (sectionData as any)?.language as string | null;
+            const groupId = (sectionData as any)?.section_group_id as string | null;
+
+            // Map: current question ID → ID to use for config lookup (primary or self)
+            const currentIdToConfigId = new Map<string, string>();
+            sortedQuestions.forEach((q: any) => currentIdToConfigId.set(q.id, q.id));
+
+            if (primaryLang && currentLang && currentLang !== primaryLang && groupId) {
+              const { data: primarySection } = await supabase
+                .from("sections")
+                .select("id")
+                .eq("section_group_id", groupId)
+                .eq("language", primaryLang)
+                .single();
+
+              if (primarySection) {
+                const groupIds = sortedQuestions
+                  .map((q: any) => q.question_group_id)
+                  .filter(Boolean) as string[];
+
+                if (groupIds.length > 0) {
+                  const { data: primaryQuestions } = await supabase
+                    .from("parsed_questions")
+                    .select("id, question_group_id")
+                    .eq("section_id", primarySection.id)
+                    .in("question_group_id", groupIds);
+
+                  if (primaryQuestions && primaryQuestions.length > 0) {
+                    const groupToPrimary = new Map(
+                      primaryQuestions.map((pq: any) => [pq.question_group_id, pq.id])
+                    );
+                    sortedQuestions.forEach((q: any) => {
+                      const primaryId = q.question_group_id
+                        ? groupToPrimary.get(q.question_group_id)
+                        : undefined;
+                      if (primaryId) currentIdToConfigId.set(q.id, primaryId);
+                    });
+                  }
+                }
+              }
+            }
+
+            const configIds = Array.from(new Set(currentIdToConfigId.values()));
+            const primaryConfigs = await getQuestionScoringConfigs(configIds);
+
+            // Rekey by current question IDs so the badge lookup resolves.
+            const configsByCurrentId = new Map<string, ScoringConfig>();
+            currentIdToConfigId.forEach((configId, currentId) => {
+              const cfg = primaryConfigs.get(configId);
+              if (cfg) configsByCurrentId.set(currentId, cfg);
+            });
+            setScoringConfigs(configsByCurrentId);
           }
         } catch (e) {
           // Non-fatal: badges just won't show
@@ -526,6 +578,42 @@ const ExamSimulator = () => {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const getQuestionTypeInfo = (answerType: string, hasOptions: boolean) => {
+    if (answerType === "multi" || answerType === "multiple") {
+      return {
+        label: "Multiple Correct",
+        description:
+          "More than one option may be correct. Select every option you believe applies — scoring depends on how the exam handles partial credit.",
+      };
+    }
+    if (answerType === "numeric") {
+      return {
+        label: "Integer / Numeric",
+        description:
+          "Enter a numerical value as your answer. No options are shown — type the number directly into the input.",
+      };
+    }
+    if (answerType === "essay") {
+      return {
+        label: "Essay",
+        description:
+          "Long-form written answer. Write a detailed response in the text area provided.",
+      };
+    }
+    if ((answerType === "text" || answerType === "short_answer") && !hasOptions) {
+      return {
+        label: "Short Answer",
+        description:
+          "Enter a brief text answer. Your response is matched against the expected answer.",
+      };
+    }
+    return {
+      label: "Single Correct",
+      description:
+        "Exactly one option is correct. Select the single best option from the choices below.",
+    };
+  };
+
   const getQuestionColor = (questionId: string) => {
     const state = questionStates[questionId];
     if (!state) return "bg-background";
@@ -752,10 +840,38 @@ const ExamSimulator = () => {
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-20 sm:pb-6">
           <div className="max-w-6xl mx-auto space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <h2 className="text-sm font-medium text-muted-foreground">
-                Question {currentQuestionIndex + 1} of {questions.length}
-                {currentQuestion?.section_label && ` - ${currentQuestion.section_label}`}
-              </h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm font-medium text-muted-foreground">
+                  Question {currentQuestionIndex + 1} of {questions.length}
+                  {currentQuestion?.section_label && ` - ${currentQuestion.section_label}`}
+                </h2>
+                {currentQuestion && (() => {
+                  const hasOptions = !!(
+                    currentQuestion.options &&
+                    Array.isArray(currentQuestion.options) &&
+                    currentQuestion.options.length > 0
+                  );
+                  const info = getQuestionTypeInfo(currentQuestion.answer_type, hasOptions);
+                  return (
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary cursor-help select-none"
+                            aria-label={`Question type: ${info.label}`}
+                          >
+                            {info.label}
+                            <Info className="h-3 w-3" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-[260px] text-xs">
+                          {info.description}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  );
+                })()}
+              </div>
               <Button
                 variant={questionStates[currentQuestion?.id]?.isMarkedForReview ? "destructive" : "outline"}
                 size="sm"

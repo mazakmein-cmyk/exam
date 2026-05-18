@@ -98,6 +98,7 @@ interface MarksConfigPanelProps {
   onClose: () => void;
   initialQuestionId?: string;
   initialSectionId?: string;
+  onConfigChange?: () => void;
 }
 
 type Tab = "exam" | "section" | "question";
@@ -334,7 +335,7 @@ function PartialPreview({ correct, rounding }: { correct: number; rounding: stri
 
 // ─── Main Panel ──────────────────────────────────────────────────────
 
-export default function MarksConfigPanel({ examId, onClose, initialQuestionId, initialSectionId }: MarksConfigPanelProps) {
+export default function MarksConfigPanel({ examId, onClose, initialQuestionId, initialSectionId, onConfigChange }: MarksConfigPanelProps) {
   const { toast } = useToast();
   const [tab, setTab] = useState<Tab>(initialQuestionId ? "question" : "exam");
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
@@ -432,7 +433,10 @@ export default function MarksConfigPanel({ examId, onClose, initialQuestionId, i
 
   const withSaving = async (fn: () => Promise<void>) => {
     setSaving(true);
-    try { await fn(); } catch (e: any) {
+    try {
+      await fn();
+      onConfigChange?.();
+    } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally { setSaving(false); }
   };
@@ -526,7 +530,9 @@ export default function MarksConfigPanel({ examId, onClose, initialQuestionId, i
           onCheckedChange={(v) => {
             setExamDraft((d) => ({ ...d, show_marks_in_simulator: v }));
             // Auto-save this toggle immediately
-            marks.updateExamConfig({ ...examDraft, show_marks_in_simulator: v }).catch(() => {});
+            marks.updateExamConfig({ ...examDraft, show_marks_in_simulator: v })
+              .then(() => onConfigChange?.())
+              .catch(() => {});
           }}
         />
       </div>

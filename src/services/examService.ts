@@ -250,20 +250,28 @@ export const saveExamAttempt = async ({
                     answer_type: (q as any).answer_type || 'single',
                     correct_answer: q.correct_answer,
                 }));
+                // Rekey questionStates by config (primary) IDs so calculateMarks' internal
+                // `questionStates[q.id]` lookup resolves — q.id here is the primary ID.
+                const statesForMarks: Record<string, QuestionState> = {};
+                for (const [currentId, state] of Object.entries(questionStates)) {
+                    const configId = questionIdToConfigId.get(currentId) || currentId;
+                    statesForMarks[configId] = state;
+                }
                 const { total, max, perQuestion } = calculateMarks(
-                    questionsForMarks, questionStates, qConfigs, sConfigs, eConfig
+                    questionsForMarks, statesForMarks, qConfigs, sConfigs, eConfig
                 );
 
                 // Remap perQuestion keys back to current question IDs for logging
-                const remappedPerQuestion: typeof perQuestion = [];
+                // (perQuestion entries hold PRIMARY-language question_ids because we scored
+                //  against the primary section/question config; we need to rewrite them
+                //  back to the student's actual question_ids so question_marks_log rows
+                //  point at the questions the student actually answered).
                 const configToCurrentId = new Map<string, string>();
                 questionIdToConfigId.forEach((configId, currentId) => configToCurrentId.set(configId, currentId));
-                for (const entry of perQuestion) {
-                    remappedPerQuestion.push({
-                        ...entry,
-                        questionId: configToCurrentId.get(entry.questionId) || entry.questionId,
-                    });
-                }
+                const remappedPerQuestion: typeof perQuestion = perQuestion.map((entry) => ({
+                    ...entry,
+                    question_id: configToCurrentId.get(entry.question_id) ?? entry.question_id,
+                }));
 
                 await saveMarksLog(finalAttemptId!, remappedPerQuestion);
                 await updateAttemptMarks(finalAttemptId!, total, max);

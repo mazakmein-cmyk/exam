@@ -21,6 +21,7 @@ interface Response {
   is_marked_for_review: boolean;
   time_spent_seconds: number;
   is_correct: boolean | null;
+  is_partial?: boolean;
   question: {
     text: string;
     options: any;
@@ -94,30 +95,30 @@ export default function ExamReview() {
       const userId = currentAttempt.user_id;
       setSectionId(currentAttempt.sections.id); // Default to current section for uploads
 
-      // Fetch exam data to get name and check creator
-      const { data: examData, error: examError } = await supabase
-        .from("exams")
-        .select("name, user_id")
-        .eq("id", examId)
-        .single();
+      // 2. Parallelize the three independent follow-up fetches.
+      // examData, current user, and sections all key off examId — no dependency between them.
+      const [
+        { data: examData, error: examError },
+        { data: { user } },
+        { data: sections, error: sectionsError },
+      ] = await Promise.all([
+        supabase.from("exams").select("name, user_id").eq("id", examId).single(),
+        supabase.auth.getUser(),
+        supabase
+          .from("sections")
+          .select("*")
+          .eq("exam_id", examId)
+          .order("sort_order", { ascending: true })
+          .order("created_at"),
+      ]);
 
       if (!examError && examData) {
         setExamName(examData.name);
       }
 
-      // 1b. Check if current user is the creator
-      const { data: { user } } = await supabase.auth.getUser();
       if (user && examData) {
         setIsCreator(user.id === examData.user_id);
       }
-
-      // 2. Fetch all sections for this exam
-      const { data: sections, error: sectionsError } = await supabase
-        .from("sections")
-        .select("*")
-        .eq("exam_id", examId)
-        .order("sort_order", { ascending: true })
-        .order("created_at");
 
       if (sectionsError) throw sectionsError;
       setSections(sections);
@@ -228,34 +229,61 @@ export default function ExamReview() {
         time_spent_seconds: 0,
       };
 
-      // Helper to check correctness
-      const checkCorrectness = (response: any) => {
-        if (response.is_correct !== null) return response.is_correct;
-
+      // Helper to check correctness — returns { isCorrect, isPartial }.
+      // Partial only applies to multi-correct: user picked some (but not all)
+      // correct options and no wrong ones.
+      const checkCorrectness = (response: any): { isCorrect: boolean; isPartial: boolean } => {
         const selected = response.selected_answer;
         const correct = response.question.correct_answer;
-
-        if (!selected) return false;
-        if (!correct) return false;
+        const isMulti =
+          response.question.answer_type === "multi" ||
+          response.question.answer_type === "multiple";
 
         const normalize = (val: any) => String(val).trim().toLowerCase();
 
-        if (Array.isArray(correct)) {
-          if (Array.isArray(selected)) {
-            if (selected.length !== correct.length) return false;
-            const sortedSelected = [...selected].sort().map(normalize);
-            const sortedCorrect = [...correct].sort().map(normalize);
-            return sortedSelected.every((val, index) => val === sortedCorrect[index]);
+        // Multi-correct: always recompute to detect partial credit
+        if (isMulti && Array.isArray(correct)) {
+          if (!selected) {
+            return { isCorrect: false, isPartial: false };
           }
-          return correct.some(c => normalize(c) === normalize(selected));
+          const selectedArr = Array.isArray(selected) ? selected : [selected];
+          const normSelected = selectedArr.map(normalize);
+          const normCorrect = correct.map(normalize);
+          const correctSet = new Set(normCorrect);
+
+          const wrongPicked = normSelected.filter(s => !correctSet.has(s)).length;
+          const correctPicked = normSelected.filter(s => correctSet.has(s)).length;
+
+          const isCorrect =
+            wrongPicked === 0 &&
+            correctPicked === normCorrect.length &&
+            normSelected.length === normCorrect.length;
+
+          const isPartial = !isCorrect && wrongPicked === 0 && correctPicked > 0;
+
+          return { isCorrect, isPartial };
         }
 
-        return normalize(selected) === normalize(correct);
+        // SCQ / other: trust pre-graded value if present
+        if (response.is_correct !== null && response.is_correct !== undefined) {
+          return { isCorrect: response.is_correct === true, isPartial: false };
+        }
+
+        if (!selected || !correct) return { isCorrect: false, isPartial: false };
+
+        if (Array.isArray(correct)) {
+          return {
+            isCorrect: correct.some(c => normalize(c) === normalize(selected)),
+            isPartial: false,
+          };
+        }
+
+        return { isCorrect: normalize(selected) === normalize(correct), isPartial: false };
       };
 
       const gradedResponses = sortedResponses.map((r: any) => {
-        const isCorrect = checkCorrectness(r);
-        return { ...r, is_correct: isCorrect };
+        const { isCorrect, isPartial } = checkCorrectness(r);
+        return { ...r, is_correct: isCorrect, is_partial: isPartial };
       });
 
       gradedResponses.forEach((r: any) => {
@@ -278,12 +306,15 @@ export default function ExamReview() {
       try {
         const sectionIds = sections.map((s: any) => s.id);
 
-        // Fetch all attempts for this exam (all users)
-        const { data: allExamAttempts, error: rankError } = await supabase
+        // Fetch all attempts for this exam (all users).
+        // Cast to any because marks_score / marks_max were added by the marks-module
+        // migration but the generated Supabase types in src/integrations/supabase/types.ts
+        // haven't been regenerated — same workaround used elsewhere for marks columns.
+        const { data: allExamAttempts, error: rankError } = (await supabase
           .from("attempts")
-          .select("id, user_id, section_id, score, total_questions, created_at")
+          .select("id, user_id, section_id, score, total_questions, marks_score, marks_max, created_at")
           .in("section_id", sectionIds)
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: true })) as { data: any[] | null; error: any };
 
         if (!rankError && allExamAttempts && allExamAttempts.length > 0) {
           // Group attempts into sessions
@@ -294,12 +325,17 @@ export default function ExamReview() {
             userAttempts[a.user_id].push(a);
           });
 
-          // Build sessions: each first-section attempt starts a new session
+          // Build sessions: each first-section attempt starts a new session.
+          // Track BOTH totalScore (correct count) and totalMarks (marks_score sum)
+          // so we can rank by marks when the exam has a scoring config — raw
+          // correct-count is meaningless on an exam with negative marking.
           interface ExamSession {
             sessionKey: string;
             userId: string;
             totalScore: number;
             totalQuestions: number;
+            totalMarks: number;
+            sessionHasMarks: boolean;
             attemptIds: string[];
           }
 
@@ -312,6 +348,9 @@ export default function ExamReview() {
             let currentSession: ExamSession | null = null;
 
             attempts.forEach(attempt => {
+              const hasMarks = attempt.marks_score !== null && attempt.marks_score !== undefined;
+              const marksScore = hasMarks ? Number(attempt.marks_score) : 0;
+
               if (firstSectionIds.has(attempt.section_id)) {
                 // Save previous session if exists
                 if (currentSession) {
@@ -323,12 +362,18 @@ export default function ExamReview() {
                   userId: uid,
                   totalScore: attempt.score || 0,
                   totalQuestions: attempt.total_questions || 0,
+                  totalMarks: marksScore,
+                  sessionHasMarks: hasMarks,
                   attemptIds: [attempt.id],
                 };
               } else if (currentSession) {
                 // Add to current session
                 currentSession.totalScore += (attempt.score || 0);
                 currentSession.totalQuestions += (attempt.total_questions || 0);
+                currentSession.totalMarks += marksScore;
+                // A session is treated as "scored" only if every attempt has marks;
+                // any missing marks_score makes the marks total an undercount.
+                if (!hasMarks) currentSession.sessionHasMarks = false;
                 currentSession.attemptIds.push(attempt.id);
               }
             });
@@ -339,8 +384,12 @@ export default function ExamReview() {
             }
           });
 
-          // Sort sessions by totalScore descending
-          sessions.sort((a, b) => b.totalScore - a.totalScore);
+          // Rank by marks if every session on this exam has marks; otherwise
+          // fall back to raw correct-count so unscored exams still get ranked.
+          const rankByMarks = sessions.length > 0 && sessions.every(s => s.sessionHasMarks);
+          const rankValueOf = (s: ExamSession) => rankByMarks ? s.totalMarks : s.totalScore;
+
+          sessions.sort((a, b) => rankValueOf(b) - rankValueOf(a));
 
           // Apply competition ranking (1, 2, 2, 4)
           let currentRank = 1;
@@ -348,7 +397,7 @@ export default function ExamReview() {
             if (index === 0) {
               (session as any).rank = currentRank;
             } else {
-              if (session.totalScore === sessions[index - 1].totalScore) {
+              if (rankValueOf(session) === rankValueOf(sessions[index - 1])) {
                 (session as any).rank = (sessions[index - 1] as any).rank;
               } else {
                 (session as any).rank = index + 1;
@@ -366,11 +415,15 @@ export default function ExamReview() {
           if (currentSession) {
             setRank((currentSession as any).rank);
           } else {
-            // Fallback: find session by matching score for this user
+            // Fallback: find session for this user by matching the same metric
+            // used for ranking — marks if available, else correct count.
             const userSessions = sessions.filter(s => s.userId === userId);
             if (userSessions.length > 0) {
-              // Pick the one with matching score
-              const matchingSession = userSessions.find(s => s.totalScore === aggregatedStats.score);
+              const matchingSession = userSessions.find(s =>
+                rankByMarks
+                  ? s.sessionHasMarks  // best-effort: any scored session for this user
+                  : s.totalScore === aggregatedStats.score
+              );
               setRank(matchingSession ? (matchingSession as any).rank : (userSessions[0] as any).rank);
             }
           }
@@ -457,18 +510,22 @@ export default function ExamReview() {
         <Circle className="w-5 h-5 text-muted-foreground" />
       );
     }
-    return response.is_correct ? (
-      <CheckCircle2 className="w-5 h-5 text-green-500" />
-    ) : (
-      <XCircle className="w-5 h-5 text-destructive" />
-    );
+    if (response.is_correct) {
+      return <CheckCircle2 className="w-5 h-5 text-green-500" />;
+    }
+    if (response.is_partial) {
+      return <CheckCircle2 className="w-5 h-5 text-amber-500" />;
+    }
+    return <XCircle className="w-5 h-5 text-destructive" />;
   };
 
   const getStatusText = (response: Response) => {
     if (response.is_correct === null) {
       return response.selected_answer ? "Attempted" : "Unattempted";
     }
-    return response.is_correct ? "Correct" : "Wrong";
+    if (response.is_correct) return "Correct";
+    if (response.is_partial) return "Partially Correct";
+    return "Wrong";
   };
 
   // Helper to check if a value is an index (numeric string or number)
@@ -503,6 +560,170 @@ export default function ExamReview() {
     return String(answer);
   };
 
+  // Resolve any answer value to its option letter (A/B/C/…); falls back to raw text.
+  const resolveToLetter = (val: any, options?: any[]): string => {
+    if (val === null || val === undefined || val === "") return "—";
+    if (isIndexValue(val) && options && options[Number(val)] !== undefined) {
+      return String.fromCharCode(65 + Number(val));
+    }
+    const upper = String(val).trim().toUpperCase();
+    if (upper.length === 1 && upper >= "A" && upper <= "Z") return upper;
+    if (options) {
+      const idx = options.findIndex(
+        o => String(o).trim().toLowerCase() === String(val).trim().toLowerCase()
+      );
+      if (idx >= 0) return String.fromCharCode(65 + idx);
+    }
+    return String(val);
+  };
+
+  // Resolve a value to its option text (without the leading letter prefix).
+  const resolveToOptionText = (val: any, options?: any[]): string | null => {
+    if (val === null || val === undefined || val === "") return null;
+    if (isIndexValue(val) && options && options[Number(val)] !== undefined) {
+      return String(options[Number(val)]);
+    }
+    const upper = String(val).trim().toUpperCase();
+    if (upper.length === 1 && upper >= "A" && upper <= "Z" && options) {
+      const idx = upper.charCodeAt(0) - 65;
+      if (options[idx] !== undefined) return String(options[idx]);
+    }
+    if (options) {
+      const idx = options.findIndex(
+        o => String(o).trim().toLowerCase() === String(val).trim().toLowerCase()
+      );
+      if (idx >= 0) return String(options[idx]);
+    }
+    return null;
+  };
+
+  // Resolve a value to its option index (0-based), or null if it doesn't map
+  // to any option. Priority: numeric index → letter (A/B/C…) → option text.
+  const resolveToIndex = (val: any, options?: any[]): number | null => {
+    if (val === null || val === undefined || val === "") return null;
+    if (options && isIndexValue(val) && options[Number(val)] !== undefined) {
+      return Number(val);
+    }
+    const upper = String(val).trim().toUpperCase();
+    if (upper.length === 1 && upper >= "A" && upper <= "Z") {
+      const idx = upper.charCodeAt(0) - 65;
+      if (!options || options[idx] !== undefined) return idx;
+    }
+    if (options) {
+      const norm = String(val).trim().toLowerCase();
+      const i = options.findIndex(o => String(o).trim().toLowerCase() === norm);
+      if (i >= 0) return i;
+    }
+    return null;
+  };
+
+  // True iff `val` matches any entry in `set`, handling index/letter/text equivalence.
+  // Both sides are first resolved to an option index so a value's *text* (e.g. "2")
+  // can't collide with another option's raw *index* (e.g. correct=[0,2] vs option B
+  // whose text happens to be "2").
+  const matchesInSet = (val: any, set: any[], options?: any[]): boolean => {
+    const valIdx = resolveToIndex(val, options);
+    if (valIdx !== null) {
+      return set.some(c => resolveToIndex(c, options) === valIdx);
+    }
+    // Fallback for free-text / unmappable values: direct normalized compare.
+    const norm = String(val).trim().toLowerCase();
+    return set.some(c => String(c).trim().toLowerCase() === norm);
+  };
+
+  // Compact answer-chip pill — letter + option text, status color.
+  const AnswerChip = ({
+    letter,
+    text,
+    tone,
+  }: {
+    letter: string;
+    text: string | null;
+    tone: "correct" | "wrong";
+  }) => {
+    const palette =
+      tone === "correct"
+        ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/60 dark:text-green-300 dark:border-green-900"
+        : "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/60 dark:text-red-300 dark:border-red-900";
+    return (
+      <span
+        className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium ${palette}`}
+      >
+        <span className="font-bold tabular-nums">{letter}</span>
+        {text !== null && text !== "" && (
+          <span className="opacity-80 truncate max-w-[180px]">{text}</span>
+        )}
+      </span>
+    );
+  };
+
+  // Replaces the cluttered "Your Answer / Correct Answer" text rows with a clean
+  // two-row chip layout. Each pick in "Your Answer" is colored individually so a
+  // user can see which specific picks were right and which were wrong.
+  const renderAnswerSummary = (response: Response) => {
+    const { options, correct_answer } = response.question;
+    const selectedAnswer = response.selected_answer;
+
+    const selectedArr =
+      selectedAnswer === null || selectedAnswer === undefined || selectedAnswer === ""
+        ? []
+        : Array.isArray(selectedAnswer)
+          ? selectedAnswer.filter(v => v !== null && v !== undefined && v !== "")
+          : [selectedAnswer];
+
+    const correctArr =
+      correct_answer === null || correct_answer === undefined
+        ? []
+        : Array.isArray(correct_answer)
+          ? correct_answer
+          : [correct_answer];
+
+    const optionsArr =
+      options && Array.isArray(options) ? (options as any[]) : undefined;
+
+    return (
+      <div className="mt-4 rounded-lg border bg-muted/30 p-3 sm:p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-[110px] shrink-0">
+            Your Answer
+          </span>
+          {selectedArr.length === 0 ? (
+            <span className="text-sm italic text-muted-foreground">Not answered</span>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedArr.map((val, i) => (
+                <AnswerChip
+                  key={`s-${i}`}
+                  letter={resolveToLetter(val, optionsArr)}
+                  text={resolveToOptionText(val, optionsArr)}
+                  tone={matchesInSet(val, correctArr, optionsArr) ? "correct" : "wrong"}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {correctArr.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-[110px] shrink-0">
+              Correct Answer
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {correctArr.map((val, i) => (
+                <AnswerChip
+                  key={`c-${i}`}
+                  letter={resolveToLetter(val, optionsArr)}
+                  text={resolveToOptionText(val, optionsArr)}
+                  tone="correct"
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Toggle section expand/collapse
   const toggleSection = (sectionId: string) => {
     setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
@@ -525,27 +746,36 @@ export default function ExamReview() {
 
   // Render options with highlighting (handles both index-based and text-based answers)
   const renderOptions = (response: Response) => {
-    const { options, answer_type, correct_answer } = response.question;
+    const { options, correct_answer } = response.question;
     const selectedAnswer = response.selected_answer;
 
     if (!options || !Array.isArray(options) || options.length === 0) {
       return null;
     }
 
-    const isMultiple = answer_type === "multi" || answer_type === "multiple";
-    
-    // Normalize selected and correct to arrays of strings for comparison
-    const rawSelected = isMultiple && Array.isArray(selectedAnswer) ? selectedAnswer : [selectedAnswer];
-    const rawCorrect = isMultiple && Array.isArray(correct_answer) ? correct_answer : [correct_answer];
+    // Normalize to arrays regardless of answer_type — single answers may still
+    // arrive as arrays (and vice versa). matchesInSet handles equivalence between
+    // index, letter (A/B/C…), and option text so we don't get false positives
+    // when those happen to overlap (e.g. options ["1","2"] vs correct ["1","3"]).
+    const rawSelected =
+      selectedAnswer === null || selectedAnswer === undefined || selectedAnswer === ""
+        ? []
+        : Array.isArray(selectedAnswer)
+          ? selectedAnswer
+          : [selectedAnswer];
+    const rawCorrect =
+      correct_answer === null || correct_answer === undefined
+        ? []
+        : Array.isArray(correct_answer)
+          ? correct_answer
+          : [correct_answer];
 
     return (
       <div className="space-y-2 mt-4">
         <p className="font-semibold text-sm text-muted-foreground">Options:</p>
         {options.map((option: string, idx: number) => {
-          const idxStr = String(idx);
-          // Check if selected/correct by index OR by text (backward compatibility)
-          const isSelected = rawSelected.some(s => String(s) === idxStr || String(s) === option);
-          const isCorrect = rawCorrect.some(c => String(c) === idxStr || String(c) === option);
+          const isSelected = matchesInSet(idx, rawSelected, options);
+          const isCorrect = matchesInSet(idx, rawCorrect, options);
 
           let bgClass = "bg-background";
           let borderClass = "border-border";
@@ -802,7 +1032,8 @@ export default function ExamReview() {
 
             const isSectionExpanded = expandedSections[section.id] !== false; // Default expanded
             const correctCount = sectionResponses.filter(r => r.is_correct === true).length;
-            const wrongCount = sectionResponses.filter(r => r.is_correct === false).length;
+            const partialCount = sectionResponses.filter(r => r.is_correct === false && r.is_partial).length;
+            const wrongCount = sectionResponses.filter(r => r.is_correct === false && !r.is_partial).length;
 
             return (
               <Card key={section.id} className="overflow-hidden">
@@ -834,6 +1065,11 @@ export default function ExamReview() {
                     <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
                       {correctCount} correct
                     </Badge>
+                    {partialCount > 0 && (
+                      <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                        {partialCount} partial
+                      </Badge>
+                    )}
                     <Badge variant="secondary" className="bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300">
                       {wrongCount} wrong
                     </Badge>
@@ -862,8 +1098,14 @@ export default function ExamReview() {
                               {getStatusIcon(response)}
                               <span className="font-medium">Question {response.question.q_no}</span>
                               <Badge
-                                variant={response.is_correct ? "default" : "destructive"}
-                                className={response.is_correct ? "bg-green-500" : ""}
+                                variant={response.is_correct ? "default" : response.is_partial ? "secondary" : "destructive"}
+                                className={
+                                  response.is_correct
+                                    ? "bg-green-500"
+                                    : response.is_partial
+                                      ? "bg-amber-500 text-white hover:bg-amber-500/90"
+                                      : ""
+                                }
                               >
                                 {getStatusText(response)}
                               </Badge>
@@ -970,23 +1212,7 @@ export default function ExamReview() {
                                         {renderOptions(response)}
 
                                         {/* Answer Summary */}
-                                        <div className="space-y-2 bg-muted/50 p-4 rounded-md mt-4">
-                                          <div>
-                                            <span className="font-semibold">Your Answer: </span>
-                                            <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
-                                              {formatAnswer(response.selected_answer, response.question.answer_type, response.question.options)}
-                                            </span>
-                                          </div>
-
-                                          {response.question.correct_answer && (
-                                            <div>
-                                              <span className="font-semibold">Correct Answer: </span>
-                                              <span className="text-green-600 font-medium">
-                                                {formatAnswer(response.question.correct_answer, response.question.answer_type, response.question.options)}
-                                              </span>
-                                            </div>
-                                          )}
-                                        </div>
+                                        {renderAnswerSummary(response)}
                                       </div>
                                     </div>
                                   );
@@ -1035,23 +1261,7 @@ export default function ExamReview() {
                                     {renderOptions(response)}
 
                                     {/* Answer Summary */}
-                                    <div className="space-y-2 bg-muted/50 p-4 rounded-md mt-4">
-                                      <div>
-                                        <span className="font-semibold">Your Answer: </span>
-                                        <span className={response.is_correct === false ? "text-destructive font-medium" : "text-green-600 font-medium"}>
-                                          {formatAnswer(response.selected_answer, response.question.answer_type, response.question.options)}
-                                        </span>
-                                      </div>
-
-                                      {response.question.correct_answer && (
-                                        <div>
-                                          <span className="font-semibold">Correct Answer: </span>
-                                          <span className="text-green-600 font-medium">
-                                            {formatAnswer(response.question.correct_answer, response.question.answer_type, response.question.options)}
-                                          </span>
-                                        </div>
-                                      )}
-                                    </div>
+                                    {renderAnswerSummary(response)}
                                   </>
                                 );
                               })()}

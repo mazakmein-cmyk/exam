@@ -8,7 +8,6 @@ import { toast } from "@/hooks/use-toast";
 import { ArrowLeft, TrendingUp, Clock, Target, Users, BookOpen, Eye, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import MarksAnalyticsPanel from "@/components/marks/MarksAnalyticsPanel";
 import SEO from "@/components/SEO";
 import { formatDuration } from "@/lib/utils";
 
@@ -79,11 +78,8 @@ export default function Analytics() {
   const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
   // Maps examId -> Set of firstSectionIds (used for session-based history grouping)
   const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, Set<string>>>({}); 
-  // Creator leaderboard: top 3 sessions ranked by total score
-  const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; username: string; displayName: string; totalScore: number; totalQuestions: number }[]>([]);
-  // Marks analytics data
-  const [marksAnalyticsData, setMarksAnalyticsData] = useState<any[] | null>(null);
-
+  // Creator leaderboard: top 3 sessions ranked by marks (when available) or score
+  const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; username: string; displayName: string; totalScore: number; totalQuestions: number; totalMarks: number; rankedByMarks: boolean }[]>([]);
   const toggleSection = (sectionName: string) => {
     const newCollapsed = new Set(collapsedSections);
     if (newCollapsed.has(sectionName)) {
@@ -139,24 +135,48 @@ export default function Analytics() {
         // We can do this by filtering on the joined column, but JS client requires specific syntax or embedded resource filtering.
         // Easier approach: Get sections for this exam first, then get attempts for those sections.
 
-        // 1. Get Exam Name and Creator ID
-        const { data: examData, error: examError } = await supabase
-          .from("exams")
-          .select("name, user_id")
-          .eq("id", examId)
-          .single();
+        // 1. Parallelize all independent exam-scoped fetches.
+        // examData, allSections, sectionAttempts, and questionsData are all keyed by examId
+        // with no dependency between them — fire them concurrently.
+        const [
+          { data: examData, error: examError },
+          { data: allSections, error: sectionsError },
+          { data: sectionAttempts, error: attemptsError },
+          { data: questionsData, error: questionsError },
+        ] = await Promise.all([
+          supabase.from("exams").select("name, user_id").eq("id", examId).single(),
+          supabase
+            .from("sections")
+            .select("id, sort_order, created_at, language")
+            .eq("exam_id", examId)
+            .order("sort_order", { ascending: true })
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("attempts")
+            .select(`
+              *,
+              section:sections!inner(
+                name,
+                time_minutes,
+                sort_order,
+                created_at,
+                exam:exams(name)
+              )
+            `)
+            .eq("section.exam_id", examId)
+            .order("submitted_at", { ascending: false }),
+          supabase
+            .from("parsed_questions")
+            .select(`
+              id, text, q_no, correct_answer, answer_type, options, image_url, image_urls,
+              section:sections!inner(id, name, exam_id, sort_order)
+            `)
+            .eq("section.exam_id", examId),
+        ]);
 
         if (examError) throw examError;
         setExamName(examData.name);
         const examCreatorId = examData.user_id; // Store creator ID to filter out their attempts
-
-        // 1.5 Get All Sections to determine First and Last (for analytics logic)
-        const { data: allSections, error: sectionsError } = await supabase
-          .from("sections")
-          .select("id, sort_order, created_at, language")
-          .eq("exam_id", examId)
-          .order("sort_order", { ascending: true })
-          .order("created_at", { ascending: true });
 
         if (sectionsError) throw sectionsError;
 
@@ -181,23 +201,8 @@ export default function Analytics() {
           setLastSectionIds(localLastIds);
         }
 
-        // 2. Get attempts through sections
-        const { data: sectionAttempts, error: attemptsError } = await supabase
-          .from("attempts")
-          .select(`
-            *,
-            section:sections!inner(
-              name,
-              time_minutes,
-              sort_order,
-              created_at,
-              exam:exams(name)
-            )
-          `)
-          .eq("section.exam_id", examId) // This uses the inner join filter
-          .order("submitted_at", { ascending: false });
-
         if (attemptsError) throw attemptsError;
+        if (questionsError) throw questionsError;
 
         // Filter out the creator's own attempts from analytics
         const filteredAttempts = (sectionAttempts || []).filter(
@@ -205,31 +210,26 @@ export default function Analytics() {
         );
         // NOTE: We do NOT setAttempts here yet. We need to correct them first.
 
-        // 3. Get all questions for this exam to build stats
-        const { data: questionsData, error: questionsError } = await supabase
-          .from("parsed_questions")
-          .select(`
-            id, text, q_no, correct_answer, answer_type, options, image_url, image_urls,
-            section:sections!inner(id, name, exam_id, sort_order)
-          `)
-          .eq("section.exam_id", examId);
-
-        if (questionsError) throw questionsError;
-
-        // 4. Get all responses for these attempts (chunked to avoid URL length limits)
+        // 2. Fetch responses for all attempts. Chunked to stay within Supabase URL limits,
+        // and fired in parallel — chunks are independent.
         const attemptIds = filteredAttempts.map((a: any) => a.id);
         let responsesData: any[] = [];
 
         if (attemptIds.length > 0) {
-          // Chunk attemptIds into batches of 200 to stay within Supabase URL limits
           const CHUNK_SIZE = 200;
+          const chunks: string[][] = [];
           for (let i = 0; i < attemptIds.length; i += CHUNK_SIZE) {
-            const chunk = attemptIds.slice(i, i + CHUNK_SIZE);
-            const { data: respData, error: responsesError } = await supabase
-              .from("responses")
-              .select("question_id, is_correct, time_spent_seconds, selected_answer, attempt_id, is_marked_for_review")
-              .in("attempt_id", chunk);
-
+            chunks.push(attemptIds.slice(i, i + CHUNK_SIZE));
+          }
+          const chunkResults = await Promise.all(
+            chunks.map(chunk =>
+              supabase
+                .from("responses")
+                .select("question_id, is_correct, time_spent_seconds, selected_answer, attempt_id, is_marked_for_review")
+                .in("attempt_id", chunk)
+            )
+          );
+          for (const { data: respData, error: responsesError } of chunkResults) {
             if (responsesError) throw responsesError;
             if (respData) responsesData.push(...respData);
           }
@@ -315,10 +315,6 @@ export default function Analytics() {
 
         setAttempts(correctedAttempts);
 
-        // Marks module: check if any attempts have marks_score
-        const marksEnabled = correctedAttempts.some((a: any) => a.marks_score !== null && a.marks_score !== undefined);
-        if (marksEnabled) setMarksAnalyticsData(correctedAttempts);
-
         // --- Compute Top 3 Leaderboard for Creator View ---
         try {
           if (allSections && allSections.length > 0 && correctedAttempts.length > 0) {
@@ -334,20 +330,43 @@ export default function Analytics() {
               byUser[att.user_id].push(att);
             });
 
-            // Build sessions using same boundary logic as student ranking
-            const sessions: { userId: string; totalScore: number; totalQuestions: number }[] = [];
+            // Build sessions using same boundary logic as student ranking.
+            // Track marks alongside score; sessionHasMarks gates whether we
+            // can rank by marks (must be true for every attempt in the session).
+            type LbSession = {
+              userId: string;
+              totalScore: number;
+              totalQuestions: number;
+              totalMarks: number;
+              sessionHasMarks: boolean;
+            };
+            const sessions: LbSession[] = [];
+
+            const marksOf = (a: any) => {
+              const hasMarks = a.marks_score !== null && a.marks_score !== undefined;
+              return { hasMarks, value: hasMarks ? Number(a.marks_score) : 0 };
+            };
 
             Object.entries(byUser).forEach(([uid, userAtts]) => {
-              let cur: { userId: string; totalScore: number; totalQuestions: number } | null = null;
+              let cur: LbSession | null = null;
               const orphans: any[] = [];
 
               userAtts.forEach(att => {
+                const m = marksOf(att);
                 if (localFirstIds.has(att.section_id)) {
                   if (cur) sessions.push(cur);
-                  cur = { userId: uid, totalScore: att.score || 0, totalQuestions: att.total_questions || 0 };
+                  cur = {
+                    userId: uid,
+                    totalScore: att.score || 0,
+                    totalQuestions: att.total_questions || 0,
+                    totalMarks: m.value,
+                    sessionHasMarks: m.hasMarks,
+                  };
                 } else if (cur) {
                   cur.totalScore += att.score || 0;
                   cur.totalQuestions += att.total_questions || 0;
+                  cur.totalMarks += m.value;
+                  if (!m.hasMarks) cur.sessionHasMarks = false;
                 } else {
                   orphans.push(att);
                 }
@@ -355,32 +374,40 @@ export default function Analytics() {
               if (cur) sessions.push(cur);
 
               if (orphans.length > 0) {
+                const orphanMarks = orphans.map(marksOf);
                 sessions.push({
                   userId: uid,
                   totalScore: orphans.reduce((s, a) => s + (a.score || 0), 0),
                   totalQuestions: orphans.reduce((s, a) => s + (a.total_questions || 0), 0),
+                  totalMarks: orphanMarks.reduce((s, m) => s + m.value, 0),
+                  sessionHasMarks: orphanMarks.every(m => m.hasMarks),
                 });
               }
             });
 
-            // Sort by accuracy % descending, then by raw score descending
+            // Rank by marks when every session has marks; otherwise fall back
+            // to accuracy %. Same gating as ExamReview and the student rank.
+            const rankByMarks = sessions.length > 0 && sessions.every(s => s.sessionHasMarks);
+            const rankValueOf = (s: LbSession) =>
+              rankByMarks
+                ? s.totalMarks
+                : (s.totalQuestions > 0 ? s.totalScore / s.totalQuestions : 0);
+
             sessions.sort((a, b) => {
-              const pctA = a.totalQuestions > 0 ? a.totalScore / a.totalQuestions : 0;
-              const pctB = b.totalQuestions > 0 ? b.totalScore / b.totalQuestions : 0;
-              if (pctB !== pctA) return pctB - pctA;
+              const va = rankValueOf(a);
+              const vb = rankValueOf(b);
+              if (vb !== va) return vb - va;
+              // Tie-break on raw score so deterministic ordering survives.
               return b.totalScore - a.totalScore;
             });
 
-            // Competition-style ranking (use for-loop to avoid self-referencing issue)
-            const rankedSessions: (typeof sessions[0] & { rank: number })[] = [];
+            // Competition-style ranking
+            const rankedSessions: (LbSession & { rank: number })[] = [];
             for (let i = 0; i < sessions.length; i++) {
               const s = sessions[i];
               let rank = i + 1;
-              if (i > 0) {
-                const prevPct = sessions[i - 1].totalQuestions > 0
-                  ? sessions[i - 1].totalScore / sessions[i - 1].totalQuestions : 0;
-                const curPct = s.totalQuestions > 0 ? s.totalScore / s.totalQuestions : 0;
-                if (curPct === prevPct) rank = rankedSessions[i - 1].rank;
+              if (i > 0 && rankValueOf(s) === rankValueOf(sessions[i - 1])) {
+                rank = rankedSessions[i - 1].rank;
               }
               rankedSessions.push({ ...s, rank });
             }
@@ -402,7 +429,7 @@ export default function Analytics() {
                 const profile = profileMap.get(s.userId) as any;
                 const displayName = profile?.full_name || profile?.username || 'Unknown';
                 const username = profile?.username || s.userId;
-                return { rank: s.rank, userId: s.userId, username, displayName, totalScore: s.totalScore, totalQuestions: s.totalQuestions };
+                return { rank: s.rank, userId: s.userId, username, displayName, totalScore: s.totalScore, totalQuestions: s.totalQuestions, totalMarks: s.totalMarks, rankedByMarks: rankByMarks };
               }));
             }
           }
@@ -515,10 +542,6 @@ export default function Analytics() {
         if (error) throw error;
         setAttempts(data as any);
 
-        // Marks module: check if student has marks data
-        const marksEnabled = (data as any[])?.some((a: any) => a.marks_score !== null && a.marks_score !== undefined);
-        if (marksEnabled) setMarksAnalyticsData(data as any[]);
-
         // Compute ranks for each exam the student has attempted
         try {
           const studentAttempts = data as any[];
@@ -567,12 +590,15 @@ export default function Analytics() {
                 firstSectionsMap[eid] = firstIds;
               });
 
-              // Batch-fetch ALL attempts for ALL sections in ONE query
-              const { data: allAttemptsBatch } = await supabase
+              // Batch-fetch ALL attempts for ALL sections in ONE query.
+              // marks_score / marks_max are cast because the marks-module columns
+              // aren't in the generated Supabase types yet (same workaround as
+              // ExamReview's rank query).
+              const { data: allAttemptsBatch } = (await supabase
                 .from("attempts")
-                .select("id, user_id, section_id, score, created_at")
+                .select("id, user_id, section_id, score, marks_score, marks_max, created_at")
                 .in("section_id", allSectionIds)
-                .order("created_at", { ascending: true });
+                .order("created_at", { ascending: true })) as { data: any[] | null };
 
               if (allAttemptsBatch && allAttemptsBatch.length > 0) {
                 // Build a reverse lookup: section_id -> exam_id
@@ -603,23 +629,45 @@ export default function Analytics() {
                     byUser[a.user_id].push(a);
                   });
 
-                  // Build sessions
-                  const sessions: { attemptIds: string[]; totalScore: number }[] = [];
+                  // Build sessions. Track BOTH totalScore (correct count) and
+                  // totalMarks (marks_score sum). sessionHasMarks is true only
+                  // if every attempt in the session carries a marks_score —
+                  // otherwise the marks sum is an undercount and we must fall
+                  // back to score-based ranking for this session.
+                  type RankSession = {
+                    attemptIds: string[];
+                    totalScore: number;
+                    totalMarks: number;
+                    sessionHasMarks: boolean;
+                  };
+                  const sessions: RankSession[] = [];
 
                   Object.values(byUser).forEach(userAtts => {
                     userAtts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                    let cur: { attemptIds: string[]; totalScore: number } | null = null;
+                    let cur: RankSession | null = null;
                     const orphanAttempts: any[] = [];
 
+                    const marksOf = (a: any) => {
+                      const hasMarks = a.marks_score !== null && a.marks_score !== undefined;
+                      return { hasMarks, value: hasMarks ? Number(a.marks_score) : 0 };
+                    };
+
                     userAtts.forEach(att => {
+                      const m = marksOf(att);
                       if (firstSectionGroupIds.has(att.section_id)) {
                         if (cur) sessions.push(cur);
-                        cur = { attemptIds: [att.id], totalScore: att.score || 0 };
+                        cur = {
+                          attemptIds: [att.id],
+                          totalScore: att.score || 0,
+                          totalMarks: m.value,
+                          sessionHasMarks: m.hasMarks,
+                        };
                       } else if (cur) {
                         cur.attemptIds.push(att.id);
                         cur.totalScore += (att.score || 0);
+                        cur.totalMarks += m.value;
+                        if (!m.hasMarks) cur.sessionHasMarks = false;
                       } else {
-                        // Orphan attempt (no first-section start) — collect it
                         orphanAttempts.push(att);
                       }
                     });
@@ -627,20 +675,28 @@ export default function Analytics() {
 
                     // Group orphan attempts into their own session so they still get ranked
                     if (orphanAttempts.length > 0) {
+                      const orphanMarks = orphanAttempts.map(marksOf);
                       sessions.push({
                         attemptIds: orphanAttempts.map(a => a.id),
                         totalScore: orphanAttempts.reduce((sum, a) => sum + (a.score || 0), 0),
+                        totalMarks: orphanMarks.reduce((sum, m) => sum + m.value, 0),
+                        sessionHasMarks: orphanMarks.every(m => m.hasMarks),
                       });
                     }
                   });
 
-                  // Sort by score descending and apply competition ranking (in-place)
-                  sessions.sort((a, b) => b.totalScore - a.totalScore);
+                  // Rank by marks when every session on this exam carries marks;
+                  // otherwise fall back to raw correct-count. Matches ExamReview
+                  // so a student sees the same rank on both pages.
+                  const rankByMarks = sessions.length > 0 && sessions.every(s => s.sessionHasMarks);
+                  const rankValueOf = (s: RankSession) => rankByMarks ? s.totalMarks : s.totalScore;
+
+                  sessions.sort((a, b) => rankValueOf(b) - rankValueOf(a));
                   sessions.forEach((session, index) => {
                     if (index === 0) {
                       (session as any).rank = 1;
                     } else {
-                      (session as any).rank = session.totalScore === sessions[index - 1].totalScore
+                      (session as any).rank = rankValueOf(session) === rankValueOf(sessions[index - 1])
                         ? (sessions[index - 1] as any).rank
                         : index + 1;
                     }
@@ -715,6 +771,9 @@ export default function Analytics() {
       const orphans: any[] = [];
 
       examAtts.forEach(att => {
+        const hasMarks = (att as any).marks_score !== null && (att as any).marks_score !== undefined;
+        const marksValue = hasMarks ? Number((att as any).marks_score) : 0;
+
         if (firstSectionGroupIds && firstSectionGroupIds.has(att.section_id)) {
           // Start a new session
           if (cur) sessionsList.push(cur);
@@ -727,6 +786,8 @@ export default function Analytics() {
             totalTime: Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0)),
             firstAttemptId: att.id,
             allAttemptIds: [att.id],
+            totalMarks: marksValue,
+            sessionHasMarks: hasMarks,
           };
         } else if (cur) {
           // Continue current session
@@ -735,6 +796,8 @@ export default function Analytics() {
           cur.totalQuestions += att.total_questions || 0;
           cur.totalTime += Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0));
           cur.allAttemptIds.push(att.id);
+          cur.totalMarks += marksValue;
+          if (!hasMarks) cur.sessionHasMarks = false;
         } else {
           // Orphan: no first section seen yet — treat as its own session
           orphans.push(att);
@@ -744,6 +807,7 @@ export default function Analytics() {
 
       // Each orphan attempt → individual session row
       orphans.forEach(att => {
+        const hasMarks = (att as any).marks_score !== null && (att as any).marks_score !== undefined;
         sessionsList.push({
           examName: att.section.exam.name || 'Unknown Exam',
           date: new Date(att.submitted_at).toLocaleDateString(),
@@ -753,6 +817,8 @@ export default function Analytics() {
           totalTime: Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0)),
           firstAttemptId: att.id,
           allAttemptIds: [att.id],
+          totalMarks: hasMarks ? Number((att as any).marks_score) : 0,
+          sessionHasMarks: hasMarks,
         });
       });
     });
@@ -1161,8 +1227,17 @@ export default function Analytics() {
                         </div>
                       </div>
                       <div className="text-right shrink-0 ml-4">
-                        <p className="font-bold text-base leading-snug">{entry.totalScore}/{entry.totalQuestions}</p>
-                        <p className="text-xs text-muted-foreground">{pct}%</p>
+                        {entry.rankedByMarks ? (
+                          <>
+                            <p className="font-bold text-base leading-snug tabular-nums">{Math.round(entry.totalMarks * 100) / 100} marks</p>
+                            <p className="text-xs text-muted-foreground">{entry.totalScore}/{entry.totalQuestions} correct</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-bold text-base leading-snug">{entry.totalScore}/{entry.totalQuestions}</p>
+                            <p className="text-xs text-muted-foreground">{pct}%</p>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -1687,14 +1762,27 @@ export default function Analytics() {
                         ) : null;
                       })()}
                       <div className="text-right">
-                        <p className="font-semibold text-[15px] leading-snug">
-                          {group.totalScore}/{group.totalQuestions}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {group.totalQuestions > 0
-                            ? ((group.totalScore / group.totalQuestions) * 100).toFixed(1)
-                            : 0}%
-                        </p>
+                        {group.sessionHasMarks ? (
+                          <>
+                            <p className="font-semibold text-[15px] leading-snug tabular-nums">
+                              {Math.round(group.totalMarks * 100) / 100} marks
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {group.totalScore}/{group.totalQuestions} correct
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-semibold text-[15px] leading-snug">
+                              {group.totalScore}/{group.totalQuestions}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {group.totalQuestions > 0
+                                ? ((group.totalScore / group.totalQuestions) * 100).toFixed(1)
+                                : 0}%
+                            </p>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1705,11 +1793,6 @@ export default function Analytics() {
         )}
 
       </div>
-
-        {/* Marks Analytics Panel */}
-        {marksAnalyticsData && marksAnalyticsData.length > 0 && (
-          <MarksAnalyticsPanel attempts={marksAnalyticsData} examId={examId || undefined} />
-        )}
 
     </div>
   );

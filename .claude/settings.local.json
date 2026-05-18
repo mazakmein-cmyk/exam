@@ -13,7 +13,9 @@
       "PowerShell(gh auth status)",
       "PowerShell(git config user.name)",
       "PowerShell(git config user.email)",
-      "PowerShell(cmdkey /list)"
+      "PowerShell(cmdkey /list)",
+      "Bash(dir /s /b)",
+      "Bash(pandoc --version)"
     ]
   }
 }

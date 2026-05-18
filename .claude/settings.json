@@ -3,7 +3,26 @@
     "allow": [
       "PowerShell(git credential-manager list 2>&1)",
       "PowerShell(git-credential-manager github list 2>&1)",
-      "PowerShell(git credential-manager github list)"
+      "PowerShell(git credential-manager github list)",
+      "Bash(npm run *)",
+      "Bash(npx eslint *)",
+      "Bash(Find . -type f -name \"*.tsx\" -o -name \"*.ts\" -o -name \"*.json\")",
+      "Bash(mkdir -p \"c:/Users/Shivm/Downloads/pp-2/product-docs\")",
+      "Read(//c/Users/Shivm/Downloads/pp-2/**)",
+      "Bash(python -c ' *)",
+      "Bash(grep -E \"\\\\.\\(docx|md\\)$\")",
+      "Bash(git stash *)",
+      "Bash(npx vite *)",
+      "Bash(Select-String -Pattern \"ExamSimulator\" -SimpleMatch)",
+      "Bash(Find c:\\\\Users\\\\Shivm\\\\Downloads\\\\pp-2\\\\paper-to-practise-main\\\\src -type f -name \"*.tsx\" -o -name \"*.ts\")",
+      "Bash(dir src *)",
+      "Bash(Get-ChildItem -Path src\\\\components -Recurse -Include \"*.tsx\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "PowerShell(npm run typecheck 2>&1)",
+      "Bash(npm install *)",
+      "Bash(node -e \"console.log\\(require\\('jsonrepair/package.json'\\).version\\)\")",
+      "Bash(node -e \"import\\('jsonrepair'\\).then\\(m => console.log\\('jsonrepair function:', typeof m.jsonrepair\\)\\)\")",
+      "Bash(node --input-type=module *)"
     ]
   }
 }

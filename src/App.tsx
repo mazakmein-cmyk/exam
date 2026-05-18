@@ -1,41 +1,64 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider, Outlet } from "react-router-dom";
-import Index from "./pages/Index";
-import Auth from "./pages/Auth";
-import StudentAuth from "./pages/StudentAuth";
-import Dashboard from "./pages/Dashboard";
-import Marketplace from "./pages/Marketplace";
-import ExamDetail from "./pages/ExamDetail";
-import ManualFixEditor from "./pages/ManualFixEditor";
-import ExamSimulator from "./pages/ExamSimulator";
-import ExamReview from "./pages/ExamReview";
-import Analytics from "./pages/Analytics";
-import ExamIntro from "./pages/ExamIntro";
-import NotFound from "./pages/NotFound";
-import AdminDashboard from "./pages/AdminDashboard";
 import AuthStateListener from "./components/AuthStateListener";
-import PrivacyPolicy from "./pages/PrivacyPolicy";
-import TermsOfService from "./pages/TermsOfService";
-import ForCreators from "./pages/ForCreators";
-import ExamLandingPage from "./pages/ExamLandingPage";
-import Blog from "./pages/Blog";
-import BlogPost from "./pages/BlogPost";
 
-const queryClient = new QueryClient();
+// Eager: tiny + likely first hit
+import Index from "./pages/Index";
+import NotFound from "./pages/NotFound";
 
-const Layout = () => {
-  return (
-    <>
-      <AuthStateListener />
+// Lazy: every other route is a separate chunk, loaded on demand.
+// Heavy libs (recharts, katex, react-pdf, react-image-crop) ship only with the
+// routes that actually use them.
+const Auth = lazy(() => import("./pages/Auth"));
+const StudentAuth = lazy(() => import("./pages/StudentAuth"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Marketplace = lazy(() => import("./pages/Marketplace"));
+const ExamDetail = lazy(() => import("./pages/ExamDetail"));
+const ManualFixEditor = lazy(() => import("./pages/ManualFixEditor"));
+const ExamSimulator = lazy(() => import("./pages/ExamSimulator"));
+const ExamReview = lazy(() => import("./pages/ExamReview"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const ExamIntro = lazy(() => import("./pages/ExamIntro"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
+const TermsOfService = lazy(() => import("./pages/TermsOfService"));
+const ForCreators = lazy(() => import("./pages/ForCreators"));
+const JsonUploadGuide = lazy(() => import("./pages/JsonUploadGuide"));
+const ExamLandingPage = lazy(() => import("./pages/ExamLandingPage"));
+const Blog = lazy(() => import("./pages/Blog"));
+const BlogPost = lazy(() => import("./pages/BlogPost"));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,
+      gcTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
+
+const RouteFallback = () => (
+  <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="h-8 w-8 rounded-full border-2 border-muted border-t-foreground animate-spin" />
+  </div>
+);
+
+const Layout = () => (
+  <>
+    <AuthStateListener />
+    <Suspense fallback={<RouteFallback />}>
       <Outlet />
-      <Toaster />
-      <Sonner />
-    </>
-  );
-};
+    </Suspense>
+    <Toaster />
+    <Sonner />
+  </>
+);
 
 const router = createBrowserRouter([
   {
@@ -56,6 +79,7 @@ const router = createBrowserRouter([
       { path: "/privacy-policy", element: <PrivacyPolicy /> },
       { path: "/terms-of-service", element: <TermsOfService /> },
       { path: "/for-creators", element: <ForCreators /> },
+      { path: "/json-upload-guide", element: <JsonUploadGuide /> },
       { path: "/mock-test/:examSlug", element: <ExamLandingPage /> },
       { path: "/blog", element: <Blog /> },
       { path: "/blog/:slug", element: <BlogPost /> },

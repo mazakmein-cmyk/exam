@@ -3,6 +3,7 @@
  */
 
 import { type ScoringConfig, formatMarks } from "@/services/scoringEngine";
+import { Info } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -20,21 +21,17 @@ export function MarksQuestionBadge({ config, size = "md" }: MarksQuestionBadgePr
 
   const correct = formatMarks(config.marks_correct);
   const wrong = formatMarks(config.marks_wrong);
+  const skipped = formatMarks(config.marks_skipped);
   const pillSize = size === "sm" ? "text-[10px] px-1.5 py-px" : "text-[11px] px-2 py-0.5";
 
-  const tooltipText = [
-    `Correct: +${correct}`,
-    `Wrong: −${wrong}`,
-    config.marks_skipped > 0 ? `Skipped: −${formatMarks(config.marks_skipped)}` : null,
-    config.mcq_mode === "partial" ? `MCQ: Partial credit · ${config.rounding_strategy}` : null,
-    config.mcq_mode === "all_or_nothing" ? `MCQ: All-or-nothing` : null,
-  ].filter(Boolean).join(" · ");
-
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className={`inline-flex items-center gap-1 ${size === "sm" ? "" : "gap-1.5"} cursor-default select-none`}>
+          <span
+            className={`inline-flex items-center gap-1 ${size === "sm" ? "" : "gap-1.5"} cursor-help select-none`}
+            aria-label="Marking scheme for this question"
+          >
             <span className={`font-bold text-white bg-emerald-600 rounded-full ${pillSize} tabular-nums leading-tight`}>
               +{correct}
             </span>
@@ -47,10 +44,34 @@ export function MarksQuestionBadge({ config, size = "md" }: MarksQuestionBadgePr
                 0
               </span>
             )}
+            <Info className="h-3 w-3 text-muted-foreground" />
           </span>
         </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs max-w-[200px]">
-          {tooltipText}
+        <TooltipContent side="bottom" className="text-xs max-w-[260px] space-y-1">
+          <p className="font-semibold">Marking scheme</p>
+          <ul className="space-y-0.5">
+            <li>
+              <span className="text-emerald-600 font-semibold">Correct:</span> +{correct} mark{correct === "1" ? "" : "s"}
+            </li>
+            <li>
+              <span className="text-red-500 font-semibold">Wrong:</span>{" "}
+              {config.marks_wrong > 0 ? `−${wrong} (negative marking)` : "No penalty"}
+            </li>
+            <li>
+              <span className="font-semibold">Skipped:</span>{" "}
+              {config.marks_skipped > 0 ? `−${skipped}` : "0 (no penalty)"}
+            </li>
+            {config.mcq_mode === "partial" && (
+              <li>
+                <span className="font-semibold">Multi-correct:</span> Partial credit ({config.rounding_strategy} rounding)
+              </li>
+            )}
+            {config.mcq_mode === "all_or_nothing" && (
+              <li>
+                <span className="font-semibold">Multi-correct:</span> All-or-nothing (every correct option needed)
+              </li>
+            )}
+          </ul>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
