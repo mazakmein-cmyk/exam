@@ -61,7 +61,9 @@ export type RepairCategory =
   | "prose_around_object"
   | "array_wrapper"
   | "data_wrapper"
-  | "auto_repaired";
+  | "auto_repaired"
+  | "mojibake_fixed"
+  | "latex_escapes_fixed";
 
 export type ParseReport = {
   ok: boolean;
@@ -452,10 +454,22 @@ function preClean(raw: string): { text: string; categories: RepairCategory[] } {
     s = s.slice(1);
   }
 
-  // 2. Strip our own EXAM_JSON_START/END delimiters.
+  // 2. Auto-fix CP1252→UTF-8 mojibake (e.g. "LozÃ¨re" → "Lozère",
+  //    "â" → "—", "Â°" → "°"). The file was saved as Windows-1252
+  //    when it should have been UTF-8 — common when users save the
+  //    AI's reply through Notepad's default ANSI encoding.
+  //
+  //    Strategy: match only candidate mojibake byte-sequences (chars
+  //    in the U+0080-U+00FF range that, taken as Latin-1 bytes, form
+  //    valid UTF-8 multi-byte sequences) and re-decode each as UTF-8.
+  //    Leaves Devanagari, Greek, math symbols and other legitimate
+  //    Unicode content untouched.
+  s = autoFixMojibake(s, categories);
+
+  // 3. Strip our own EXAM_JSON_START/END delimiters.
   s = stripDelimiters(s);
 
-  // 3. Strip markdown code fences (```json ... ``` or ``` ... ```).
+  // 4. Strip markdown code fences (```json ... ``` or ``` ... ```).
   const fenceRe = /^\s*```(?:[a-zA-Z]+)?\s*\n([\s\S]*?)\n?```\s*$/;
   const fenceMatch = s.match(fenceRe);
   if (fenceMatch) {
@@ -463,7 +477,7 @@ function preClean(raw: string): { text: string; categories: RepairCategory[] } {
     categories.push("markdown_fences");
   }
 
-  // 4. Trim explanatory prose around the JSON object: take the first `{`
+  // 5. Trim explanatory prose around the JSON object: take the first `{`
   //    and the matching last `}`. Cheap heuristic — doesn't track braces
   //    inside strings, but for LLM prose the last `}` is virtually always
   //    the document's close brace.
@@ -477,7 +491,72 @@ function preClean(raw: string): { text: string; categories: RepairCategory[] } {
     categories.push("prose_around_object");
   }
 
+  // 6. Auto-fix under-escaped LaTeX backslashes inside string values.
+  //    The AI commonly emits `"$\sqrt{7}$"` when it should have emitted
+  //    `"$\\sqrt{7}$"`. JSON-spec valid backslash escapes are only
+  //    \\ \" \/ \b \f \n \r \t \uXXXX — anything else is either a
+  //    parse error (\s, \l, \a) or a silently-wrong char (\f = form-
+  //    feed, not \frac). We double the backslash for any \X where X
+  //    is a letter NOT in {n, r, t, u} — preserving the truly common
+  //    valid JSON escapes (newline, tab, etc.) while fixing the
+  //    overwhelmingly common LaTeX-corruption case.
+  s = autoFixLatexEscapes(s, categories);
+
   return { text: s.trim(), categories };
+}
+
+// ─── Mojibake auto-fix ────────────────────────────────────────────────
+
+function autoFixMojibake(input: string, categories: RepairCategory[]): string {
+  // Mojibake markers: when UTF-8 bytes (C2-xx, C3-xx, E2-80-xx) get
+  // misread as Windows-1252, they show up as these 2- or 3-char
+  // sequences in the Unicode string.
+  const MOJIBAKE_RE =
+    /(?:Ã[-¿]|Â[-¿]|â[-¿])/g;
+  if (!MOJIBAKE_RE.test(input)) return input;
+  MOJIBAKE_RE.lastIndex = 0;
+
+  let fixed = false;
+  let decoder: TextDecoder;
+  try {
+    decoder = new TextDecoder("utf-8", { fatal: false });
+  } catch {
+    return input;
+  }
+  const out = input.replace(MOJIBAKE_RE, (match) => {
+    const bytes = Uint8Array.from(match, (c) => c.charCodeAt(0));
+    const decoded = decoder.decode(bytes);
+    if (decoded && decoded !== match && !decoded.includes("�")) {
+      fixed = true;
+      return decoded;
+    }
+    return match;
+  });
+  if (fixed) categories.push("mojibake_fixed");
+  return out;
+}
+
+// ─── LaTeX-escape auto-fix ────────────────────────────────────────────
+
+function autoFixLatexEscapes(input: string, categories: RepairCategory[]): string {
+  // Only operate inside "..." string contexts so we don't touch the JSON
+  // structure itself (which has no bare backslashes anyway).
+  let fixed = false;
+  const out = input.replace(/"((?:[^"\\]|\\.)*)"/g, (_full, inner: string) => {
+    let touched = false;
+    const repaired = inner.replace(/(?<!\\)\\([a-zA-Z])/g, (m: string, ch: string) => {
+      // Preserve common legitimate JSON escapes: \n \r \t and \uXXXX.
+      // Everything else (\s, \a, \c, \d, \e, \f, \g, ... \z and capitals)
+      // is almost certainly an un-doubled LaTeX command in our domain.
+      if (ch === "n" || ch === "r" || ch === "t" || ch === "u") return m;
+      touched = true;
+      return "\\\\" + ch;
+    });
+    if (touched) fixed = true;
+    return '"' + repaired + '"';
+  });
+  if (fixed) categories.push("latex_escapes_fixed");
+  return out;
 }
 
 // ─── Categorise what kinds of repairs the input needed ───────────────────
@@ -707,6 +786,29 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
     warnings.push(`question #${index + 1} has image_url — images aren't imported in v1; add manually after upload.`);
   }
 
+  // passage — optional. If present, wraps `text` using the same HTML contract
+  // the manual-add flow uses (see ExamDetail.tsx:1098-1100), so the existing
+  // simulator/review renderers pick it up with no changes.
+  let passageText: string | null = null;
+  if (raw.passage !== undefined && raw.passage !== null && raw.passage !== "") {
+    if (typeof raw.passage !== "string") {
+      warnings.push(`question #${index + 1} has non-string passage — ignored.`);
+    } else {
+      let p = raw.passage;
+      // Strip <div> and <script> tags (keep their inner content so we don't
+      // lose passage text); they would conflict with the wrapper divs or be
+      // a security risk respectively.
+      const hadBlocked = /<\s*(div|script)\b/i.test(p);
+      p = p
+        .replace(/<\s*script\b[\s\S]*?<\s*\/\s*script\s*>/gi, "") // script + content
+        .replace(/<\s*\/?\s*div\b[^>]*>/gi, ""); // div tags (keep inner)
+      if (hadBlocked) {
+        warnings.push(`question #${index + 1} passage contained <div> or <script> tags — stripped.`);
+      }
+      passageText = p;
+    }
+  }
+
   if (reasons.length > 0) {
     return { ok: false, reasons };
   }
@@ -720,12 +822,18 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
   const rawQNo = Number(raw.q_no);
   const q_no = Number.isInteger(rawQNo) && rawQNo > 0 ? rawQNo : index + 1;
 
+  // If passage is present, wrap text into the manual-flow HTML contract.
+  const finalText =
+    passageText && passageText.length > 0
+      ? `<div class="passage-section">${passageText}</div><div class="question-section">${text}</div>`
+      : text;
+
   return {
     ok: true,
     warnings,
     value: {
       q_no,
-      text,
+      text: finalText,
       answer_type: finalAnswerType,
       options: optionsOut,
       correct_answer,

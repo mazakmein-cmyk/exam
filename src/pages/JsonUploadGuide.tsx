@@ -14,6 +14,7 @@ const tocSections = [
   { id: "step-5-review", label: "Step 5 — Review & confirm" },
   { id: "step-6-repeat", label: "Step 6 — Repeat per language" },
   { id: "step-7-publish", label: "Step 7 — Publish" },
+  { id: "passage-questions", label: "Passage-based questions" },
   { id: "sample-json", label: "Sample JSON" },
   { id: "fixing-errors", label: "Fixing errors" },
   { id: "fix-invalid-json", label: "→ Invalid JSON syntax" },
@@ -25,43 +26,56 @@ const tocSections = [
   { id: "troubleshooting", label: "Troubleshooting" },
 ];
 
-const EXTRACTION_PROMPT = `You are converting an exam PDF into a strict JSON object that will be
-uploaded into MockSetu's exam builder.
+const EXTRACTION_PROMPT = String.raw`You are converting an exam paper (PDF or scanned document) into a strict
+JSON object that will be uploaded into MockSetu's exam builder.
 
-Your job is ONLY to convert — never to invent. If something is not in
-the PDF, leave it null or omit it.
+Your job is ONLY to CONVERT what exists in the source — never to invent.
+If something is not in the document, leave it null or omit it. If you
+genuinely cannot read something, skip that question and log it.
 
-# OUTPUT CONTRACT
 
-Output a single JSON object, wrapped between these literal delimiters
+═══════════════════════════════════════════════════════════════════
+OUTPUT CONTRACT
+═══════════════════════════════════════════════════════════════════
+
+Emit a SINGLE JSON object, wrapped between these literal delimiters
 with NOTHING else before, after, or between them:
 
 <<<EXAM_JSON_START>>>
 { ... the JSON ... }
 <<<EXAM_JSON_END>>>
 
-No prose, no code fences, no commentary outside the delimiters.
+No prose. No code fences. No "Here is the JSON:" preamble. No
+explanation after the closing brace. The delimiters MUST appear
+verbatim — they are how the parser locates the JSON.
 
-# SCHEMA (v1.0)
+
+═══════════════════════════════════════════════════════════════════
+SCHEMA (v1.0) — these are the ONLY recognized fields
+═══════════════════════════════════════════════════════════════════
 
 {
   "schema_version": "1.0",
   "language": "en" | "hi",
   "_extraction_summary": {
     "source_pdf": "<file name>",
-    "model": "<your model name>",
-    "total_in_pdf": <n>,
-    "extracted": <n>,
-    "skipped": [ { "reason": "...", "page": <n> } ],
-    "needs_manual_review": [ { "section": "...", "q_no": <n>, "reason": "..." } ],
-    "marks_source": "found_in_pdf" | "not_present",
+    "model": "<your model name and version>",
+    "total_in_pdf": <integer — total questions you counted in source>,
+    "extracted": <integer — questions emitted in this JSON>,
+    "skipped": [
+      { "reason": "<short label>", "page": <int, optional>, "q_no": <int, optional> }
+    ],
+    "needs_manual_review": [
+      { "section": "<exact section name>", "q_no": <int>, "reason": "<short label>" }
+    ],
+    "marks_source":  "found_in_pdf" | "not_present",
     "answers_source": "found_in_pdf" | "not_present"
   },
   "marks_config": {
     "exam_default": {
-      "marks_correct": 4,
-      "marks_wrong": 1,
-      "marks_skipped": 0,
+      "marks_correct": <positive number>,
+      "marks_wrong":   <positive MAGNITUDE — see Rule 7>,
+      "marks_skipped": <number, usually 0>,
       "mcq_mode": "partial" | "all_or_nothing",
       "mcq_wrong_penalty": "flat" | "per_option",
       "rounding_strategy": "floor" | "round" | "ceil" | "none"
@@ -69,90 +83,663 @@ No prose, no code fences, no commentary outside the delimiters.
   },
   "sections": [
     {
-      "name": "<EXACT section name as in my exam>",
+      "name": "<EXACT section name from MY exam>",
+      "marks_config": { ... section-level override, same shape, OPTIONAL },
       "questions": [
         {
-          "q_no": 1,
-          "text": "<question stem>",
+          "q_no": <int, optional — parser renumbers anyway>,
+          "passage": "<shared passage for RC/case-study clusters — OPTIONAL; see PASSAGES section>",
+          "text": "<question stem only when 'passage' is used; otherwise self-contained text>",
           "answer_type": "single" | "multi",
-          "options": ["A text", "B text", "C text", "D text"],
-          "correct_answer": "1"
+          "options": ["<option 1>", "<option 2>", ...],
+          "correct_answer": "<zero-based-index-as-string>" | ["0","2"] | null,
+          "marks_config": { ... per-question override, OPTIONAL }
         }
       ]
     }
   ]
 }
 
-# SECTION NAMES — I provide these to you
+NO OTHER FIELDS ARE RECOGNIZED. The parser silently drops anything
+outside this schema. In particular: there is no "explanation" field,
+no "image_url" field, no "difficulty" field, no "topic" field, no
+"tags" field. Anything that doesn't fit the schema must live INSIDE
+the "text" field (or "passage" field) of the question(s) it applies to.
 
-I will tell you the EXACT section names my exam expects and the
-language code. Use those exact strings as each section's "name" field.
-Do not paraphrase, do not change capitalisation, do not add or remove
-words.
 
-If the PDF's sections are differently named, map them by the order
-they appear in the PDF. If you cannot map confidently, ASK me — do
-not guess.
+═══════════════════════════════════════════════════════════════════
+SECTION NAMES — I provide these to you
+═══════════════════════════════════════════════════════════════════
 
-# RULES
+I will tell you the EXACT section names my exam expects, in the
+order they appear in my exam. Use those exact strings as each
+section's "name" field — character-for-character. Do not paraphrase,
+do not change capitalisation, do not translate, do not add or
+remove words or punctuation.
+
+If the source PDF's section names differ from mine, MAP by order:
+the PDF's first section → my first section, etc. If the order is
+ambiguous (PDF has 4 sections, I gave you 3), STOP and ask me which
+to drop. Do not guess.
+
+
+═══════════════════════════════════════════════════════════════════
+RULES — non-negotiable
+═══════════════════════════════════════════════════════════════════
 
 1. CONVERT, NEVER INVENT.
-   - No answer in the PDF? Set "correct_answer": null or omit it.
-   - No marks scheme in the PDF? Omit "marks_config" entirely.
-   - Question unclear or damaged? Skip it; add to
-     _extraction_summary.skipped with a reason.
+   • No answer in the PDF → "correct_answer": null (or omit).
+   • No marks scheme in the PDF → omit "marks_config" entirely.
+     Do not guess based on the exam name.
+   • Question damaged / unreadable → skip; append to
+     _extraction_summary.skipped with a short reason.
 
-2. answer_type: ONLY "single" or "multi".
-   Anything else (true/false, numeric, fill-in-the-blank, short
-   answer, match-the-following) is NOT supported in v1 — skip those
-   and add to _extraction_summary.skipped with reason
-   "unsupported answer_type".
+2. answer_type is EXCLUSIVELY "single" or "multi".
+   single = exactly one correct option (regular MCQ).
+   multi  = two or more correct options (rare; the PDF will say so).
 
-3. correct_answer encoding is ZERO-BASED INDEX AS STRING.
-   - If "B" is correct in ["A","B","C","D"] → "correct_answer": "1".
-   - For multi-correct → ["0", "2"].
+   These input types are NOT supported in v1 — SKIP them and log
+   in _extraction_summary.skipped with the listed reason:
 
-4. SKIP-AND-CONTINUE at the question level. One bad question does NOT
-   halt the batch. Record skipped Qs in _extraction_summary.skipped.
+     • True / False with only 2 options       → "true/false unsupported"
+     • Numeric / TITA / type-in-the-answer    → "numeric unsupported"
+     • Fill in the blank (no options listed)  → "fill-in unsupported"
+     • Short answer / descriptive             → "descriptive unsupported"
+     • Para-jumble keyed by sequence (e.g.
+       CAT "key in 4123" with no options)     → "sequence-input unsupported"
+     • Pure match-the-following with no
+       pre-synthesized MCQ options            → "match unsupported"
 
-5. MATH / IMAGES — flag, do not invent.
-   - Math notation: extract "text" in plain Unicode where possible.
-     Add _extraction_summary.needs_manual_review entry with reason
-     "math notation — verify".
-   - Image-based question: extract any accompanying text you can read.
-     Add _extraction_summary.needs_manual_review with reason
-     "image required". Do NOT fabricate ASCII diagrams.
+   IMPORTANT: A question that LOOKS like one of these but has been
+   PRE-CONVERTED to MCQ in the PDF — e.g. a column-match question
+   whose options are pairings like "A-F, B-E, C-D" — IS supported.
+   Convert it like any other single-answer MCQ.
 
-6. marks_wrong is POSITIVE magnitude. "marks_wrong": 1 means a penalty
-   of 1 point. Never use a signed value.
+3. correct_answer encoding is ZERO-BASED INDEX, AS A STRING.
+   • "single" → one string. If option B in ["A","B","C","D"] is
+     correct, emit "correct_answer": "1".
+   • "multi"  → array of strings. If A and C are correct → ["0","2"].
+   • The PDF's labels (a/b/c/d, A/B/C/D, 1/2/3/4, i/ii/iii/iv,
+     क/ख/ग/घ) all map to 0/1/2/3 regardless of the label style.
 
-7. MODEL TIER. This prompt assumes you are GPT-5 / Claude Opus 4+ /
-   Gemini 2.5 Pro or equivalent. If you are an older / smaller model,
-   stop and tell the user to switch.
+4. SKIP-AND-CONTINUE at the question level. One bad question does
+   NOT halt the batch. Every skipped question MUST appear in
+   _extraction_summary.skipped with a reason.
 
-# SELF-CHECK BEFORE EMITTING
+5. PASSAGES, DIRECTIONS, SHARED SETUPS — see the dedicated section
+   below. TL;DR: use the OPTIONAL "passage" field on each question
+   in a cluster (preferred — renders two-column), repeating the
+   SAME passage on every question of the cluster. Fallback: embed
+   inline in "text" with a "Passage:" prefix.
 
-- "schema_version" is exactly "1.0"
-- "language" is "en" or "hi" and matches what I told you
-- "sections" array is non-empty
-- Every "correct_answer" index (when present) exists in that
-  question's "options"
-- No two questions in the same section share a "q_no"
-- single-answer questions do not have multi-element correct_answer
-- JSON parses (no trailing commas, no comments)
+6. MATH & LaTeX — see the dedicated section below. TL;DR: inline
+   $…$, display $$…$$. MockSetu renders KaTeX downstream.
 
-# YOUR CONTEXT — fill in before running, then attach your PDF
+7. marks_wrong is a POSITIVE MAGNITUDE. "marks_wrong": 1 means
+   a penalty of 1 mark per wrong answer. Never use a signed value.
+   The scoring engine applies the sign internally.
 
-- Language code: ______ (e.g., "en" or "hi")
-- Section names from my exam, in order:
-  1. ______
-  2. ______
-  3. ______
-  (...add more lines if needed)
+8. NO HTML in "text", "options", or "section name". Use plain
+   Unicode for em-dashes, smart quotes, arrows (→ ↑ ⇒),
+   inequalities (≤ ≥ ≠ ±), Greek (α β π θ), set theory
+   (∈ ∉ ⊂ ∪ ∩ ∅), and so on. Use LaTeX in $…$ for structured
+   maths (fractions, exponents, integrals, sums).
 
-Now extract.`;
+   EXCEPTION: the "passage" field accepts simple inline HTML —
+   <p>, <br>, <em>, <strong>, <ul>, <li>, <blockquote>. The
+   parser strips <div> and <script> tags from "passage". Plain
+   text is always fine. Do not use HTML for layout (no <table>,
+   no <img>); use Markdown-style tables / Unicode arrows like
+   in "text".
 
-const FIX_INVALID_JSON_PROMPT = `The JSON file you generated for me is structurally invalid —
+9. MODEL TIER. This prompt assumes you are GPT-5 / Claude Opus 4+ /
+   Gemini 2.5 Pro or equivalent multi-modal frontier model. If you
+   are a smaller / older model, STOP and tell me to switch — do not
+   silently produce a degraded JSON.
+
+10. NEVER USE STRAIGHT QUOTES INSIDE PASSAGE / OPTION TEXT.
+
+    Any book title, essay name, dialogue, or embedded quotation
+    that appears INSIDE a JSON string value MUST use Unicode
+    curly quotes, NOT ASCII straight quotes:
+
+      WRONG:   "text": "My book "Writing Ocean Worlds" is..."
+      RIGHT:   "text": "My book “Writing Ocean Worlds” is..."
+      ALSO OK: "text": "My book \"Writing Ocean Worlds\" is..."
+
+    Use “ ” (U+201C, U+201D) for double quotes, ‘ ’ (U+2018,
+    U+2019) for single quotes / apostrophes. Reserve ASCII " for
+    JSON string delimiters ONLY. Reserve ASCII ' (apostrophe) is
+    fine — it doesn't conflict with JSON.
+
+    This is the #1 cause of parse failures with RC passages —
+    embedded titles ("Writing Ocean Worlds", "The Affluent
+    Society", "Original Affluent Society") are everywhere in
+    CAT and banking exam passages. Use curly quotes and the
+    problem disappears.
+
+11. EVERY BACKSLASH MUST BE A VALID JSON ESCAPE.
+
+    Valid JSON backslash escapes are EXACTLY these nine:
+      \\    \"    \/    \b    \f    \n    \r    \t    \uXXXX
+
+    Anything else is either a parse error or a SILENT bug. In
+    particular, EVERY LaTeX command MUST have its backslash
+    DOUBLED in the JSON string:
+
+      WRONG:   "$\sqrt{7}$"      ← \s is not a valid escape
+      WRONG:   "$\frac{1}{2}$"   ← \f is FORM-FEED, not \frac
+      WRONG:   "$\log_2 x$"      ← \l is not a valid escape
+      WRONG:   "$\alpha + \beta$"
+      RIGHT:   "$\\sqrt{7}$"
+      RIGHT:   "$\\frac{1}{2}$"
+      RIGHT:   "$\\log_2 x$"
+      RIGHT:   "$\\alpha + \\beta$"
+
+    Before emit, scan every string for any \ and confirm what
+    follows is one of:  \ " / b f n r t u . If anything else
+    follows the \, you forgot to double a LaTeX backslash —
+    fix it.
+
+    Watch out: \f silently parses (form-feed). Q21 in CAT-2023
+    had two identical option strings because \sqrt collapsed
+    after the \s got stripped. Doubling is non-negotiable.
+
+12. OUTPUT MUST BE UTF-8 — NO MOJIBAKE.
+
+    Non-ASCII characters (é, è, à, ñ, ü, —, °, ×, ÷, Devanagari
+    script, Greek letters, math symbols) must appear in their
+    NATIVE Unicode form. If your output channel mangles them
+    into sequences like "Ã¨" "Ã©" "Â°" "â€™" "â€"" "Ã—", that
+    is corrupted data — fix it before emitting.
+
+      WRONG:   "Lozère"  written as  "LozÃ¨re"
+      WRONG:   "60°"     written as  "60Â°"
+      WRONG:   em-dash — written as  "â"
+      RIGHT:   native Unicode characters: "Lozère", "60°", "—"
+
+    If your output channel genuinely cannot emit the proper
+    character, fall back to a JSON \uXXXX escape sequence (e.g.
+    Loz, then backslash-u-0-0-e-8, then re — they parse to the
+    same string). NEVER emit mojibake; it is corruption, not
+    an alternative form.
+
+
+═══════════════════════════════════════════════════════════════════
+PASSAGES, DIRECTIONS, COMPREHENSIONS, SHARED SETUPS
+═══════════════════════════════════════════════════════════════════
+
+Two equivalent ways to attach shared context to a question.
+PREFERRED: the optional "passage" field. FALLBACK: inline in
+"text" with a "Passage:" prefix. Pick ONE per question — never
+both.
+
+═══ PREFERRED — the "passage" field ═══════════════════════════════
+
+Emit a separate "passage" string on each question that depends
+on the shared context. The parser wraps it into the existing
+manual-flow HTML contract so MockSetu's simulator renders a
+clean TWO-COLUMN layout (passage on the left, question + options
+on the right).
+
+  {
+    "q_no": 1,
+    "passage": "[FULL VERBATIM passage here]",
+    "text": "[just the question stem — no 'Passage:' prefix]",
+    "answer_type": "single",
+    "options": [...],
+    "correct_answer": "..."
+  }
+
+Allowed inside "passage": plain text OR simple inline HTML
+(<p>, <br>, <em>, <strong>, <ul>, <li>, <blockquote>). The
+parser strips <div> and <script> for safety. Plain text is
+totally fine and is what most AIs will produce naturally.
+
+═══ FALLBACK — inline in "text" with prefix ═══════════════════════
+
+Some workflows prefer keeping the question text fully
+self-contained inside one field. Embed shared context inside
+"text" with a clear marker prefix:
+
+  {
+    "text": "Passage:\n\n[FULL VERBATIM passage here]\n\nQuestion: [stem here]",
+    ...
+  }
+
+Renders as a single column with the literal "Passage:" header
+visible. Use this when you don't need the two-column layout
+or want to avoid emitting a separate field.
+
+═══ RULES THAT APPLY TO BOTH APPROACHES ═══════════════════════════
+
+The passage MUST be the FULL, VERBATIM text from the source —
+not a summary, not an excerpt, not "the passage discusses X".
+Every question in a shared-context group repeats the SAME
+verbatim passage. A student opening question 8 in isolation
+must see the entire passage exactly as a student opening
+question 5 sees it. Token cost is NOT a concern; faithfulness
+is. Summarising a passage corrupts the question — Q8 might
+reference a sentence Q5 had but your summary dropped.
+
+When using the "passage" field, the rule above means: repeat
+the SAME passage STRING on each question in the cluster, not
+just on Q1. The parser deliberately stores the passage per
+question so each row is self-contained at the DB level.
+
+WRONG (token-saving shortcut, AI will be tempted):
+  Q1 text: "Passage:\n\n[full 500-word passage]\n\nQuestion: …"
+  Q2 text: "Passage: The author discusses X.\n\nQuestion: …"
+  Q3 text: "Passage: Continuation of above.\n\nQuestion: …"
+
+RIGHT:
+  Q1 text: "Passage:\n\n[full 500-word passage]\n\nQuestion: …"
+  Q2 text: "Passage:\n\n[SAME full 500-word passage]\n\nQuestion: …"
+  Q3 text: "Passage:\n\n[SAME full 500-word passage]\n\nQuestion: …"
+
+Same rule for Setup:, Data:, Directions: blocks. Repeat in full.
+
+Use exactly these prefixes — "Passage:", "Directions:", "Data:",
+"Setup:" — so MockSetu's editor can format them consistently.
+
+CASES YOU WILL SEE AND HOW TO HANDLE EACH:
+
+A) READING COMPREHENSION
+   (CAT-style — one ~500-word passage with 4 questions, or
+    banking-style — one ~400-word passage with 10 questions.)
+   Each question in the group gets the FULL passage in its text
+   followed by "\n\nQuestion: …". Yes, this duplicates the passage
+   N times. That is correct. If the resulting JSON file exceeds
+   10 MB, the user will be told to split sections across files.
+
+B) "Directions (3-7): …" SHORT INSTRUCTIONS
+   (Banking-exam style — directions header applies to a numbered
+    range of questions.)
+   Embed the directions header in each question's text:
+     "Directions: Read each sentence to find out whether there is
+      any grammatical or idiomatic error in it. The error, if any,
+      will be in one part of the sentence.\n\nQuestion: They needs
+      (A)/ to submit the report (B)/ before the deadline (C)/ to
+      avoid penalties. (D)"
+
+C) FILL-IN-THE-BLANK PASSAGE / CLOZE TEST
+   (Multiple blanks A, B, C, D, E, F in one passage; one MCQ per
+    blank.)
+   For each question, embed the FULL passage with the CURRENT
+   blank highlighted (e.g. "______ (A)") and the other blanks
+   shown as "______" too. Then "Question: Which of the following
+   is most suitable to fill blank (A)?".
+
+D) DATA INTERPRETATION SETS (table or graph + 5–6 questions)
+   • Tables: convert to a pipe-delimited table inside the text.
+     Each row on its own line, header row, separator row.
+     Example:
+       "Sport    | A  | B
+        -------- | -- | --
+        Cricket  | 20 | 35
+        Hockey   | 25 | 30
+        Football | 24 | 36"
+   • Line / bar charts: extract the visible numeric values as a
+     "Data:" list — e.g. "Data — Visitors to parks A, B, C, D, E:
+     20, 32, 26, 40, 24". If values are unreadable, SKIP that
+     question and log "graph values unreadable".
+   • Pie charts / complex diagrams: flag in needs_manual_review
+     with reason: "image required — diagram cannot be transcribed".
+     Emit the question with whatever text you can read. Do NOT
+     fabricate values.
+
+E) PUZZLE SETUPS
+   (8 people on 8 floors; circular / square seating; direction
+    sense; comparison/ranking sets.)
+   Pure text. Embed the FULL setup paragraph in each question's
+   text:
+     "Setup: Eight persons A, B, C, D, E, F, G and H live on eight
+      different floors of an eight-storey building, floor 1 at the
+      bottom and floor 8 at the top. D lives on an even-numbered
+      floor above the fifth floor. Three persons live between D
+      and B …\n\nQuestion: How many persons live above A?"
+
+F) GEOMETRY / FIGURE-BASED QUANT
+   • If the figure is FULLY described by the text (e.g. "a right-
+     angled triangle ABC with AB = 5 cm, BC = 12 cm, …"), extract
+     normally — no image needed.
+   • If the question depends on an unlabelled / freehand figure
+     that text cannot reconstruct, emit the question with the
+     text you have, AND add an entry to needs_manual_review
+     with reason: "geometry figure required".
+
+G) STATEMENT-BASED MCQs
+   ("Which of the following is correct? (A) … (B) … (C) …" where
+    A/B/C are STATEMENTS in the stem, and the options are
+    "Only A", "Both A and C", etc.)
+   Keep the (A)/(B)/(C) statements INSIDE the question stem
+   (after a line break, prefixed with their letter). The
+   options array holds the synthesized choices.
+
+H) SENTENCE-ERROR / SENTENCE-PART MCQs
+   ("They needs (A)/ to submit the report (B)/ before the
+    deadline (C)/ to avoid penalties. (D)" with options A/B/C/D/
+    No error.)
+   Keep the (A)(B)(C)(D) markers inline in the stem exactly as
+   the PDF shows them. Options array is the letters plus
+   "No error" if the PDF lists it.
+
+
+═══════════════════════════════════════════════════════════════════
+MATH & LaTeX
+═══════════════════════════════════════════════════════════════════
+
+MockSetu renders KaTeX. Use it for ANY non-trivial maths.
+
+INLINE math (within a sentence): wrap in single dollar signs.
+  • "If $x^2 + y^2 = 25$, find $x + y$."
+  • "The probability is $\frac{3}{7}$."
+  • "Solve $\log_2(x+1) = 3$."
+
+DISPLAY math (own line, larger): wrap in double dollar signs.
+  • "$$\int_0^{\pi} \sin x \, dx = 2$$"
+  • "$$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$$"
+
+JSON ESCAPING — CRITICAL: every backslash in LaTeX must be DOUBLED
+inside the JSON string (because JSON itself treats \ as an escape
+character). So:
+
+  LaTeX command       →  JSON string literal
+  ─────────────────────────────────────────────
+  \frac{a}{b}         →  "\\frac{a}{b}"
+  \sqrt{x}            →  "\\sqrt{x}"
+  \int_0^1            →  "\\int_0^1"
+  \sin x              →  "\\sin x"
+  \log_2              →  "\\log_2"
+  \alpha + \beta      →  "\\alpha + \\beta"
+
+PREFER UNICODE for simple standalone symbols (no LaTeX overhead):
+  ≤  ≥  ≠  ±  ∞  ÷  ×  °  √  (when standalone, not over an expression)
+  π  α  β  γ  δ  θ  φ  λ  μ  σ  Ω  Δ
+  →  ←  ⇒  ⇔  ∈  ∉  ⊂  ⊆  ∪  ∩  ∅  ∀  ∃
+  Example: "If x ≥ 5 and y ≤ 3, find x − y."
+
+PREFER LaTeX for stacked / structured math:
+  • Fractions:       $\frac{x+1}{x-1}$    NOT   (x+1)/(x-1)
+  • Multi-char
+    exponents:       $x^{2n+1}$           NOT   x^(2n+1)
+  • Roots of
+    expressions:     $\sqrt{x^2 + y^2}$   NOT   sqrt(x^2+y^2)
+  • Integrals,
+    sums, products:  $\int$, $\sum$, $\prod$
+  • Subscripts with
+    multi-char keys: $a_{ij}$, $x_{\text{max}}$
+
+CHEMISTRY / PHYSICS: same rules. $H_2SO_4$, $10^{-3}$, $E = mc^2$.
+
+GEOMETRY: if the figure is described in words, extract the text. If
+not, flag for manual review (see Passages section F).
+
+WHEN TO FLAG needs_manual_review with reason: "math notation —
+verify": only when the LaTeX is genuinely ambiguous in the source
+(e.g. an OCR'd scan where you are GUESSING at an exponent or a
+subscript). Don't flag every math question — only the ones where
+your transcription has real doubt.
+
+
+═══════════════════════════════════════════════════════════════════
+LANGUAGE & BILINGUAL PAPERS
+═══════════════════════════════════════════════════════════════════
+
+If the source PDF contains BOTH languages on the same page (very
+common in Indian banking exams — English VARC + Hindi Quant /
+Reasoning), I will tell you which language to extract THIS PASS.
+
+  • If I say language: "en" → emit ONLY the English content.
+    If a question exists only in Hindi (e.g. the Hindi Quant
+    block), SKIP it for this pass and log
+    "reason": "english version absent" in skipped.
+  • If I say language: "hi" → emit ONLY the Hindi content. Same
+    in reverse.
+
+Use full Unicode Devanagari in text and options for Hindi. Do
+not transliterate (no "kya" for "क्या"). Do not translate. Keep
+numerals as the PDF shows them (digits OR Devanagari numerals —
+match the source).
+
+OCR ARTIFACTS: scanned bilingual PDFs sometimes produce garbled
+Devanagari (broken conjuncts, misplaced matras, swapped chandra-
+bindus). Clean up obvious artifacts where the correct character is
+unambiguous. If a whole sentence is unreadable, SKIP and log
+"reason": "OCR unreadable — Hindi".
+
+
+═══════════════════════════════════════════════════════════════════
+IMAGES — when to flag, when to transcribe, when to skip
+═══════════════════════════════════════════════════════════════════
+
+The v1 parser does NOT import images. Any image_url you put in
+the JSON is silently ignored. Three policies based on what the
+image contains:
+
+  (i)   DECORATIVE or DUPLICATES info already in text → ignore.
+
+  (ii)  TRANSCRIBABLE (table with visible cells, simple bar chart
+        with labelled values, geometric figure with all sides
+        labelled in text) → transcribe into the question's text
+        field as a pipe-delimited table or "Data:" list. Treat
+        these as text-only questions.
+
+  (iii) ESSENTIAL and CANNOT be transcribed (pie chart with no
+        labels, complex circuit diagram, photograph, unlabelled
+        geometry) →
+        (a) extract whatever question text accompanies it;
+        (b) add an entry to _extraction_summary.needs_manual_review
+            with reason: "image required";
+        (c) emit the question anyway with the partial text — the
+            user will attach the image manually in MockSetu's
+            editor after upload.
+
+DO NOT fabricate ASCII art for a complex diagram. DO NOT guess at
+values you cannot read.
+
+
+═══════════════════════════════════════════════════════════════════
+ANSWERS — extracting correct_answer reliably
+═══════════════════════════════════════════════════════════════════
+
+WHERE ANSWERS LIVE in typical exam PDFs:
+  • A consolidated answer key at the end of the paper.
+  • Inline after each question ("Ans.(b)").
+  • A separate "Solutions" section ("S25. Ans.(d)").
+  • A grid / table of answer letters per question number.
+
+ENCODE the answer as the zero-based index into YOUR options
+array. If the PDF says the answer is "(c)" and your options are
+in the order ["a-text","b-text","c-text","d-text","e-text"], then
+"(c)" → "2".
+
+If the PDF's answer letter doesn't correspond to any of your
+options (you reordered, or there's a typo in the PDF), SKIP the
+question and log "reason": "answer / option mismatch".
+
+If NO answers appear ANYWHERE in the PDF → set
+_extraction_summary.answers_source: "not_present" and leave every
+correct_answer as null. The creator will fill them manually.
+
+If SOME answers appear and others don't → set answers_source to
+"found_in_pdf" and emit correct_answer: null only for the
+specific questions whose answers were missing.
+
+
+═══════════════════════════════════════════════════════════════════
+WORKED EXAMPLES — copy these patterns
+═══════════════════════════════════════════════════════════════════
+
+EXAMPLE 1 — Simple MCQ with answer key
+{
+  "q_no": 1,
+  "text": "Capital of France?",
+  "answer_type": "single",
+  "options": ["Berlin", "Paris", "Madrid", "Rome"],
+  "correct_answer": "1"
+}
+
+EXAMPLE 2 — Sentence-error question with (A)/(B)/(C)/(D) markers
+{
+  "q_no": 3,
+  "text": "Directions: Read each sentence to find out whether there is any grammatical or idiomatic error in it. The error, if any, will be in one part of the sentence.\n\nQuestion: They needs (A)/ to submit the report (B)/ before the deadline (C)/ to avoid penalties. (D)",
+  "answer_type": "single",
+  "options": ["A", "B", "C", "D", "No error"],
+  "correct_answer": "0"
+}
+
+EXAMPLE 3 — Reading comprehension (PREFERRED: "passage" field on each Q)
+{
+  "q_no": 8,
+  "passage": "Sayer Daheir began a modest printing press many decades ago, choosing to begin his venture with a deep respect for the traditional arts of printing and book binding. … [full passage, ~400 words] …",
+  "text": "Which of the following best explains why visitors found the workshop's pages impressive?",
+  "answer_type": "single",
+  "options": [
+    "The pages were produced using highly advanced machinery imported from overseas.",
+    "The books featured metallic covers that reflected modern design sensibilities.",
+    "The design was intricate and consistent, reflecting care and expert craftsmanship.",
+    "Each book was endorsed by famous artists to increase its credibility.",
+    "The pages were produced in large batches ensuring mass production accuracy."
+  ],
+  "correct_answer": "2"
+}
+
+EXAMPLE 3b — Reading comprehension (FALLBACK: inline in "text")
+{
+  "q_no": 8,
+  "text": "Passage:\n\nSayer Daheir began a modest printing press many decades ago … [full passage, ~400 words] …\n\nQuestion: Which of the following best explains why visitors found the workshop's pages impressive?",
+  "answer_type": "single",
+  "options": ["...", "...", "...", "...", "..."],
+  "correct_answer": "2"
+}
+
+EXAMPLE 4 — Quant with inline LaTeX
+{
+  "q_no": 46,
+  "text": "A rectangle has length-to-width ratio 5:3. If twice the perimeter is 96 cm, find the area of the rectangle (in $\\text{cm}^2$).",
+  "answer_type": "single",
+  "options": ["225", "135", "196", "180", "154"],
+  "correct_answer": "1"
+}
+
+EXAMPLE 5 — Quant with structured LaTeX (radicals, fractions)
+{
+  "q_no": 47,
+  "text": "If $\\sqrt{5x+9} + \\sqrt{5x-9} = 3(2+\\sqrt{2})$, then $\\sqrt{10x+9}$ is equal to:",
+  "answer_type": "single",
+  "options": ["$3\\sqrt{7}$", "$4\\sqrt{5}$", "$3\\sqrt{31}$", "$2\\sqrt{7}$"],
+  "correct_answer": "1"
+}
+
+EXAMPLE 6 — Data interpretation with an embedded table
+{
+  "q_no": 36,
+  "text": "The table below shows the number of students playing three sports — Cricket, Hockey, Football — at two schools A and B.\n\nSport    | A  | B\n-------- | -- | --\nCricket  | 20 | 35\nHockey   | 25 | 30\nFootball | 24 | 36\n\nQuestion: What is the ratio of students playing cricket at school A to those playing football at school B?",
+  "answer_type": "single",
+  "options": ["5:9", "9:5", "6:5", "6:7", "6:1"],
+  "correct_answer": "0"
+}
+
+EXAMPLE 7 — Statement-based MCQ
+{
+  "q_no": 10,
+  "text": "Passage:\n\n[full RC passage here]\n\nQuestion: Which of the following statements is CORRECT according to the passage?\n\n(A) Hadiya represents the latest generation contributing to the Daheir heritage.\n(B) In 1999, the original workshop was sold to external investors and rebranded.\n(C) The use of metal nameplates was introduced to add uniqueness to the books.",
+  "answer_type": "single",
+  "options": ["Only A", "Both A and B", "Both B and C", "Both A and C", "Only C"],
+  "correct_answer": "3"
+}
+
+EXAMPLE 8 — Hindi quant question (Devanagari + transcribed data)
+{
+  "q_no": 31,
+  "text": "Data — रविवार को पाँच पार्कों A, B, C, D, E में जाने वाले आगंतुकों की संख्या: 20, 32, 26, 40, 24\n\nप्रश्न: पार्क A और B में जाने वाले आगंतुकों की संख्या का योग, पार्क D में जाने वाले आगंतुकों की संख्या का कितना प्रतिशत है?",
+  "answer_type": "single",
+  "options": ["130", "120", "125", "100", "105"],
+  "correct_answer": "0"
+}
+
+EXAMPLE 9 — Puzzle setup (8 people on 8 floors)
+{
+  "q_no": 66,
+  "text": "Setup: Eight persons A, B, C, D, E, F, G and H live on eight different floors of an eight-storey building. Floor 1 is the bottom; floor 8 is the top. D lives on an even-numbered floor above the fifth floor. Three persons live between D and B. The number of persons above B equals the number of persons below E. Two persons live between E and G. C lives immediately above A. More than three persons live between A and H.\n\nQuestion: How many persons live above A?",
+  "answer_type": "single",
+  "options": ["None", "One", "Three", "Two", "More than two"],
+  "correct_answer": "3"
+}
+
+EXAMPLE 10 — Skipped (numeric / TITA)
+Goes into _extraction_summary.skipped, NOT into sections.questions:
+{ "q_no": 21, "page": 11, "reason": "numeric unsupported — TITA" }
+
+
+═══════════════════════════════════════════════════════════════════
+SELF-CHECK — verify ALL of these BEFORE emitting
+═══════════════════════════════════════════════════════════════════
+
+  □ schema_version is exactly "1.0".
+  □ language is "en" or "hi" and matches what I told you.
+  □ sections is a non-empty array.
+  □ Every section name matches mine character-for-character.
+  □ Every question has non-empty text, valid answer_type,
+    options array (≥ 2 entries), and (where the PDF supplied it)
+    a correct_answer.
+  □ Every correct_answer index is in 0 … options.length-1.
+  □ For answer_type: "single", correct_answer is a single
+    string (not an array of multiple indices).
+  □ For answer_type: "multi", correct_answer is an array of
+    two or more distinct indices.
+  □ No two questions in the same section share a q_no (or omit
+    q_no entirely and let the parser number them by position).
+  □ No two options in the SAME question are identical strings
+    (if you see duplicates, you probably dropped a LaTeX
+    backslash that distinguished them — fix and re-emit).
+  □ JSON parses with a strict parser: balanced {} and [], no
+    trailing commas, no comments, double-quoted strings only.
+  □ Every " INSIDE a string value is either escaped as \" OR
+    converted to a Unicode curly quote (“ ” ‘ ’). No bare ASCII
+    " inside text. (Rule 10)
+  □ Every \ inside a string is followed by one of: \ " / b f n
+    r t u. No bare \s, \l, \a, \p, \c, \v, \z, \d, etc. Every
+    LaTeX backslash has been doubled. (Rule 11)
+  □ No mojibake — text reads cleanly without Ã, Â, â€™, â€“,
+    â€" sequences. Accented letters and dashes are proper
+    Unicode (Lozère not LozÃ¨re; — not â; ° not Â°). (Rule 12)
+  □ Every passage / setup / directions / data block is the
+    FULL VERBATIM source text, not a paraphrase or summary.
+    Same passage repeats across all questions in the group.
+  □ marks_wrong (if present anywhere) is a POSITIVE magnitude.
+  □ _extraction_summary.skipped accounts for every question
+    counted in total_in_pdf but absent from sections.
+  □ No image_url, no passage, no explanation, no
+    difficulty, no other unrecognized fields anywhere.
+
+FINAL PASS — before emitting, read your JSON ONE MORE TIME,
+character by character. Specifically grep for:
+  • Any " inside a "..." string value → must be \" or curly quote
+  • Any \ not followed by \ " / b f n r t u → must be doubled
+  • Any "Ã" "Â" "â€" sequence → fix encoding to native Unicode
+  • Any passage shorter than 5 sentences (likely summarised) →
+    expand to full source text
+Catching these now saves a round-trip with the user.
+
+
+═══════════════════════════════════════════════════════════════════
+YOUR CONTEXT — fill these in, then attach the PDF and send
+═══════════════════════════════════════════════════════════════════
+
+  Language code:   ______           (use "en" or "hi")
+
+  Section names from MY exam, in the order they appear:
+    1. ______
+    2. ______
+    3. ______
+    (add more lines if needed)
+
+Now read the attached PDF and emit the JSON between
+<<<EXAM_JSON_START>>> and <<<EXAM_JSON_END>>>. Begin.`;
+
+const FIX_INVALID_JSON_PROMPT = String.raw`The JSON file you generated for me is structurally invalid —
 MockSetu's parser failed because of a syntax error somewhere in
 the file.
 
@@ -164,9 +751,16 @@ Please:
    - No trailing commas
    - No comments and no shell-style ## headers
    - All braces { } and brackets [ ] balanced
-   - No unescaped double-quotes inside string values
+   - Every " INSIDE a string value either escaped as \" or
+     converted to a Unicode curly quote (“ ” ‘ ’). This is the
+     #1 cause — check book / essay titles in passages first
+     (e.g. "Writing Ocean Worlds", "The Affluent Society").
+   - No other unescaped double-quotes inside string values
+   - Every LaTeX backslash DOUBLED inside JSON strings
+     (e.g. LaTeX \frac{a}{b} becomes "\\frac{a}{b}" in JSON;
+     \sqrt{7} becomes "\\sqrt{7}")
 3. Do NOT change any content — questions, options, answers, marks,
-   and section names must be preserved exactly.
+   section names, passages, and math must be preserved exactly.
 4. Mentally parse the JSON before emitting; make sure it would
    parse with a strict parser.
 
@@ -219,17 +813,87 @@ Follow the schema in my original prompt.
 
 Output between <<<EXAM_JSON_START>>> and <<<EXAM_JSON_END>>>.`;
 
-const SAMPLE_JSON = `{
+const PASSAGE_EXAMPLE_JSON = String.raw`{
   "schema_version": "1.0",
   "language": "en",
   "sections": [
     {
+      "name": "Verbal Ability and Reading Comprehension",
+      "questions": [
+        {
+          "q_no": 1,
+          "passage": "The Indian Ocean world is a term used to describe the very long-lasting connections among the coasts of East Africa, the Arab coasts, and South and East Asia. These connections were made possible by the geography of the Indian Ocean — for much of history, travel by sea was much easier than by land.",
+          "text": "According to the passage, what made the Indian Ocean connections possible?",
+          "answer_type": "single",
+          "options": [
+            "Advances in shipbuilding technology",
+            "The geography of the Indian Ocean",
+            "Colonial trading policies",
+            "Religious pilgrimage routes"
+          ],
+          "correct_answer": "1"
+        },
+        {
+          "q_no": 2,
+          "passage": "The Indian Ocean world is a term used to describe the very long-lasting connections among the coasts of East Africa, the Arab coasts, and South and East Asia. These connections were made possible by the geography of the Indian Ocean — for much of history, travel by sea was much easier than by land.",
+          "text": "Which of the following is NOT mentioned in the passage as part of the Indian Ocean world?",
+          "answer_type": "single",
+          "options": [
+            "East Africa",
+            "Arab coasts",
+            "Western Europe",
+            "South Asia"
+          ],
+          "correct_answer": "2"
+        }
+      ]
+    }
+  ]
+}`;
+
+const SAMPLE_JSON = String.raw`{
+  "schema_version": "1.0",
+  "language": "en",
+  "_extraction_summary": {
+    "source_pdf": "sample-exam.pdf",
+    "model": "gpt-5",
+    "total_in_pdf": 3,
+    "extracted": 3,
+    "skipped": [],
+    "needs_manual_review": [],
+    "marks_source": "not_present",
+    "answers_source": "found_in_pdf"
+  },
+  "sections": [
+    {
+      "name": "Verbal",
+      "questions": [
+        {
+          "text": "Passage:\n\nThe Indian Ocean world is a term used to describe the very long-lasting connections among the coasts of East Africa, the Arab coasts, and South and East Asia. These connections were made possible by the geography of the Indian Ocean — for much of history, travel by sea was much easier than by land.\n\nQuestion: According to the passage, what made the Indian Ocean connections possible?",
+          "answer_type": "single",
+          "options": [
+            "Advances in shipbuilding technology",
+            "The geography of the Indian Ocean",
+            "Colonial trading policies",
+            "Religious pilgrimage routes"
+          ],
+          "correct_answer": "1"
+        }
+      ]
+    },
+    {
       "name": "Quantitative",
       "questions": [
         {
-          "text": "Capital of France?",
+          "text": "If $\\sqrt{5x+9} + \\sqrt{5x-9} = 3(2+\\sqrt{2})$, then $\\sqrt{10x+9}$ is equal to:",
           "answer_type": "single",
-          "options": ["Berlin", "Paris", "Madrid"],
+          "options": ["$3\\sqrt{7}$", "$4\\sqrt{5}$", "$3\\sqrt{31}$", "$2\\sqrt{7}$"],
+          "correct_answer": "1"
+        },
+        {
+          "text": "A rectangle has length-to-width ratio 5:3. If twice the perimeter is 96 cm, find the area (in $\\text{cm}^2$).",
+          "answer_type": "single",
+          "options": ["225", "135", "196", "180", "154"],
           "correct_answer": "1"
         }
       ]
@@ -451,8 +1115,16 @@ const JsonUploadGuide = () => {
                 "Open Notepad, TextEdit, or VS Code.",
                 "Paste.",
                 <>
-                  Save the file with a <Code>.json</Code> extension. Tip: include the language
-                  code in the filename, e.g. <Code>my-exam-en.json</Code>.
+                  Save the file with a <Code>.json</Code> extension <strong>and with UTF-8
+                  encoding</strong>. In Notepad: <em>Save As → Encoding dropdown → UTF-8</em>.
+                  In VS Code: confirm the bottom-right status bar reads <Code>UTF-8</Code>.
+                  Avoid <em>ANSI</em> or <em>Western (Windows-1252)</em> — those mangle
+                  accented letters and em-dashes into <Code>LozÃ¨re</Code>, <Code>â</Code>,
+                  <Code>Â°</Code>, and friends.
+                </>,
+                <>
+                  Tip: include the language code in the filename, e.g.{" "}
+                  <Code>my-exam-en.json</Code>.
                 </>,
               ]}
             />
@@ -557,6 +1229,61 @@ const JsonUploadGuide = () => {
                 "If a check fails, the Publish dialog lists exactly what to fix. Primary still publishes — secondary failures only block that secondary language.",
               ]}
             />
+
+            {/* Passage-based questions */}
+            <SectionHeading id="passage-questions" title="Passage-based questions" />
+            <P>
+              Reading-comprehension clusters, case studies, and shared-context sets are
+              supported via an <strong>optional <Code>passage</Code> field</strong> on each
+              question. The parser wraps it using the same HTML markup the manual-add flow uses,
+              so the simulator renders the familiar <strong>two-column layout</strong>: passage
+              on the left, question + options on the right.
+            </P>
+            <P>
+              <strong>Rules:</strong>
+            </P>
+            <UL
+              items={[
+                <>
+                  When N questions share a passage, emit the <Code>passage</Code> string on{" "}
+                  <strong>each</strong> of those N questions — with identical content. This
+                  duplication is intentional and matches how the editor already stores manual
+                  passages.
+                </>,
+                <>
+                  The <Code>text</Code> field holds only the question stem when{" "}
+                  <Code>passage</Code> is present — no <Code>Passage:</Code> prefix needed.
+                </>,
+                <>
+                  Plain text is best. Simple HTML allowed inside <Code>passage</Code>:{" "}
+                  <Code>&lt;p&gt;</Code>, <Code>&lt;br&gt;</Code>, <Code>&lt;em&gt;</Code>,{" "}
+                  <Code>&lt;strong&gt;</Code>, <Code>&lt;ul&gt;</Code>, <Code>&lt;li&gt;</Code>,{" "}
+                  <Code>&lt;blockquote&gt;</Code>. The parser strips <Code>&lt;div&gt;</Code>{" "}
+                  and <Code>&lt;script&gt;</Code> tags for safety.
+                </>,
+                <>
+                  If the passage is genuinely image-only (chart, diagram, scanned figure the AI
+                  can't transcribe), <em>omit</em> the <Code>passage</Code> field and add the
+                  affected <Code>q_no</Code>s to{" "}
+                  <Code>_extraction_summary.needs_manual_review</Code> with reason{" "}
+                  <Code>"passage image required"</Code>. After import, open the question in the
+                  editor and use the existing <strong>Passage Image</strong> uploader.
+                </>,
+                <>
+                  Multi-language: emit the translated passage on each question in the secondary
+                  JSON, exactly the same way. Primary and secondary stay paired by{" "}
+                  <Code>question_group_id</Code>.
+                </>,
+              ]}
+            />
+            <P>Example — 2 questions sharing one passage:</P>
+            <CopyBlock text={PASSAGE_EXAMPLE_JSON} label="Passage example" />
+            <P>
+              <strong>Fallback (single-column):</strong> if you'd rather not use a separate
+              field, you can still embed the passage inline in <Code>text</Code> using a{" "}
+              <Code>Passage:\n\n…\n\nQuestion: …</Code> pattern. Renders as a single column —
+              the two-column layout requires the <Code>passage</Code> field.
+            </P>
 
             {/* Sample JSON */}
             <SectionHeading id="sample-json" title="Sample JSON" />
@@ -866,6 +1593,30 @@ const JsonUploadGuide = () => {
                       Check the reasons in the preview. Common causes: math/image questions,
                       true/false (not supported), missing options. Add those manually after
                       upload in the editor.
+                    </td>
+                  </tr>
+                  <tr className="border-b border-border/30 align-top">
+                    <td className="py-3 px-4">
+                      Text shows <Code>LozÃ¨re</Code>, <Code>Â°</Code>, <Code>â€™</Code>,{" "}
+                      <Code>â</Code>, or similar garbage
+                    </td>
+                    <td className="py-3 px-4">
+                      UTF-8 mojibake — the file was saved (or the AI emitted) in
+                      Windows-1252 instead of UTF-8. Open in VS Code, change the
+                      bottom-right encoding indicator to <Code>UTF-8</Code>, Save, re-upload.
+                      The parser also tries to auto-repair common mojibake; if it succeeded,
+                      you'll see <Code>mojibake_fixed</Code> in the preview's repair list.
+                    </td>
+                  </tr>
+                  <tr className="border-b border-border/30 align-top">
+                    <td className="py-3 px-4">
+                      Math options render as the literal words "frac" or "sqrt"
+                    </td>
+                    <td className="py-3 px-4">
+                      LaTeX backslashes weren't doubled. The parser auto-fixes most cases
+                      (look for <Code>latex_escapes_fixed</Code> in the preview); if some
+                      slipped through, ask the AI to re-emit with every <Code>\</Code> in
+                      LaTeX replaced by <Code>\\</Code> and re-upload.
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">

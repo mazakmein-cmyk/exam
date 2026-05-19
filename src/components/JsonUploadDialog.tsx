@@ -67,6 +67,8 @@ const repairCategoryLabel: Record<RepairCategory, string> = {
   array_wrapper: "single-element array wrapper unwrapped",
   data_wrapper: "'data' key wrapper unwrapped",
   auto_repaired: "syntax auto-fixed",
+  mojibake_fixed: "UTF-8 encoding (mojibake) auto-repaired",
+  latex_escapes_fixed: "LaTeX backslashes auto-doubled",
 };
 
 const AVAILABLE_LANGUAGES: Record<string, { label: string; nativeLabel?: string }> = {
