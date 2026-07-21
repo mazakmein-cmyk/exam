@@ -1,0 +1,890 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>MockSetu Blog — Mock Test Strategy &amp; Exam Guides</title>
+    <link>https://mocksetu.in/blog</link>
+    <atom:link href="https://mocksetu.in/feed.xml" rel="self" type="application/rss+xml" />
+    <description>In-depth guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, UPSC, SSC, banking, and placement aspirants — from MockSetu (Mockset).</description>
+    <language>en-in</language>
+    <item>
+      <title>Exam Day Strategy and Checklist for Competitive Exams</title>
+      <link>https://mocksetu.in/blog/exam-day-strategy-and-checklist</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/exam-day-strategy-and-checklist</guid>
+      <pubDate>Sat, 18 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>The night before, the morning routine, what to carry, and the first ten minutes in the hall - the exam day strategy that turns preparation into a score.</description>
+    </item>
+    <item>
+      <title>How to Deal With Exam Failure and Bounce Back Stronger</title>
+      <link>https://mocksetu.in/blog/how-to-deal-with-exam-failure</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-deal-with-exam-failure</guid>
+      <pubDate>Fri, 17 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>A bad result is not a verdict on your ability - it is data on one attempt. Here is the exact 48-hour plan, root-cause framework, and retry-or-pivot process to recover.</description>
+    </item>
+    <item>
+      <title>Memory Techniques for Students That Actually Work</title>
+      <link>https://mocksetu.in/blog/memory-techniques-for-students</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/memory-techniques-for-students</guid>
+      <pubDate>Thu, 16 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>A practical guide to memory techniques for students: mnemonics, the memory palace method, chunking, and association, with real exam examples and an honest look at their limits.</description>
+    </item>
+    <item>
+      <title>How to Avoid Study Burnout During Exam Preparation</title>
+      <link>https://mocksetu.in/blog/how-to-avoid-burnout-during-exam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-avoid-burnout-during-exam-preparation</guid>
+      <pubDate>Wed, 15 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Burnout does not hit the students who work hardest - it hits the ones who never schedule a way to stop. Here is how to avoid study burnout without losing momentum.</description>
+    </item>
+    <item>
+      <title>How to Stay Consistent in Studies When Motivation Runs Out</title>
+      <link>https://mocksetu.in/blog/how-to-stay-consistent-in-studies</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-stay-consistent-in-studies</guid>
+      <pubDate>Tue, 14 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Motivation quits by day nine. Here is the system of habit stacking, environment design, and streak recovery that keeps students studying long after the feeling fades.</description>
+    </item>
+    <item>
+      <title>How to Revise Effectively Before Exams: The Multi-Pass System</title>
+      <link>https://mocksetu.in/blog/how-to-revise-effectively-before-exams</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-revise-effectively-before-exams</guid>
+      <pubDate>Mon, 13 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Rereading is not revision. Here is the three-pass system - diagnose, recall, condense - that turns notes into exam-ready memory before the clock runs out.</description>
+    </item>
+    <item>
+      <title>The Cornell Note Taking Method: How to Turn Notes Into a Revision Machine</title>
+      <link>https://mocksetu.in/blog/cornell-note-taking-method</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cornell-note-taking-method</guid>
+      <pubDate>Sun, 12 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Most students take notes to survive a lecture, not to revise later. The Cornell note taking method fixes that with one page split into cue, notes, and summary.</description>
+    </item>
+    <item>
+      <title>The Pomodoro Technique for Students: A Study Method That Works</title>
+      <link>https://mocksetu.in/blog/pomodoro-technique-for-students</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/pomodoro-technique-for-students</guid>
+      <pubDate>Sat, 11 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Twenty-five minutes of fake focus does nothing. Here is how to actually run the Pomodoro technique for students - interval lengths, active recall pairing, and the mistakes that kill it.</description>
+    </item>
+    <item>
+      <title>CUET PG Preparation Strategy: Exam Pattern, Subject Focus, and a Plan That Works</title>
+      <link>https://mocksetu.in/blog/cuet-pg-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cuet-pg-preparation-strategy</guid>
+      <pubDate>Fri, 10 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>CUET PG preparation is not CUET UG with tougher questions - it is a single-subject test. Here is the exam pattern, syllabus mapping, and plan that actually works.</description>
+    </item>
+    <item>
+      <title>How to Prepare for Olympiads: NSO, IMO and Beyond</title>
+      <link>https://mocksetu.in/blog/how-to-prepare-for-olympiads</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-prepare-for-olympiads</guid>
+      <pubDate>Thu, 09 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Olympiads do not test how fast you recall, they test how deep you can think. Here is a real, level-by-level strategy to prepare for NSO, IMO, and beyond.</description>
+    </item>
+    <item>
+      <title>Building a Foundation for Competitive Exams in Class 9 and 10</title>
+      <link>https://mocksetu.in/blog/foundation-for-competitive-exams-class-9-10</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/foundation-for-competitive-exams-class-9-10</guid>
+      <pubDate>Wed, 08 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>Class 9 and 10 decide more about your eventual JEE, NEET, or olympiad rank than any coaching batch joined in class 11. Here is what to actually build now.</description>
+    </item>
+    <item>
+      <title>How to Balance Boards and JEE NEET Preparation Together</title>
+      <link>https://mocksetu.in/blog/how-to-balance-boards-and-jee-neet</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-balance-boards-and-jee-neet</guid>
+      <pubDate>Tue, 07 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>Boards and JEE NEET are not rival syllabi fighting for your hours. Here is the overlap map, the weekly split, and the priority rules that let one preparation carry the other.</description>
+    </item>
+    <item>
+      <title>Class 10 Board Exam Preparation: The Complete Strategy for Your First Board Exam</title>
+      <link>https://mocksetu.in/blog/cbse-class-10-board-exam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cbse-class-10-board-exam-preparation</guid>
+      <pubDate>Mon, 06 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Board Exams</category>
+      <description>Your first board exam does not need to feel random. Here is the exact class 10 board exam preparation system - study plan, subject tactics, revision - built to work.</description>
+    </item>
+    <item>
+      <title>Class 12 Board Exam Preparation: The Complete CBSE Study Plan</title>
+      <link>https://mocksetu.in/blog/cbse-class-12-board-exam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cbse-class-12-board-exam-preparation</guid>
+      <pubDate>Sun, 05 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Board Exams</category>
+      <description>A no-fluff class 12 board exam preparation plan: NCERT alignment, answer-writing rules that earn full marks, a weekly time grid, and how to run boards alongside entrance prep.</description>
+    </item>
+    <item>
+      <title>SSB Interview Preparation: A Complete Guide to the 5-Day Process</title>
+      <link>https://mocksetu.in/blog/ssb-interview-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ssb-interview-preparation</guid>
+      <pubDate>Sat, 04 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>SSB interview preparation is not about rehearsed answers - it is a five-day behavioural audit. Here is what screening, psychology, GTO tasks, and the interview actually test.</description>
+    </item>
+    <item>
+      <title>AFCAT Preparation Strategy: Exam Pattern, EKT, and the Path to AFSB</title>
+      <link>https://mocksetu.in/blog/afcat-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/afcat-preparation-strategy</guid>
+      <pubDate>Fri, 03 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>AFCAT preparation needs more than generic aptitude practice. Here is how to structure the exam pattern, EKT, section timing, and AFSB prep into one working plan.</description>
+    </item>
+    <item>
+      <title>State PSC Exam Preparation: A Complete Strategy for Prelims, Mains and Interview</title>
+      <link>https://mocksetu.in/blog/state-psc-exam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/state-psc-exam-preparation</guid>
+      <pubDate>Thu, 02 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>State PSC exams mirror UPSC's three-stage structure but reward different instincts. Here is how to structure prelims, mains, interview and static GK preparation without wasting months.</description>
+    </item>
+    <item>
+      <title>TET Exam Preparation: A Complete Strategy for Paper 1 and Paper 2</title>
+      <link>https://mocksetu.in/blog/tet-exam-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/tet-exam-preparation-strategy</guid>
+      <pubDate>Wed, 01 Jul 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>TET exam preparation is not about memorising theorists or solving one more question bank. It is about mapping the shared structure across CTET and State TET, then building a scoring plan around it.</description>
+    </item>
+    <item>
+      <title>CSIR NET Preparation Strategy for Part A, B, and C</title>
+      <link>https://mocksetu.in/blog/csir-net-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/csir-net-preparation-strategy</guid>
+      <pubDate>Tue, 30 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Part A tests how you think, not just what you have memorised. This CSIR NET preparation guide breaks down Part A, B, C structure, negative marking, and subject strategy for JRF aspirants.</description>
+    </item>
+    <item>
+      <title>UGC NET Preparation: A Paper 1 and Paper 2 Strategy for JRF</title>
+      <link>https://mocksetu.in/blog/ugc-net-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ugc-net-preparation-strategy</guid>
+      <pubDate>Mon, 29 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Paper 1 is not a formality and Paper 2 is not a lottery. This is the split UGC NET preparation strategy - teaching aptitude, subject depth, and the PYQ loop that clears JRF cutoffs.</description>
+    </item>
+    <item>
+      <title>General Awareness Preparation: The Static GK Strategy That Sticks</title>
+      <link>https://mocksetu.in/blog/general-awareness-preparation-for-exams</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/general-awareness-preparation-for-exams</guid>
+      <pubDate>Sun, 28 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Most aspirants wing general awareness preparation. Here is the static GK system - domains, a retention method, and current affairs handling - that survives exam day.</description>
+    </item>
+    <item>
+      <title>English Preparation for Competitive Exams: A Complete Strategy</title>
+      <link>https://mocksetu.in/blog/english-preparation-for-competitive-exams</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/english-preparation-for-competitive-exams</guid>
+      <pubDate>Sat, 27 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>English preparation for competitive exams rewards system, not memorization. Here is the grammar, vocabulary, and practice loop that lifts scores in SSC, banking, and railway exams.</description>
+    </item>
+    <item>
+      <title>Reasoning Preparation for Competitive Exams: The Complete Strategy</title>
+      <link>https://mocksetu.in/blog/reasoning-preparation-for-competitive-exams</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/reasoning-preparation-for-competitive-exams</guid>
+      <pubDate>Fri, 26 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Puzzles and seating arrangement decide more government exam ranks than general awareness ever will. Here is the taxonomy, the method, and the drill system that builds real reasoning ability.</description>
+    </item>
+    <item>
+      <title>Quantitative Aptitude for Government Exams: The Complete Prep System</title>
+      <link>https://mocksetu.in/blog/quantitative-aptitude-for-government-exams</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/quantitative-aptitude-for-government-exams</guid>
+      <pubDate>Thu, 25 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Quant is the one section common to every government exam. Here is the topic ranking, speed-math toolkit, and DI system that turns solvable questions into scored questions.</description>
+    </item>
+    <item>
+      <title>LIC AAO Preparation Strategy: From Prelims to Interview</title>
+      <link>https://mocksetu.in/blog/lic-aao-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/lic-aao-preparation-strategy</guid>
+      <pubDate>Wed, 24 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Prelims, mains, and interview each test a different skill. Here is how to prepare for LIC AAO without wasting effort on the wrong section at the wrong time.</description>
+    </item>
+    <item>
+      <title>RRB Group D Preparation: CBT, PET, and a Section-Wise Plan</title>
+      <link>https://mocksetu.in/blog/rrb-group-d-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/rrb-group-d-preparation-strategy</guid>
+      <pubDate>Tue, 23 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>RRB Group D preparation means training for two exams at once: a speed-driven CBT and a physical test most aspirants only start planning for far too late.</description>
+    </item>
+    <item>
+      <title>RBI Grade B Preparation Strategy: Phase 1 to Phase 2</title>
+      <link>https://mocksetu.in/blog/rbi-grade-b-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/rbi-grade-b-preparation-strategy</guid>
+      <pubDate>Mon, 22 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>RBI Grade B preparation is not banking-exam-as-usual. Phase 2's ESI, FM and descriptive papers reward conceptual depth and writing ability, not recall speed.</description>
+    </item>
+    <item>
+      <title>IBPS Clerk Preparation Strategy: A Prelims-to-Mains Game Plan</title>
+      <link>https://mocksetu.in/blog/ibps-clerk-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ibps-clerk-preparation-strategy</guid>
+      <pubDate>Sun, 21 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>The clerk exam is not a lighter version of PO. Here is the prelims speed drill, the mains GA strategy, and the compact plan that actually fits how IBPS clerk is scored.</description>
+    </item>
+    <item>
+      <title>SSC GD Constable Preparation: CBT, PET and PST Strategy</title>
+      <link>https://mocksetu.in/blog/ssc-gd-constable-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ssc-gd-constable-preparation</guid>
+      <pubDate>Sat, 20 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>SSC GD constable preparation demands two different kinds of fitness - written and physical. Here is a section-wise CBT plan plus a training timeline for the PET and PST.</description>
+    </item>
+    <item>
+      <title>SSC CHSL Preparation Strategy: Tier 1 to Typing Test</title>
+      <link>https://mocksetu.in/blog/ssc-chsl-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ssc-chsl-preparation-strategy</guid>
+      <pubDate>Fri, 19 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>SSC CHSL preparation is not SSC CGL at a smaller scale. It is a four-section speed test followed by a typing round most aspirants prepare for far too late.</description>
+    </item>
+    <item>
+      <title>UCEED Preparation Strategy: How to Crack the IIT Design Entrance Exam</title>
+      <link>https://mocksetu.in/blog/uceed-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/uceed-preparation-strategy</guid>
+      <pubDate>Thu, 18 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>UCEED rewards trained eyes, not raw talent. A practical framework to build visual reasoning, numerical accuracy, and drawing skill for the IIT design entrance exam.</description>
+    </item>
+    <item>
+      <title>NID Entrance Preparation: DAT Prelims, Mains and Studio Test Strategy</title>
+      <link>https://mocksetu.in/blog/nid-entrance-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/nid-entrance-preparation</guid>
+      <pubDate>Wed, 17 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>DAT prelims rewards a sharp eye. Mains and the studio test reward ideas you can build and defend. Here is how to structure NID entrance preparation stage by stage.</description>
+    </item>
+    <item>
+      <title>NIFT Entrance Preparation: A Complete GAT, CAT and Situation Test Guide</title>
+      <link>https://mocksetu.in/blog/nift-entrance-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/nift-entrance-preparation</guid>
+      <pubDate>Tue, 16 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>NIFT rewards preparation that trains both hemispheres of the brain. Here is the GAT-CAT-situation test roadmap serious design aspirants actually need.</description>
+    </item>
+    <item>
+      <title>NATA Preparation Strategy: Drawing, Aptitude, and Boards</title>
+      <link>https://mocksetu.in/blog/nata-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/nata-preparation-strategy</guid>
+      <pubDate>Mon, 15 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>NATA rewards two skills at once - a trained drawing hand and sharp spatial reasoning - while boards run in parallel. Here is the plan that builds both without wrecking either.</description>
+    </item>
+    <item>
+      <title>Legal Reasoning Preparation for Law Exams: A Zero-Background System</title>
+      <link>https://mocksetu.in/blog/legal-reasoning-preparation-for-law-exams</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/legal-reasoning-preparation-for-law-exams</guid>
+      <pubDate>Sun, 14 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Legal reasoning preparation does not need a law degree - it needs a system. Here are the five question archetypes and the drill routine that actually builds accuracy.</description>
+    </item>
+    <item>
+      <title>CLAT vs AILET: Which Law Entrance Exam Should You Target</title>
+      <link>https://mocksetu.in/blog/clat-vs-ailet</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/clat-vs-ailet</guid>
+      <pubDate>Sat, 13 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>CLAT vs AILET is the first real decision every law aspirant faces. Here is how the pattern, difficulty, and colleges differ, and how to prepare for both.</description>
+    </item>
+    <item>
+      <title>AILET Preparation Strategy: A Complete Guide for NLU Delhi</title>
+      <link>https://mocksetu.in/blog/ailet-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ailet-preparation-strategy</guid>
+      <pubDate>Fri, 12 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>AILET is not CLAT with a different name. Here is the section-by-section AILET preparation strategy, pattern nuances, and a dual-prep plan for CLAT aspirants too.</description>
+    </item>
+    <item>
+      <title>CMAT Preparation Strategy: A Complete Plan to Crack the Exam</title>
+      <link>https://mocksetu.in/blog/cmat-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cmat-preparation-strategy</guid>
+      <pubDate>Thu, 11 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>CMAT rewards preparation, not genius. Here is the exact pattern breakdown, a general awareness method, and a realistic 60-day plan to convert an accessible exam into a strong percentile.</description>
+    </item>
+    <item>
+      <title>NMAT Preparation Strategy: Sections, Speed, and Retakes</title>
+      <link>https://mocksetu.in/blog/nmat-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/nmat-preparation-strategy</guid>
+      <pubDate>Wed, 10 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>NMAT rewards speed, not difficulty, and lets you retake it strategically. Here is how to build a preparation strategy around scheduling, sections, and smart retakes.</description>
+    </item>
+    <item>
+      <title>MBA Entrance Exams in India: Full Comparison Guide</title>
+      <link>https://mocksetu.in/blog/mba-entrance-exams-in-india</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/mba-entrance-exams-in-india</guid>
+      <pubDate>Tue, 09 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>There are at least six MBA entrance exams in India, and you do not need to prepare for all of them. Here is how CAT, XAT, SNAP, NMAT, and CMAT differ, and which ones deserve your time.</description>
+    </item>
+    <item>
+      <title>XAT Preparation Strategy: Cracking Decision Making, Essay and GK</title>
+      <link>https://mocksetu.in/blog/xat-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/xat-preparation-strategy</guid>
+      <pubDate>Mon, 08 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>XAT is not CAT with extra steps. Here is a focused XAT preparation strategy for decision making, essay writing and GK that respects what actually differs.</description>
+    </item>
+    <item>
+      <title>Should I Take a Drop Year for JEE? An Honest Decision Framework</title>
+      <link>https://mocksetu.in/blog/should-i-take-a-drop-year-for-jee</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/should-i-take-a-drop-year-for-jee</guid>
+      <pubDate>Sun, 07 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Career Guidance</category>
+      <description>A drop year is not a reset button. It is a bet with real costs. Here is the honest framework to decide, and the plan to make it count if you say yes.</description>
+    </item>
+    <item>
+      <title>IIT JAM Preparation: The Complete Strategy for MSc and PhD Aspirants</title>
+      <link>https://mocksetu.in/blog/iit-jam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/iit-jam-preparation</guid>
+      <pubDate>Sat, 06 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>IIT JAM tests graduate-level depth, not BSc revision. Here is the subject-wise strategy, study plan, and exam pattern breakdown serious MSc and PhD aspirants need.</description>
+    </item>
+    <item>
+      <title>JoSAA Counselling Process Explained: Choices, Ranks, and Rounds</title>
+      <link>https://mocksetu.in/blog/josaa-counselling-process-explained</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/josaa-counselling-process-explained</guid>
+      <pubDate>Fri, 05 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Career Guidance</category>
+      <description>JoSAA counselling decoded: how choice order, opening and closing ranks, and float-slide-freeze rounds decide which IIT, NIT, or IIIT you actually get.</description>
+    </item>
+    <item>
+      <title>How to Improve Chemistry for JEE: The Three-Branch Strategy</title>
+      <link>https://mocksetu.in/blog/how-to-improve-chemistry-for-jee</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-improve-chemistry-for-jee</guid>
+      <pubDate>Thu, 04 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Chemistry is the highest-ROI section in JEE, but only once you stop studying it as one subject and treat physical, organic, and inorganic as three separate skills.</description>
+    </item>
+    <item>
+      <title>How to Improve Physics for JEE: A Diagnostic-First Approach</title>
+      <link>https://mocksetu.in/blog/how-to-improve-physics-for-jee</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-improve-physics-for-jee</guid>
+      <pubDate>Wed, 03 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Most JEE aspirants do not have a physics problem. They have a diagnosis problem. Here is the framework to find what is actually broken and fix it before your next mock.</description>
+    </item>
+    <item>
+      <title>JEE Advanced Preparation Strategy: Depth Over Speed</title>
+      <link>https://mocksetu.in/blog/jee-advanced-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/jee-advanced-preparation-strategy</guid>
+      <pubDate>Tue, 02 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Clearing Main is the qualifying round. This JEE Advanced preparation strategy covers why multi-concept problems demand depth over speed, and how to rebuild each subject before the final push.</description>
+    </item>
+    <item>
+      <title>NEET UG Counselling Process Explained: Rounds, Quotas and Choice Filling Strategy</title>
+      <link>https://mocksetu.in/blog/neet-ug-counselling-process-explained</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-ug-counselling-process-explained</guid>
+      <pubDate>Mon, 01 Jun 2026 03:30:00 GMT</pubDate>
+      <category>Career Guidance</category>
+      <description>Registration, choice filling, AIQ vs state quota, allotment rounds, reporting deadlines: here is exactly how the NEET UG counselling process works and how to build a smarter choice list.</description>
+    </item>
+    <item>
+      <title>INICET vs NEET PG: Which Exam Should Shape Your PG Prep Strategy</title>
+      <link>https://mocksetu.in/blog/inicet-vs-neet-pg</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/inicet-vs-neet-pg</guid>
+      <pubDate>Sun, 31 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>INICET and NEET PG test the same MBBS syllabus but reward different instincts. Here is how the pattern, difficulty, and prep sequencing actually differ.</description>
+    </item>
+    <item>
+      <title>NEET PG Preparation Strategy for Final-Year MBBS Interns</title>
+      <link>https://mocksetu.in/blog/neet-pg-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-pg-preparation-strategy</guid>
+      <pubDate>Sat, 30 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>A no-fluff NEET PG preparation strategy for busy interns - subject weightage, a revision system that survives fatigue, and a timeline built around duty hours, not against them.</description>
+    </item>
+    <item>
+      <title>Best Online Test Maker for Coaching Institutes: A Buyer's Checklist</title>
+      <link>https://mocksetu.in/blog/best-online-test-maker-for-coaching-institutes</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/best-online-test-maker-for-coaching-institutes</guid>
+      <pubDate>Fri, 29 May 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Most test software puts MCQs on a screen and calls it done. Here is what a real online test maker for coaching institutes must get right - interface, analytics, import speed, and pricing.</description>
+    </item>
+    <item>
+      <title>How to Convert a PDF Question Paper to an Online Test (Step by Step)</title>
+      <link>https://mocksetu.in/blog/convert-pdf-question-paper-to-online-test</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/convert-pdf-question-paper-to-online-test</guid>
+      <pubDate>Thu, 28 May 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A PDF question paper does not grade itself, does not stop circulating on WhatsApp, and cannot time itself. Here is the actual workflow to turn one into a live, timed online exam.</description>
+    </item>
+    <item>
+      <title>How to Create an Online Mock Test: A Step-by-Step Guide for Teachers</title>
+      <link>https://mocksetu.in/blog/how-to-create-an-online-mock-test</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-create-an-online-mock-test</guid>
+      <pubDate>Wed, 27 May 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A practical, no-fluff guide for teachers and coaching institutes on building a timed online mock test that mirrors the real exam, from question design to student analytics.</description>
+    </item>
+    <item>
+      <title>AI Mock Interview Practice: How to Prepare for HR and Technical Rounds</title>
+      <link>https://mocksetu.in/blog/ai-mock-interview-practice</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ai-mock-interview-practice</guid>
+      <pubDate>Tue, 26 May 2026 03:30:00 GMT</pubDate>
+      <category>Placement Prep</category>
+      <description>Reading interview guides makes you feel ready. AI mock interview practice actually makes you ready. Here is the STAR framework, the review checklist, and the 14-day loop that closes the gap.</description>
+    </item>
+    <item>
+      <title>Online Coding Assessment Preparation: A System for Placement Rounds</title>
+      <link>https://mocksetu.in/blog/online-coding-assessment-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/online-coding-assessment-preparation</guid>
+      <pubDate>Mon, 25 May 2026 03:30:00 GMT</pubDate>
+      <category>Placement Prep</category>
+      <description>Coding rounds run on a clock, hidden test cases, and partial scoring, not the untimed practice most aspirants default to. Here is the system that actually works.</description>
+    </item>
+    <item>
+      <title>Campus Placement Preparation: A Semester-Wise Roadmap That Works</title>
+      <link>https://mocksetu.in/blog/campus-placement-preparation-guide</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/campus-placement-preparation-guide</guid>
+      <pubDate>Sun, 24 May 2026 03:30:00 GMT</pubDate>
+      <category>Placement Prep</category>
+      <description>Most students start campus placement preparation in their final semester and pay for it every October. Here is the semester-wise roadmap that actually works.</description>
+    </item>
+    <item>
+      <title>Aptitude Test Preparation for Placements: A Complete Strategy</title>
+      <link>https://mocksetu.in/blog/aptitude-test-preparation-for-placements</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/aptitude-test-preparation-for-placements</guid>
+      <pubDate>Sat, 23 May 2026 03:30:00 GMT</pubDate>
+      <category>Placement Prep</category>
+      <description>Company aptitude rounds reward pattern recognition under a clock, not raw intelligence. Here is the topic list ranked by frequency, the drill system, and the plan that works.</description>
+    </item>
+    <item>
+      <title>Online Coaching vs Offline Coaching: An Honest Decision Framework</title>
+      <link>https://mocksetu.in/blog/online-coaching-vs-offline-coaching</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/online-coaching-vs-offline-coaching</guid>
+      <pubDate>Fri, 22 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>Coaching institutes will tell you it is non-negotiable. The truth is messier: it depends on your budget, your discipline, and the specific faculty you would actually get.</description>
+    </item>
+    <item>
+      <title>How Many Hours Should I Study Every Day for Competitive Exams?</title>
+      <link>https://mocksetu.in/blog/how-many-hours-should-you-study</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-many-hours-should-you-study</guid>
+      <pubDate>Thu, 21 May 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Clock hours lie. Learn why 6 to 8 focused hours in real deep work blocks beat a scattered 14-hour day, and how to build a study load that survives months, not days.</description>
+    </item>
+    <item>
+      <title>Negative Marking Strategy: The Expected-Value Math of Smart Guessing</title>
+      <link>https://mocksetu.in/blog/negative-marking-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/negative-marking-strategy</guid>
+      <pubDate>Wed, 20 May 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>Should you guess or leave it blank? This negative marking strategy breaks down the exact expected-value math and elimination thresholds behind every major exam's guessing rules.</description>
+    </item>
+    <item>
+      <title>How to Improve Accuracy in MCQ Exams</title>
+      <link>https://mocksetu.in/blog/how-to-improve-accuracy-in-mcq-exams</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-improve-accuracy-in-mcq-exams</guid>
+      <pubDate>Tue, 19 May 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>Accuracy is not luck or talent - it is a system. Here is the error taxonomy, the read-twice rule, and the attempt thresholds that actually raise your MCQ accuracy.</description>
+    </item>
+    <item>
+      <title>How to Overcome Exam Anxiety: A Physiology-First Method</title>
+      <link>https://mocksetu.in/blog/how-to-overcome-exam-anxiety</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-overcome-exam-anxiety</guid>
+      <pubDate>Mon, 18 May 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Exam anxiety is a physiology problem, not a willpower problem. Here is the exposure, breathing, and routine protocol that actually retrains your response to test day.</description>
+    </item>
+    <item>
+      <title>How to Make a Study Timetable You'll Actually Follow</title>
+      <link>https://mocksetu.in/blog/how-to-make-a-study-timetable</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-make-a-study-timetable</guid>
+      <pubDate>Sun, 17 May 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Most study timetables collapse within two weeks. Here is the energy-based system for building a study timetable with realistic quotas that survives a full exam season.</description>
+    </item>
+    <item>
+      <title>Spaced Repetition for Exam Preparation: The Revision System That Beats Cramming</title>
+      <link>https://mocksetu.in/blog/spaced-repetition-for-exam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/spaced-repetition-for-exam-preparation</guid>
+      <pubDate>Sat, 16 May 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>A science-backed spaced repetition schedule beats cramming and rereading. Here is exactly when to revise so your syllabus survives a 6-12 month prep cycle.</description>
+    </item>
+    <item>
+      <title>Active Recall Study Technique: Why It Beats Rereading Every Time</title>
+      <link>https://mocksetu.in/blog/active-recall-study-technique</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/active-recall-study-technique</guid>
+      <pubDate>Fri, 15 May 2026 03:30:00 GMT</pubDate>
+      <category>Study Science</category>
+      <description>Rereading and highlighting feel productive and barely work. The active recall study technique forces real retrieval - here is the evidence and five ways to use it before exam day.</description>
+    </item>
+    <item>
+      <title>CDS Exam Preparation: Complete Strategy for English, GK and Maths</title>
+      <link>https://mocksetu.in/blog/cds-exam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cds-exam-preparation</guid>
+      <pubDate>Thu, 14 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Three papers, two very different patterns, and a five-day interview waiting after that. Here is a no-fluff plan for CDS exam preparation across English, GK, maths, and the SSB pipeline.</description>
+    </item>
+    <item>
+      <title>CTET Preparation Strategy: How to Clear Paper 1 and Paper 2</title>
+      <link>https://mocksetu.in/blog/ctet-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ctet-preparation-strategy</guid>
+      <pubDate>Wed, 13 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Most CTET aspirants over-prepare content and under-prepare pedagogy. Here is a paper 1 vs paper 2 decision framework, an NCERT-first content plan, and a realistic path to qualifying marks.</description>
+    </item>
+    <item>
+      <title>BITSAT Preparation Strategy: Win the Speed Exam</title>
+      <link>https://mocksetu.in/blog/bitsat-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/bitsat-preparation-strategy</guid>
+      <pubDate>Tue, 12 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>BITSAT rewards pace, not depth. Here is the exact delta over JEE preparation, the bonus-question rule explained, and a 3-4 week bridge plan to run after JEE.</description>
+    </item>
+    <item>
+      <title>NDA Exam Preparation: The Maths, GAT and SSB Roadmap</title>
+      <link>https://mocksetu.in/blog/nda-exam-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/nda-exam-preparation</guid>
+      <pubDate>Mon, 11 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>NDA exam preparation is really two exams in one - a Maths paper from your school syllabus, and a GAT paper most aspirants quietly under-prepare for.</description>
+    </item>
+    <item>
+      <title>How to Take Mock Tests the Right Way (and Actually Improve)</title>
+      <link>https://mocksetu.in/blog/how-to-take-mock-tests</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-take-mock-tests</guid>
+      <pubDate>Sun, 10 May 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>Most students take mocks wrong. They attempt 30 mocks, score the same, and blame the questions. Here is the system that actually moves your score — used by top JEE, NEET, CAT, GATE, and UPSC selects.</description>
+    </item>
+    <item>
+      <title>CLAT Preparation: The Reading-Speed Strategy That Actually Works</title>
+      <link>https://mocksetu.in/blog/clat-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/clat-preparation-strategy</guid>
+      <pubDate>Sun, 10 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>CLAT is not a law exam. It is a reading exam wearing a law costume. Here is the passage-based strategy, legal reasoning method, and time drills that actually raise scores.</description>
+    </item>
+    <item>
+      <title>CUET UG Preparation Strategy for Domain Subjects and General Test</title>
+      <link>https://mocksetu.in/blog/cuet-ug-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cuet-ug-preparation-strategy</guid>
+      <pubDate>Sat, 09 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>CUET UG rewards a different skill set than your boards. Here is how to pick domain subjects, crack the general test, and run a focused 3-month prep sprint.</description>
+    </item>
+    <item>
+      <title>JEE Main vs JEE Advanced — What's the Real Difference (2026)</title>
+      <link>https://mocksetu.in/blog/jee-main-vs-jee-advanced</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-vs-jee-advanced</guid>
+      <pubDate>Fri, 08 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>JEE Main gets you into NITs and IIITs. JEE Advanced gets you into IITs. Same syllabus, completely different exams. Here's the full comparison — pattern, difficulty, prep strategy.</description>
+    </item>
+    <item>
+      <title>RRB NTPC Preparation Strategy: A Stage-Wise Plan for CBT 1 and CBT 2</title>
+      <link>https://mocksetu.in/blog/rrb-ntpc-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/rrb-ntpc-preparation-strategy</guid>
+      <pubDate>Fri, 08 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>RRB NTPC preparation is not about outworking everyone else. It is about matching your effort to how CBT 1 and CBT 2 actually weight Maths, Reasoning, and General Awareness.</description>
+    </item>
+    <item>
+      <title>Bank PO Preparation Strategy for IBPS PO and SBI PO</title>
+      <link>https://mocksetu.in/blog/bank-po-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/bank-po-preparation-strategy</guid>
+      <pubDate>Thu, 07 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Prelims and mains are not one exam at two difficulty levels. This bank PO preparation guide covers speed math, DI drills, sectional timing, and the descriptive-interview pipeline that follows.</description>
+    </item>
+    <item>
+      <title>SSC CGL Preparation Strategy: A Tier 1 to Tier 2 Study Plan</title>
+      <link>https://mocksetu.in/blog/ssc-cgl-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/ssc-cgl-preparation-strategy</guid>
+      <pubDate>Wed, 06 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>SSC CGL preparation is not about knowing more - it is about deciding faster. Here is the tier-wise, section-wise plan that actually moves your score.</description>
+    </item>
+    <item>
+      <title>The CAT Mock Test Strategy That Builds 99+ Percentile</title>
+      <link>https://mocksetu.in/blog/best-mock-test-strategy-for-cat</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/best-mock-test-strategy-for-cat</guid>
+      <pubDate>Tue, 05 May 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>Most CAT aspirants take 20 mocks and stall at 85 percentile. The students who break into 99+ aren't smarter — they run a different mock-test loop. Here's the exact playbook.</description>
+    </item>
+    <item>
+      <title>UPSC Prelims Test Series Strategy: Sequencing, Analysis, Cutoffs</title>
+      <link>https://mocksetu.in/blog/upsc-prelims-test-series-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/upsc-prelims-test-series-strategy</guid>
+      <pubDate>Tue, 05 May 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>Thirty well-analysed papers beat seventy taken on autopilot. Here is how to sequence, review, and calibrate a UPSC prelims test series so the score actually moves.</description>
+    </item>
+    <item>
+      <title>The UPSC Prelims Booklist That Actually Works</title>
+      <link>https://mocksetu.in/blog/upsc-prelims-booklist</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/upsc-prelims-booklist</guid>
+      <pubDate>Mon, 04 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>Most aspirants collect fifteen sources and read none of them properly. Here is the minimal UPSC prelims booklist that survives contact with the actual exam.</description>
+    </item>
+    <item>
+      <title>UPSC Prelims Elimination Techniques That Cut Your Guesswork in Half</title>
+      <link>https://mocksetu.in/blog/upsc-prelims-elimination-techniques</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/upsc-prelims-elimination-techniques</guid>
+      <pubDate>Sun, 03 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Stop guessing blind in UPSC prelims. Learn the extreme-word rule, pairing logic, and chronology anchors that turn uncertain questions into calculated eliminations.</description>
+    </item>
+    <item>
+      <title>How to Read Newspaper for UPSC: The 40-Minute Daily Method</title>
+      <link>https://mocksetu.in/blog/how-to-read-newspaper-for-upsc</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-read-newspaper-for-upsc</guid>
+      <pubDate>Sat, 02 May 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>Most aspirants spend 90 minutes a day drowning in newsprint and remember none of it. Here is the 40-minute method that turns headlines into scored marks.</description>
+    </item>
+    <item>
+      <title>UPSC CSAT Preparation: Why the Qualifying Paper Ends More Attempts Than GS</title>
+      <link>https://mocksetu.in/blog/upsc-csat-preparation</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/upsc-csat-preparation</guid>
+      <pubDate>Fri, 01 May 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>CSAT is called qualifying, not scoring, but it quietly ends more UPSC attempts than General Studies. Here is the diagnostic system that keeps aspirants safely past the cut-off.</description>
+    </item>
+    <item>
+      <title>UPSC Prelims Preparation Strategy: A Complete System for a Focused First Attempt</title>
+      <link>https://mocksetu.in/blog/upsc-prelims-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/upsc-prelims-preparation-strategy</guid>
+      <pubDate>Tue, 28 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Prelims fails more aspirants than mains does. Here is the UPSC prelims preparation strategy that maps the syllabus, splits static from current, and builds recall that survives exam day.</description>
+    </item>
+    <item>
+      <title>GATE or Campus Placement: The Decision Framework for Final-Year Engineers</title>
+      <link>https://mocksetu.in/blog/gate-vs-campus-placements</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/gate-vs-campus-placements</guid>
+      <pubDate>Mon, 27 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>A campus offer feels safe. A GATE attempt feels uncertain. Here is the actual math behind MTech, PSU jobs, research, and the abroad route so you choose with clarity, not panic.</description>
+    </item>
+    <item>
+      <title>GATE Score vs Marks vs Rank: What Every Aspirant Gets Wrong</title>
+      <link>https://mocksetu.in/blog/gate-score-vs-marks-vs-rank</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/gate-score-vs-marks-vs-rank</guid>
+      <pubDate>Sun, 26 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>Raw marks, normalized marks, GATE score out of 1000 - three numbers, one scorecard, and most aspirants only understand one of them properly.</description>
+    </item>
+    <item>
+      <title>GATE Previous Year Papers: The PYQ Strategy That Actually Moves Your Score</title>
+      <link>https://mocksetu.in/blog/gate-previous-year-papers-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/gate-previous-year-papers-strategy</guid>
+      <pubDate>Sat, 25 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>Fifteen years of GATE papers on your laptop mean nothing until you know how to mine them. Here is the repeat-concept, subject-wise, timed-practice system that actually raises your score.</description>
+    </item>
+    <item>
+      <title>GATE Virtual Calculator: Why It Quietly Eats Your Marks</title>
+      <link>https://mocksetu.in/blog/gate-virtual-calculator-and-exam-interface</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/gate-virtual-calculator-and-exam-interface</guid>
+      <pubDate>Fri, 24 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>Most GATE aspirants never open the on-screen calculator until exam week. Here is why that single habit quietly costs 15-20 marks, and how to fix it before test day.</description>
+    </item>
+    <item>
+      <title>GATE Preparation Strategy: Subject Order, Books, and Timing</title>
+      <link>https://mocksetu.in/blog/gate-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/gate-preparation-strategy</guid>
+      <pubDate>Thu, 23 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>A subject-by-subject GATE preparation strategy: how to sequence topics by weightage, when books beat video lectures, and the exact revision protocol for your final two months.</description>
+    </item>
+    <item>
+      <title>CAT Percentile for IIM Calls: What It Takes to Get Shortlisted</title>
+      <link>https://mocksetu.in/blog/cat-percentile-for-iim-calls</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cat-percentile-for-iim-calls</guid>
+      <pubDate>Wed, 22 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>A 99 percentile does not guarantee an IIM call. Sectional cutoffs, academic profile, and old vs new IIM patterns decide who actually gets shortlisted - not just the overall number.</description>
+    </item>
+    <item>
+      <title>CAT Quant Preparation: The Arithmetic-First Strategy for a Higher Score</title>
+      <link>https://mocksetu.in/blog/cat-quant-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cat-quant-preparation-strategy</guid>
+      <pubDate>Tue, 21 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Most CAT aspirants over-prepare algebra and under-prepare arithmetic. Here is the topic-ranked, arithmetic-first system that actually lifts your QA percentile.</description>
+    </item>
+    <item>
+      <title>CAT DILR Preparation: How to Win the Set-Selection Game</title>
+      <link>https://mocksetu.in/blog/cat-dilr-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cat-dilr-preparation-strategy</guid>
+      <pubDate>Mon, 20 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>DILR does not reward the fastest solver - it rewards the aspirant who picks the right three sets in the first five minutes and ignores the rest.</description>
+    </item>
+    <item>
+      <title>CAT VARC Preparation Strategy: A Daily Reading System That Works</title>
+      <link>https://mocksetu.in/blog/cat-varc-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cat-varc-preparation-strategy</guid>
+      <pubDate>Sun, 19 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>A practical CAT VARC preparation framework: build a reading habit that transfers to RC, master para-jumbles and para-summaries, and prioritize accuracy over attempts.</description>
+    </item>
+    <item>
+      <title>CAT Preparation for Working Professionals: A 6-Month System That Fits a Full-Time Job</title>
+      <link>https://mocksetu.in/blog/cat-preparation-for-working-professionals</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cat-preparation-for-working-professionals</guid>
+      <pubDate>Sat, 18 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>Most working professionals fail CAT prep because they manage time like a student. Here is a 6-month system built around energy, commute slots, and realistic weekend blocks.</description>
+    </item>
+    <item>
+      <title>CAT Exam Pattern and Syllabus: The Complete Breakdown</title>
+      <link>https://mocksetu.in/blog/cat-exam-pattern-and-syllabus</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/cat-exam-pattern-and-syllabus</guid>
+      <pubDate>Fri, 17 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>CAT has no official syllabus, three locked sections, and a marking scheme most aspirants misread until it costs them a percentile. Here is the full pattern, decoded.</description>
+    </item>
+    <item>
+      <title>NEET Marks vs Rank: How Your Score Maps to Your All India Rank</title>
+      <link>https://mocksetu.in/blog/neet-marks-vs-rank</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-marks-vs-rank</guid>
+      <pubDate>Thu, 16 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>Your NEET score means nothing until it is converted into a rank. Here is how that conversion actually works, and how to set a target that gets you a seat.</description>
+    </item>
+    <item>
+      <title>NEET Previous Year Question Papers: A Complete PYQ Strategy</title>
+      <link>https://mocksetu.in/blog/neet-previous-year-question-papers</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-previous-year-question-papers</guid>
+      <pubDate>Wed, 15 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Mock Test Guide</category>
+      <description>NEET previous year question papers hold a decade of clues about what actually gets tested. Here is how to mine them chapter by chapter and turn them into timed practice that moves your score.</description>
+    </item>
+    <item>
+      <title>NEET Time Management: How to Solve All 180 Questions in 180 Minutes</title>
+      <link>https://mocksetu.in/blog/neet-time-management-in-exam</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-time-management-in-exam</guid>
+      <pubDate>Tue, 14 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>180 questions, 180 minutes, zero room for hesitation. Here is the exact per-subject time budget, attempt-order logic, and last-15-minutes protocol that separates rank from regret.</description>
+    </item>
+    <item>
+      <title>NEET Preparation from Class 11: A Realistic 2-Year Plan</title>
+      <link>https://mocksetu.in/blog/neet-preparation-from-class-11</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-preparation-from-class-11</guid>
+      <pubDate>Mon, 13 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>Two years is enough time to crack NEET if you sequence it right. Here is the foundation-first, burnout-proof plan for every class 11 student serious about a top rank.</description>
+    </item>
+    <item>
+      <title>NEET Chemistry Preparation Strategy: The Three-Branch Method That Works</title>
+      <link>https://mocksetu.in/blog/neet-chemistry-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-chemistry-preparation-strategy</guid>
+      <pubDate>Sun, 12 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Chemistry does not need more hours - it needs three different methods for three different branches. Here is the strategy that turns it into your scoring rescue section.</description>
+    </item>
+    <item>
+      <title>NEET Physics Preparation: Turn Your Weakest Subject Into Your Rank-Maker</title>
+      <link>https://mocksetu.in/blog/neet-physics-preparation-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-physics-preparation-strategy</guid>
+      <pubDate>Sat, 11 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Biology-strong aspirants stall at 620 for one reason: physics. Here is the formula-application system, numerical practice loop, and chapter priorities that fix it.</description>
+    </item>
+    <item>
+      <title>How to Score 350 in NEET Biology: The NCERT-First System</title>
+      <link>https://mocksetu.in/blog/how-to-score-350-in-neet-biology</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-score-350-in-neet-biology</guid>
+      <pubDate>Fri, 10 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Biology is the safest 360 marks on the NEET paper - if you treat it as a precision subject. Here is the NCERT-first system that turns 38 chapters into a reliable 350.</description>
+    </item>
+    <item>
+      <title>NEET Study Plan for Droppers: The Complete 12-Month Roadmap</title>
+      <link>https://mocksetu.in/blog/neet-study-plan-for-droppers</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/neet-study-plan-for-droppers</guid>
+      <pubDate>Thu, 09 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>A drop year is not Class 12 on repeat - it is a different project. Month-by-month milestones, a realistic dropper timetable, and how to fix the exact reasons you fell short last time.</description>
+    </item>
+    <item>
+      <title>JEE Main Attempt Strategy: The Three-Round Method That Protects Your Score</title>
+      <link>https://mocksetu.in/blog/jee-main-attempt-strategy</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-attempt-strategy</guid>
+      <pubDate>Wed, 08 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Rank in JEE Main is decided as much by which questions you attempt as by what you know. Learn the three-round method, selection heuristics, and skip rules that protect your score.</description>
+    </item>
+    <item>
+      <title>How to Improve Maths for JEE: Fix Concept, Application, and Speed Gaps</title>
+      <link>https://mocksetu.in/blog/how-to-improve-maths-for-jee</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-improve-maths-for-jee</guid>
+      <pubDate>Tue, 07 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Most JEE aspirants stuck below 60 in maths have one of three problems: concept gaps, application gaps, or speed gaps. Here is how to diagnose yours and fix it with a deliberate-practice ladder.</description>
+    </item>
+    <item>
+      <title>JEE Main Last 30 Days Revision Plan: The Final-Month Playbook</title>
+      <link>https://mocksetu.in/blog/jee-main-last-30-days-revision-plan</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-last-30-days-revision-plan</guid>
+      <pubDate>Mon, 06 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>The final month rewards ruthless repetition, not new material. The exact 30-day structure: formula-sheet loops, three PYQ passes, a tapering mock cadence, and sleep aligned to your shift.</description>
+    </item>
+    <item>
+      <title>How to Crack JEE Without Coaching: A Complete Self-Study System</title>
+      <link>https://mocksetu.in/blog/how-to-crack-jee-without-coaching</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-crack-jee-without-coaching</guid>
+      <pubDate>Sun, 05 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Strategy</category>
+      <description>Coaching is a convenience, not a requirement. The complete self-study system - resource stack, weekly structure, doubt resolution, and discipline mechanisms - that gets aspirants to IIT from home.</description>
+    </item>
+    <item>
+      <title>JEE Main Chapter Wise Weightage: Which Chapters to Prioritise First</title>
+      <link>https://mocksetu.in/blog/jee-main-chapter-wise-weightage</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-chapter-wise-weightage</guid>
+      <pubDate>Sat, 04 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>The same 25-30 chapters supply most JEE Main questions in recent cycles. Here is the subject-wise priority list, a 3-tier time allocation system, and the skip-the-basics trap to avoid.</description>
+    </item>
+    <item>
+      <title>Best Books for JEE Main and Advanced: The Honest, Tiered Booklist</title>
+      <link>https://mocksetu.in/blog/best-books-for-jee-main-and-advanced</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/best-books-for-jee-main-and-advanced</guid>
+      <pubDate>Fri, 03 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>Most JEE booklists are 30 books long and impossible to finish. Here is the tiered list that works: NCERT first, one theory book and one problem book per subject, nothing else.</description>
+    </item>
+    <item>
+      <title>JEE Main Percentile vs Rank: How NTA Normalization Actually Works</title>
+      <link>https://mocksetu.in/blog/jee-main-percentile-vs-rank</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-percentile-vs-rank</guid>
+      <pubDate>Thu, 02 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Exam Guides</category>
+      <description>Percentile is not percentage, and marks are not rank. Here is how NTA normalization converts your shift performance into an All India Rank - with realistic conversion bands.</description>
+    </item>
+    <item>
+      <title>JEE Main Study Plan for 6 Months: The Week-by-Week Roadmap</title>
+      <link>https://mocksetu.in/blog/jee-main-study-plan-6-months</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-study-plan-6-months</guid>
+      <pubDate>Wed, 01 Apr 2026 03:30:00 GMT</pubDate>
+      <category>Study Plans</category>
+      <description>Six months is enough for JEE Main if you sequence it right. Here is the week-by-week plan: syllabus order, revision cycles, and exactly when sectional and full-length practice enters.</description>
+    </item>
+  </channel>
+</rss>

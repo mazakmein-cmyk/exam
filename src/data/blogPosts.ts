@@ -14,7 +14,16 @@ export type BlogPost = {
   publishedAt: string;
   updatedAt: string;
   readingMinutes: number;
-  category: "Exam Strategy" | "Study Plans" | "Mock Test Guide";
+  category:
+    | "Exam Strategy"
+    | "Study Plans"
+    | "Mock Test Guide"
+    | "Exam Guides"
+    | "Study Science"
+    | "Placement Prep"
+    | "For Educators"
+    | "Board Exams"
+    | "Career Guidance";
   tags: string[];
   hero: { eyebrow: string; h1: string; lede: string };
   content: BlogBlock[];

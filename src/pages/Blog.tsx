@@ -1,18 +1,22 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, BookOpen, Clock } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
-import { BLOG_LIST } from "@/data/blogPosts";
+import { BLOG_META, BLOG_CATEGORIES } from "@/data/blog";
 
 const Blog = () => {
+  const [category, setCategory] = useState<string | null>(null);
+  const visible = category ? BLOG_META.filter((p) => p.category === category) : BLOG_META;
+
   return (
     <div className="min-h-screen bg-background">
       <SEO
         title="MockSetu (Mockset) Blog — Mock Test Strategy, Exam Guides & Study Plans"
         description="In-depth MockSetu (Mockset) guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, and UPSC aspirants. Written for serious students who want to actually rank."
         path="/blog"
-        keywords="mockset blog, MockSetu blog, exam preparation blog, mock test strategy blog, JEE preparation, NEET preparation, CAT preparation, GATE preparation, UPSC preparation, study plan, mockset study plan"
+        keywords="mockset blog, MockSetu blog, exam preparation blog, mock test strategy blog, JEE preparation, NEET preparation, CAT preparation, GATE preparation, UPSC preparation, study plan, mockset study plan, SSC CGL preparation, bank PO preparation, CUET preparation, CLAT preparation, study techniques, placement preparation blog"
         jsonLd={[
           {
             "@context": "https://schema.org",
@@ -25,7 +29,7 @@ const Blog = () => {
             inLanguage: "en-IN",
             publisher: { "@id": "https://mocksetu.in/#organization" },
             isPartOf: { "@id": "https://mocksetu.in/#website" },
-            blogPost: BLOG_LIST.map((p) => ({
+            blogPost: BLOG_META.map((p) => ({
               "@type": "BlogPosting",
               headline: p.title,
               description: p.excerpt,
@@ -81,8 +85,37 @@ const Blog = () => {
       {/* Posts */}
       <section className="py-16 sm:py-20 px-5">
         <div className="container mx-auto max-w-4xl">
+          {/* Category filter */}
+          <div className="flex flex-wrap gap-2 mb-10">
+            <button
+              type="button"
+              onClick={() => setCategory(null)}
+              className={`px-4 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                category === null
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              All ({BLOG_META.length})
+            </button>
+            {BLOG_CATEGORIES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCategory(c === category ? null : c)}
+                className={`px-4 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                  category === c
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+
           <div className="grid gap-5">
-            {BLOG_LIST.map((p) => (
+            {visible.map((p) => (
               <Link
                 key={p.slug}
                 to={`/blog/${p.slug}`}

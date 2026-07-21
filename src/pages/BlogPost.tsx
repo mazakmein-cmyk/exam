@@ -1,10 +1,39 @@
-import { useState } from "react";
+import { ReactNode, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, ChevronDown, Clock } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
-import { BLOG_LIST, BLOG_POSTS, BlogPost as BlogPostType } from "@/data/blogPosts";
+import type { BlogPost as BlogPostType } from "@/data/blogPosts";
+import { loadPost, relatedPosts } from "@/data/blog";
+
+/** Strip inline [text](/path) links down to their anchor text (for word counts / plain-text uses). */
+const stripLinks = (text: string) => text.replace(/\[([^\]]+)\]\(\/[^)\s]*\)/g, "$1");
+
+/** Render inline [text](/path) internal links inside body text as router links. */
+const renderInline = (text: string): ReactNode[] => {
+  const re = /\[([^\]]+)\]\((\/[^)\s]*)\)/g;
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    nodes.push(
+      <Link
+        key={`lnk-${key++}`}
+        to={m[2]}
+        className="text-primary font-medium underline underline-offset-4 decoration-primary/40 hover:decoration-primary transition-colors"
+      >
+        {m[1]}
+      </Link>
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+};
 
 const buildJsonLd = (p: BlogPostType) => {
   const url = `https://mocksetu.in/blog/${p.slug}`;
@@ -27,8 +56,9 @@ const buildJsonLd = (p: BlogPostType) => {
       keywords: p.keywords,
       articleSection: p.category,
       wordCount: p.content.reduce((acc, b) => {
-        if (b.type === "p" || b.type === "h2" || b.type === "quote") return acc + b.text.split(/\s+/).length;
-        if (b.type === "ul") return acc + b.items.join(" ").split(/\s+/).length;
+        if (b.type === "p" || b.type === "h2" || b.type === "quote")
+          return acc + stripLinks(b.text).split(/\s+/).length;
+        if (b.type === "ul") return acc + stripLinks(b.items.join(" ")).split(/\s+/).length;
         return acc;
       }, 0),
       inLanguage: "en-IN",
@@ -76,13 +106,31 @@ const FaqItem = ({ q, a, idx }: { q: string; a: string; idx: number }) => {
   );
 };
 
+const PostFallback = () => (
+  <div className="min-h-screen bg-background">
+    <Navbar />
+    <div className="pt-40 pb-32 flex items-center justify-center">
+      <div className="h-8 w-8 rounded-full border-2 border-muted border-t-foreground animate-spin" />
+    </div>
+    <Footer />
+  </div>
+);
+
 const BlogPost = () => {
   const { slug } = useParams<{ slug: string }>();
-  const post = slug ? BLOG_POSTS[slug] : undefined;
 
+  const { data: post, isLoading } = useQuery({
+    queryKey: ["blog-post", slug],
+    queryFn: () => loadPost(slug!),
+    enabled: !!slug,
+    staleTime: Infinity,
+  });
+
+  if (!slug) return <Navigate to="/blog" replace />;
+  if (isLoading) return <PostFallback />;
   if (!post) return <Navigate to="/blog" replace />;
 
-  const related = BLOG_LIST.filter((p) => p.slug !== post.slug).slice(0, 2);
+  const related = relatedPosts(post.slug, post.category, 3);
 
   return (
     <div className="min-h-screen bg-background">
@@ -150,7 +198,7 @@ const BlogPost = () => {
             if (block.type === "p") {
               return (
                 <p key={i} className="text-[15px] sm:text-[16.5px] text-foreground/85 leading-[1.85] mb-5">
-                  {block.text}
+                  {renderInline(block.text)}
                 </p>
               );
             }
@@ -163,7 +211,7 @@ const BlogPost = () => {
                       className="text-[14.5px] sm:text-[15.5px] text-foreground/80 leading-[1.75] pl-5 relative"
                     >
                       <span className="absolute left-0 top-[10px] w-1.5 h-1.5 rounded-full bg-primary" />
-                      {item}
+                      {renderInline(item)}
                     </li>
                   ))}
                 </ul>
@@ -228,7 +276,7 @@ const BlogPost = () => {
             <h2 className="text-[22px] sm:text-[28px] font-black text-foreground tracking-[-0.025em] mb-6">
               Keep reading
             </h2>
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {related.map((r) => (
                 <Link
                   key={r.slug}
