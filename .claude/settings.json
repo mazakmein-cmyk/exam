@@ -25,7 +25,13 @@
       "Bash(node --input-type=module *)",
       "Bash(awk 'NR==249' \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main/src/pages/JsonUploadGuide.tsx\")",
       "Bash(awk 'NR>=510 && NR<=537' \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main/src/services/jsonImportParser.ts\")",
-      "Bash(grep -v \":0$\")"
+      "Bash(grep -v \":0$\")",
+      "Bash(grep -n '`' \"c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main/src/pages/JsonUploadGuide.tsx\")",
+      "Read(//c/Users/Shivm/AppData/Local/Temp/claude/c--Users-Shivm-Downloads-pp-2-paper-to-practise-main/95dfc04b-5a06-40f5-abaa-cf20afa66210/scratchpad/**)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main show HEAD:src/pages/ExamDetail.tsx)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main ls-tree HEAD src/pages/ExamDetail.tsx)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main hash-object src/pages/ExamDetail.tsx)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main stash list)"
     ]
   }
 }

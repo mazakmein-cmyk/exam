@@ -18,6 +18,7 @@ interface LangError {
     | "no_sections"
     | "no_questions"
     | "blank_questions"
+    | "invalid_question"
     | "section_missing_in_lang"
     | "question_count_mismatch"
     | "empty_text_parity"
@@ -123,16 +124,18 @@ export default function PublishExamDialog({
               langErrors.push({ type: "no_questions", sectionName: sec.name, sectionId: sec.id, qNos: [] });
             }
 
-            const { data: blankQs } = await supabase
+            const { data: secQs } = await supabase
               .from("parsed_questions")
-              .select("q_no, image_url, image_urls")
+              .select("q_no, text, image_url, image_urls, options, answer_type, correct_answer")
               .eq("section_id", sec.id)
-              .eq("text", "")
               .order("q_no", { ascending: true });
 
             // A question is only truly blank if it has no image either
-            const trulyBlankQs = (blankQs || []).filter(
-              (q: any) => !q.image_url && (!Array.isArray(q.image_urls) || q.image_urls.length === 0)
+            const trulyBlankQs = (secQs || []).filter(
+              (q: any) => {
+                const stripped = (q.text || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+                return stripped === "" && !q.image_url && (!Array.isArray(q.image_urls) || q.image_urls.length === 0);
+              }
             );
 
             if (trulyBlankQs.length > 0) {
@@ -141,6 +144,37 @@ export default function PublishExamDialog({
                 sectionName: sec.name,
                 sectionId: sec.id,
                 qNos: trulyBlankQs.map((q: any) => q.q_no),
+              });
+            }
+
+            const primaryLang = (examData as any)?.primary_language || "en";
+            const isPrimary = lang === primaryLang;
+
+            const invalidQs = (secQs || []).filter((q: any) => {
+              const at = q.answer_type;
+              if (!at) return true;
+              if (at === "subjective") return false;
+
+              if (at === "single" || at === "multi") {
+                const hasOptions = Array.isArray(q.options) && q.options.length >= 2;
+                if (!hasOptions) return true;
+              }
+
+              if (isPrimary) {
+                const ca = q.correct_answer;
+                const hasCorrectAnswer = ca !== null && ca !== undefined && ca !== "" && (!Array.isArray(ca) || ca.length > 0);
+                if (!hasCorrectAnswer) return true;
+              }
+
+              return false;
+            });
+
+            if (invalidQs.length > 0) {
+              langErrors.push({
+                type: "invalid_question",
+                sectionName: sec.name,
+                sectionId: sec.id,
+                qNos: invalidQs.map((q: any) => q.q_no),
               });
             }
           }
@@ -427,6 +461,10 @@ export default function PublishExamDialog({
       const qList = err.qNos.map((n) => `Q${n}`).join(", ");
       return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "are" : "is"} missing ${langName} text`;
     }
+    if (err.type === "invalid_question") {
+      const qList = err.qNos.map((n) => `Q${n}`).join(", ");
+      return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "are" : "is"} missing correct answer or options`;
+    }
     if (err.type === "section_missing_in_lang") {
       return `Section "${err.sectionName}" missing in ${langName}`;
     }
@@ -527,7 +565,7 @@ export default function PublishExamDialog({
                                     <span className="text-xs text-red-700 leading-relaxed">
                                       {getErrorMessage(err, langName)}
                                     </span>
-                                    {err.type === "blank_questions" && onNavigateToQuestion && (
+                                    {(err.type === "blank_questions" || err.type === "invalid_question") && onNavigateToQuestion && (
                                       <button
                                         type="button"
                                         className="shrink-0 text-xs font-semibold text-red-600 hover:text-red-800 underline whitespace-nowrap"

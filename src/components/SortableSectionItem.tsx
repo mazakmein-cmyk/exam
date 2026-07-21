@@ -29,8 +29,8 @@ export function SortableSectionItem({ id, children }: SortableSectionItemProps) 
     return (
         <div ref={setNodeRef} style={style} className="relative flex items-start gap-2">
             <div className="mt-3" {...attributes} {...listeners}>
-                <Button variant="ghost" size="icon" className="cursor-grab active:cursor-grabbing hover:bg-slate-100 h-6 w-6">
-                    <GripVertical className="h-3 w-3 text-slate-400" />
+                <Button variant="ghost" size="icon" className="cursor-grab active:cursor-grabbing rounded-lg hover:bg-muted h-6 w-6">
+                    <GripVertical className="h-3 w-3 text-muted-foreground/50" />
                 </Button>
             </div>
             <div className="flex-1 min-w-0">

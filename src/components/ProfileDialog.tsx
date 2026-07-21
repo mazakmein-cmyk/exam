@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { User } from "lucide-react";
+import { VerifiedSeal } from "@/components/VerifiedBadge";
+import { getVerificationTier } from "@/lib/verification";
 
 interface ProfileDialogProps {
     isOpen: boolean;
@@ -116,8 +118,12 @@ const ProfileDialog = ({
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
                             <span className="text-sm font-medium text-muted-foreground col-span-1">User ID:</span>
-                            <span className="text-sm font-mono bg-muted px-2 py-1 rounded col-span-3">
+                            <span className="text-sm font-mono bg-muted px-2 py-1 rounded col-span-3 flex items-center gap-1.5">
                                 {profile?.username || "N/A"}
+                                {(() => {
+                                    const tier = getVerificationTier({ email, is_admin_gold: profile?.is_admin_gold, is_verified: profile?.is_verified });
+                                    return tier && <VerifiedSeal size={15} tier={tier} />;
+                                })()}
                             </span>
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">

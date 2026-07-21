@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
+import { Document, Page } from 'react-pdf';
 import ReactCrop, { Crop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, Scissors, ZoomIn, ZoomOut } from "lucide-react";
-
-// Set up worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Side-effect import: registers the PDF.js worker exactly once across the app.
+// See src/lib/pdfWorker.ts for why this uses Vite's `?worker` instead of `?url`.
+import "@/lib/pdfWorker";
 
 interface PdfSnipperProps {
     pdfUrl: string;

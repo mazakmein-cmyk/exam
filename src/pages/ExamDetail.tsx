@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, BookOpen, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
@@ -162,6 +162,11 @@ export default function ExamDetail() {
   // Edit Question State
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
 
+  // Inline correct-answer edit state (from the expanded question view)
+  const [inlineAnswerQuestionId, setInlineAnswerQuestionId] = useState<string | null>(null);
+  const [inlineAnswerDraft, setInlineAnswerDraft] = useState<string | string[]>("");
+  const [savingInlineAnswer, setSavingInlineAnswer] = useState(false);
+
   // AI Parse State
   const [aiParsedQuestions, setAiParsedQuestions] = useState<any[]>([]);
   const [aiParsingStatus, setAiParsingStatus] = useState<'idle' | 'parsing' | 'success' | 'error'>('idle');
@@ -260,7 +265,7 @@ export default function ExamDetail() {
 
     const hasCorrectAnswer = Array.isArray(q.correct_answer)
       ? q.correct_answer.length > 0 && q.correct_answer.some((a: string) => a && a.trim() !== '')
-      : !!(q.correct_answer && String(q.correct_answer).trim() !== '');
+      : q.correct_answer !== null && q.correct_answer !== undefined && String(q.correct_answer).trim() !== '';
     if (!hasCorrectAnswer) {
       errors.push("No correct answer marked — select one before publishing.");
     }
@@ -553,11 +558,13 @@ export default function ExamDetail() {
 
     if (hasQuestionInProgress) {
       // Try to save the question first
+      let success = false;
       if (editingQuestionId) {
-        await handleUpdateQuestion();
+        success = await handleUpdateQuestion();
       } else {
-        await handleAddQuestion();
+        success = await handleAddQuestion();
       }
+      if (!success) return;
     }
 
     // Then save the exam
@@ -1067,7 +1074,7 @@ export default function ExamDetail() {
     // Validate that correct answer is provided
     const hasCorrectAnswer = Array.isArray(newQuestionCorrect)
       ? newQuestionCorrect.length > 0
-      : newQuestionCorrect && newQuestionCorrect.toString().trim() !== "";
+      : newQuestionCorrect !== null && newQuestionCorrect !== undefined && newQuestionCorrect.toString().trim() !== "";
 
     if (!hasCorrectAnswer) {
       toast({
@@ -1530,7 +1537,7 @@ export default function ExamDetail() {
     const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
     const hasQuestionText = strippedText !== '';
     const hasQuestionImages = newQuestionImages && newQuestionImages.length > 0;
-    if (!hasQuestionText && !hasQuestionImages && questionFormat !== "passage") { // Added condition for passage format
+    if (!hasQuestionText && !hasQuestionImages) {
       toast({
         title: "Missing Question Content",
         description: "Please provide either question text or an image before saving.",
@@ -1542,7 +1549,7 @@ export default function ExamDetail() {
     // Validate that correct answer is provided
     const hasCorrectAnswer = Array.isArray(newQuestionCorrect)
       ? newQuestionCorrect.length > 0
-      : newQuestionCorrect && newQuestionCorrect.toString().trim() !== "";
+      : newQuestionCorrect !== null && newQuestionCorrect !== undefined && newQuestionCorrect.toString().trim() !== "";
 
     if (!hasCorrectAnswer) {
       toast({
@@ -1641,6 +1648,85 @@ export default function ExamDetail() {
     setNewQuestionCorrect("");
     setPassageText("");
     setPassageImage(null);
+  };
+
+  // ── Inline correct-answer editing (from the expanded question view) ──
+  const startInlineAnswerEdit = (q: Question) => {
+    setInlineAnswerQuestionId(q.id);
+    if (q.answer_type === "multi") {
+      setInlineAnswerDraft(Array.isArray(q.correct_answer) ? q.correct_answer.map(String) : []);
+    } else {
+      setInlineAnswerDraft(
+        q.correct_answer === null || q.correct_answer === undefined ? "" : String(q.correct_answer)
+      );
+    }
+  };
+
+  const cancelInlineAnswerEdit = () => {
+    setInlineAnswerQuestionId(null);
+    setInlineAnswerDraft("");
+  };
+
+  const toggleInlineMultiAnswer = (idx: number) => {
+    const idxStr = String(idx);
+    setInlineAnswerDraft(prev => {
+      const arr = Array.isArray(prev) ? [...prev] : [];
+      return arr.includes(idxStr) ? arr.filter(v => v !== idxStr) : [...arr, idxStr];
+    });
+  };
+
+  const saveInlineAnswer = async (q: Question) => {
+    const hasAnswer = Array.isArray(inlineAnswerDraft)
+      ? inlineAnswerDraft.length > 0
+      : inlineAnswerDraft !== null && inlineAnswerDraft !== undefined && String(inlineAnswerDraft).trim() !== "";
+
+    if (!hasAnswer) {
+      toast({
+        title: "Missing Answer",
+        description: "Please choose or enter a correct answer.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSavingInlineAnswer(true);
+    try {
+      const { data, error } = await supabase
+        .from("parsed_questions")
+        .update({ correct_answer: inlineAnswerDraft })
+        .eq("id", q.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setQuestions(prev => prev.map(x => (x.id === q.id ? data : x)));
+
+      // Multi-language sync: correct answer is index-based and shared across languages
+      if (isMultiLang && (q as any).question_group_id) {
+        await supabase
+          .from("parsed_questions")
+          .update({ correct_answer: inlineAnswerDraft })
+          .eq("question_group_id", (q as any).question_group_id)
+          .neq("id", q.id);
+      }
+
+      toast({
+        title: "Saved",
+        description: "Correct answer updated.",
+      });
+      setInlineAnswerQuestionId(null);
+      setInlineAnswerDraft("");
+    } catch (error: any) {
+      console.error("Error updating correct answer:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update correct answer",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingInlineAnswer(false);
+    }
   };
 
 
@@ -1766,7 +1852,11 @@ export default function ExamDetail() {
   const commitJson = async (
     report: ParseReport,
     mode: "replace" | "append",
-    language: string
+    language: string,
+    extras?: {
+      snipUrls?: Map<string, string>;
+      uploadedPdfUrl?: string;
+    }
   ): Promise<{ ok: boolean }> => {
     if (!exam || !examId) return { ok: false };
     if (exam.is_published) {
@@ -1864,6 +1954,10 @@ export default function ExamDetail() {
             const qNo = startQNo + i;
             const groupId = isMultiLang ? crypto.randomUUID() : null;
 
+            // Auto-snipped image URL for this question (if any).
+            const snipKey = `${sec.jsonName}::${i}`;
+            const snipUrl = extras?.snipUrls?.get(snipKey);
+
             const { data: inserted, error: insErr } = await supabase
               .from("parsed_questions")
               .insert({
@@ -1877,6 +1971,7 @@ export default function ExamDetail() {
                 requires_review: false,
                 is_excluded: false,
                 is_finalized: true,
+                image_urls: snipUrl ? [snipUrl] : null,
               } as any)
               .select()
               .single();
@@ -1971,6 +2066,11 @@ export default function ExamDetail() {
               .eq("q_no", qNo)
               .maybeSingle();
 
+            // Auto-snipped image URL for this secondary question (if any).
+            // Per-language independent: writes to THIS row only, not primary.
+            const snipKey = `${sec.jsonName}::${i}`;
+            const snipUrl = extras?.snipUrls?.get(snipKey);
+
             const payload: any = {
               text: aq.text,
               options: aq.options,
@@ -1980,6 +2080,11 @@ export default function ExamDetail() {
               requires_review: false,
               is_finalized: true,
             };
+            // Only attach image_urls when we actually have a snip — never overwrite
+            // an existing image_urls with null/empty on update.
+            if (snipUrl) {
+              payload.image_urls = [snipUrl];
+            }
 
             if (existingRow) {
               await supabase
@@ -1999,6 +2104,21 @@ export default function ExamDetail() {
         }
 
         totalSections++;
+      }
+
+      // [2.5] Update sections.pdf_url for matched sections of THIS language only.
+      // No cross-language overwrite — primary's PDF and secondary's PDF are
+      // independent (per §12.6/§12.9).
+      if (extras?.uploadedPdfUrl) {
+        const matchedSectionIds = matched
+          .map((s) => s.matchedSectionId)
+          .filter((id): id is string => !!id);
+        if (matchedSectionIds.length > 0) {
+          await supabase
+            .from("sections")
+            .update({ pdf_url: extras.uploadedPdfUrl } as any)
+            .in("id", matchedSectionIds);
+        }
       }
 
       // [3] Exam-level marks config (primary only)
@@ -2254,25 +2374,52 @@ export default function ExamDetail() {
     setExpandedQuestionId(null);
   };
 
-  if (loading) return <div className="p-8 text-center">Loading...</div>;
+  if (loading) return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+      <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+      <p className="text-sm font-medium text-muted-foreground">Loading exam…</p>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white border-b px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-2 sm:gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")}>
+      <header className="sticky top-0 z-10 h-16 border-b border-border/70 bg-card/85 backdrop-blur-xl px-3 sm:px-6 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl shrink-0 text-muted-foreground hover:text-foreground" onClick={() => navigate("/dashboard")}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-lg sm:text-xl font-bold truncate max-w-[150px] sm:max-w-md">Edit Exam</h1>
+          <div className="hidden sm:block h-8 w-px bg-border shrink-0" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <h1 className="text-[15px] sm:text-base font-bold leading-tight truncate max-w-[130px] sm:max-w-md">
+                {examTitle || "Untitled Exam"}
+              </h1>
+              {exam?.is_published ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-success ring-1 ring-inset ring-success/25 shrink-0">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                  Live
+                </span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border shrink-0">
+                  Draft
+                </span>
+              )}
+            </div>
+            <p className="hidden sm:block text-[11px] text-muted-foreground truncate">
+              {examCategory || "No category"} · {sections.length} section{sections.length === 1 ? "" : "s"} · {questions.length} question{questions.length === 1 ? "" : "s"}
+            </p>
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {supportedLanguages.length > 1 ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="hidden sm:flex">
-                  <BookOpen className="mr-2 h-4 w-4" />
-                  View <ChevronDown className="ml-1 h-3 w-3" />
+                <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground">
+                  <Eye className="mr-2 h-4 w-4" />
+                  Preview <ChevronDown className="ml-1 h-3 w-3 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
@@ -2288,17 +2435,17 @@ export default function ExamDetail() {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button variant="ghost" size="sm" className="hidden sm:flex" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
-              <BookOpen className="mr-2 h-4 w-4" />
-              View
+            <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
+              <Eye className="mr-2 h-4 w-4" />
+              Preview
             </Button>
           )}
 
           {supportedLanguages.length > 1 ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="sm:hidden">
-                  <BookOpen className="h-4 w-4" />
+                <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground">
+                  <Eye className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
@@ -2314,18 +2461,10 @@ export default function ExamDetail() {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button variant="ghost" size="icon" className="sm:hidden" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
-              <BookOpen className="h-4 w-4" />
+            <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
+              <Eye className="h-4 w-4" />
             </Button>
           )}
-
-          <Button onClick={handleSaveAll} disabled={saving || exam?.is_published} size="sm" className="hidden sm:flex" title={exam?.is_published ? "Unpublish to save changes" : ""}>
-            <Save className="mr-2 h-4 w-4" />
-            Save
-          </Button>
-          <Button onClick={handleSaveAll} disabled={saving || exam?.is_published} size="icon" className="sm:hidden" title={exam?.is_published ? "Unpublish to save changes" : ""}>
-            <Save className="h-4 w-4" />
-          </Button>
 
           <TooltipProvider>
             <Tooltip>
@@ -2344,8 +2483,9 @@ export default function ExamDetail() {
                       setShowMarksSheet(true);
                     }}
                     disabled={exam?.is_published}
-                    variant={isMultiLang && !isPrimaryLanguage ? "outline" : "default"}
+                    variant="outline"
                     size="sm"
+                    className="h-9 rounded-lg"
                   >
                     <Scale className="mr-2 h-4 w-4" />
                     Marks
@@ -2376,8 +2516,9 @@ export default function ExamDetail() {
                       setShowMarksSheet(true);
                     }}
                     disabled={exam?.is_published}
-                    variant={isMultiLang && !isPrimaryLanguage ? "outline" : "default"}
+                    variant="outline"
                     size="icon"
+                    className="h-9 w-9 rounded-lg"
                   >
                     <Scale className="h-4 w-4" />
                   </Button>
@@ -2391,9 +2532,17 @@ export default function ExamDetail() {
             </Tooltip>
           </TooltipProvider>
 
+          <Button onClick={handleSaveAll} disabled={saving || exam?.is_published} size="sm" className="hidden sm:flex h-9 rounded-lg px-4 btn-primary-glow" title={exam?.is_published ? "Unpublish to save changes" : ""}>
+            <Save className="mr-2 h-4 w-4" />
+            Save
+          </Button>
+          <Button onClick={handleSaveAll} disabled={saving || exam?.is_published} size="icon" className="sm:hidden h-9 w-9 rounded-lg btn-primary-glow" title={exam?.is_published ? "Unpublish to save changes" : ""}>
+            <Save className="h-4 w-4" />
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon">
+              <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-muted-foreground hover:text-foreground">
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -2432,26 +2581,26 @@ export default function ExamDetail() {
 
       {/* Language Switcher Bar */}
       {isMultiLang && (
-        <div className="bg-white border-b px-4 sm:px-6 py-2 sticky top-[65px] z-[9]">
+        <div className="sticky top-16 z-[9] border-b border-border/70 bg-card/85 backdrop-blur-xl px-4 sm:px-6 py-2">
           <div className="flex items-center gap-3">
-            <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-sm font-medium text-muted-foreground hidden sm:inline">Language:</span>
-            <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+            <Globe className="h-4 w-4 text-primary shrink-0" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hidden sm:inline">Editing in</span>
+            <div className="flex gap-1 bg-muted rounded-xl p-1">
               {supportedLanguages.map((langCode) => {
                 const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === langCode);
                 return (
                   <button
                     key={langCode}
                     onClick={() => handleLanguageSwitch(langCode)}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1 ${
+                    className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-1 ${
                       activeLanguage === langCode
-                        ? "bg-white text-primary shadow-sm"
-                        : "text-muted-foreground hover:text-foreground hover:bg-white/50"
+                        ? "bg-card text-primary shadow-sm ring-1 ring-border/60"
+                        : "text-muted-foreground hover:text-foreground hover:bg-card/60"
                     }`}
                   >
                     {langInfo?.label || langCode}
                     {langCode === primaryLanguage && (
-                      <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 px-1 py-0.5 rounded ml-1">Primary</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full ml-1">Primary</span>
                     )}
                     {langInfo?.nativeLabel && langInfo.nativeLabel !== langInfo.label && langCode !== primaryLanguage && (
                       <span className="ml-1 text-xs opacity-60">({langInfo.nativeLabel})</span>
@@ -2466,13 +2615,15 @@ export default function ExamDetail() {
 
       {/* Secondary Language Info Banner */}
       {isMultiLang && !isPrimaryLanguage && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-3">
+        <div className="border-b border-warning/25 bg-warning/[0.07] px-4 sm:px-6 py-3">
           <div className="container mx-auto max-w-[1600px] flex items-center gap-3">
-            <Lock className="h-4 w-4 text-amber-600 shrink-0" />
-            <p className="text-sm text-amber-800">
-              <span className="font-semibold">Secondary language view.</span> You can edit question text, option text, and images. To change question structure, correct answers, or marks,{" "}
+            <div className="h-7 w-7 rounded-lg bg-warning/15 flex items-center justify-center shrink-0">
+              <Lock className="h-3.5 w-3.5 text-warning" />
+            </div>
+            <p className="text-sm text-foreground/80">
+              <span className="font-semibold text-foreground">Secondary language view.</span> You can edit question text, option text, and images. To change question structure, correct answers, or marks,{" "}
               <button
-                className="underline font-semibold text-amber-900 hover:text-amber-700"
+                className="underline font-semibold text-primary hover:text-primary/80"
                 onClick={() => handleLanguageSwitch(primaryLanguage)}
               >
                 switch to {AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage} (Primary)
@@ -2484,11 +2635,13 @@ export default function ExamDetail() {
 
       <main className="container mx-auto max-w-[1600px] p-4 sm:p-6">
         {exam?.is_published && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg flex items-center gap-3 mb-6">
-            <Lock className="h-5 w-5 text-amber-500 shrink-0" />
+          <div className="rounded-2xl border border-warning/30 bg-warning/[0.07] px-4 py-3.5 flex items-center gap-3.5 mb-6 shadow-sm">
+            <div className="h-10 w-10 rounded-xl bg-warning/15 flex items-center justify-center shrink-0">
+              <Lock className="h-5 w-5 text-warning" />
+            </div>
             <div>
-              <p className="font-semibold text-sm">Exam is Published</p>
-              <p className="text-sm">This exam is currently live. Editing is disabled to protect test integrity. Please unpublish the exam from your Dashboard to make changes.</p>
+              <p className="font-bold text-sm text-foreground">This exam is live</p>
+              <p className="text-sm text-muted-foreground">Editing is disabled to protect test integrity. Unpublish the exam to make changes.</p>
             </div>
           </div>
         )}
@@ -2502,13 +2655,22 @@ export default function ExamDetail() {
           )}
           <div className={`grid grid-cols-12 gap-6 ${exam?.is_published ? "opacity-60 pointer-events-none select-none grayscale-[20%]" : ""}`}>
             {/* Left Sidebar: Exam Details & Sections */}
-            <div className="col-span-12 lg:col-span-3 space-y-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg font-bold">Edit Exam Details</CardTitle>
+            <div className="col-span-12 lg:col-span-3 space-y-5">
+          <Card className="rounded-2xl border-border/60 shadow-sm overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  <FileText className="h-4 w-4 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-sm font-bold">Exam Details</CardTitle>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">What students see first</p>
+                </div>
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
+                className="h-8 w-8 p-0 rounded-lg text-muted-foreground"
                 onClick={() => setIsExamDetailsCollapsed(!isExamDetailsCollapsed)}
               >
                 {isExamDetailsCollapsed ? (
@@ -2519,17 +2681,17 @@ export default function ExamDetail() {
               </Button>
             </CardHeader>
             {!isExamDetailsCollapsed && (
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Title <span className="text-destructive">*</span></Label>
-                  <Input value={examTitle} onChange={(e) => setExamTitle(e.target.value)} />
+              <CardContent className="space-y-4 px-5 pb-5 pt-1">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Title <span className="text-destructive">*</span></Label>
+                  <Input className="rounded-lg" value={examTitle} onChange={(e) => setExamTitle(e.target.value)} />
                 </div>
-                <div className="space-y-2">
-                  <Label>Category <span className="text-destructive">*</span></Label>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Category <span className="text-destructive">*</span></Label>
                   <CategoryCombobox value={examCategory} onChange={setExamCategory} />
                 </div>
-                <div className="space-y-2">
-                  <Label>Description <span className="text-destructive">*</span></Label>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Description <span className="text-destructive">*</span></Label>
                   <TransliterateTextarea
                     lang={activeLanguage}
                     value={examDescriptionTrans[activeLanguage] || ""}
@@ -2538,8 +2700,8 @@ export default function ExamDetail() {
                     placeholder={`Brief description of the exam in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Instruction <span className="text-destructive">*</span></Label>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Instruction <span className="text-destructive">*</span></Label>
                   <TransliterateTextarea
                     lang={activeLanguage}
                     value={examInstructionTrans[activeLanguage] || ""}
@@ -2554,12 +2716,26 @@ export default function ExamDetail() {
           </Card>
 
           {/* Sections Management */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg font-bold">Edit Sections</CardTitle>
+          <Card className="rounded-2xl border-border/60 shadow-sm overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  <Layers className="h-4 w-4 text-primary" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-sm font-bold">Sections</CardTitle>
+                    <span className="inline-flex items-center justify-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary tabular-nums">
+                      {sections.length}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Drag to reorder</p>
+                </div>
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
+                className="h-8 w-8 p-0 rounded-lg text-muted-foreground"
                 onClick={() => setIsSectionsCollapsed(!isSectionsCollapsed)}
               >
                 {isSectionsCollapsed ? (
@@ -2570,7 +2746,7 @@ export default function ExamDetail() {
               </Button>
             </CardHeader>
             {!isSectionsCollapsed && (
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-2.5 px-4 pb-4 pt-1">
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
@@ -2583,18 +2759,21 @@ export default function ExamDetail() {
                     {sections.map((s, index) => (
                       <SortableSectionItem key={s.id} id={s.id}>
                         <div
-                          className={`p-3 rounded-lg border cursor-pointer transition-all ${section?.id === s.id
-                            ? "bg-primary/5 border-primary shadow-sm"
-                            : "hover:bg-muted border-transparent bg-slate-50"
+                          className={`relative p-3 pl-4 rounded-xl border cursor-pointer transition-all overflow-hidden ${section?.id === s.id
+                            ? "border-primary/40 bg-primary/[0.04] shadow-sm ring-1 ring-primary/20"
+                            : "border-border/70 bg-card hover:border-primary/25 hover:bg-muted/40"
                             }`}
                           onClick={() => handleSectionChange(s.id)}
                         >
+                          {section?.id === s.id && (
+                            <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-primary" />
+                          )}
                           <div className="flex flex-col gap-1 mb-2">
-                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider ml-1">Section {index + 1}</span>
+                            <span className={`text-[10px] font-bold uppercase tracking-widest ${section?.id === s.id ? "text-primary" : "text-muted-foreground"}`}>Section {index + 1}</span>
                             <div className="flex justify-between items-start gap-2 w-full">
                             <TransliterateInput
                               lang={activeLanguage}
-                              className="flex-1 h-7 text-sm font-medium border-transparent hover:border-input focus:border-input px-1 -ml-1"
+                              className="flex-1 h-7 text-sm font-semibold bg-transparent border-transparent hover:border-input focus:border-input rounded-md px-1 -ml-1"
                               value={s.name}
                               onClick={(e) => e.stopPropagation()}
                               onValueChange={(text) => handleLocalUpdateSection(s.id, { name: text })}
@@ -2608,7 +2787,7 @@ export default function ExamDetail() {
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="h-6 w-6 text-muted-foreground hover:text-destructive shrink-0"
+                                className="h-6 w-6 rounded-md text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 shrink-0"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   e.preventDefault();
@@ -2620,10 +2799,10 @@ export default function ExamDetail() {
                             )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Clock className="h-3 w-3" />
                             <Input
-                              className="h-6 w-16 text-xs"
+                              className="h-6 w-14 rounded-md text-xs text-center tabular-nums"
                               type="number"
                               value={s.time_minutes}
                               onClick={(e) => e.stopPropagation()}
@@ -2637,17 +2816,17 @@ export default function ExamDetail() {
                                 if (e.key === 'Enter') e.currentTarget.blur();
                               }}
                             />
-                            <span>min</span>
+                            <span className="font-medium">min</span>
                           </div>
                         </div>
                       </SortableSectionItem>
                     ))}
                   </SortableContext>
                 </DndContext>
-                <div className="pt-2">
+                <div className="pt-1">
                   <Button
                     variant="outline"
-                    className="w-full gap-2 border-dashed text-muted-foreground hover:text-primary"
+                    className="w-full gap-2 rounded-xl border-dashed text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/[0.03]"
                     onClick={handleAddSection}
                   >
                     <Plus className="h-4 w-4" />
@@ -2660,17 +2839,25 @@ export default function ExamDetail() {
         </div>
 
         {/* Right Content: Questions */}
-        <div className="col-span-12 lg:col-span-9 space-y-6">
+        <div className="col-span-12 lg:col-span-9 space-y-5">
           {/* Questions List */}
-          <Card>
-            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between space-y-2 sm:space-y-0 pb-2">
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <CardTitle className="text-lg font-bold">Questions ({questions.length})</CardTitle>
+          <Card className="rounded-2xl border-border/60 shadow-sm overflow-hidden">
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between space-y-2 sm:space-y-0 px-5 py-4 border-b border-border/50 bg-muted/30">
+              <div className="flex items-center gap-3 w-full sm:w-auto min-w-0">
+                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  <ListChecks className="h-4 w-4 text-primary" />
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <CardTitle className="text-sm font-bold shrink-0">Questions</CardTitle>
+                  <span className="inline-flex items-center justify-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary tabular-nums shrink-0">
+                    {questions.length}
+                  </span>
+                </div>
                 <Select
                   value={section?.id}
                   onValueChange={(value) => handleSectionChange(value)}
                 >
-                  <SelectTrigger className="h-8 flex-1 sm:w-[200px] ml-2">
+                  <SelectTrigger className="h-9 flex-1 sm:w-[220px] rounded-lg bg-card ml-1">
                     <SelectValue placeholder="Select section" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2686,7 +2873,7 @@ export default function ExamDetail() {
                 variant="ghost"
                 size="sm"
                 onClick={() => setIsQuestionsCollapsed(!isQuestionsCollapsed)}
-                className="self-end sm:self-auto"
+                className="self-end sm:self-auto h-8 w-8 p-0 rounded-lg text-muted-foreground"
               >
                 {isQuestionsCollapsed ? (
                   <ChevronDown className="h-4 w-4" />
@@ -2696,9 +2883,15 @@ export default function ExamDetail() {
               </Button>
             </CardHeader>
             {!isQuestionsCollapsed && (
-              <CardContent className="space-y-4 max-h-[380px] overflow-y-auto">
+              <CardContent className="space-y-3 max-h-[520px] overflow-y-auto p-4 sm:p-5">
                 {questions.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-4">No questions added yet.</p>
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <div className="h-12 w-12 rounded-2xl bg-muted flex items-center justify-center mb-3">
+                      <HelpCircle className="h-6 w-6 text-muted-foreground/60" />
+                    </div>
+                    <p className="text-sm font-semibold text-foreground">No questions added yet</p>
+                    <p className="text-xs text-muted-foreground mt-1">Snip from a PDF or add one manually below.</p>
+                  </div>
                 ) : (
                   <DndContext
                     sensors={sensors}
@@ -2716,39 +2909,44 @@ export default function ExamDetail() {
                         const hasError = questionErrors.length > 0;
                         return (
                           <SortableQuestionItem key={q.id} id={q.id} disabled={isMultiLang && !isPrimaryLanguage}>
-                            <div className={`border rounded-lg bg-white transition-colors ${hasError ? 'border-red-300' : ''}`}>
-                              <div className="flex items-start gap-4 p-4 group">
-                                <div className="relative flex items-center justify-center h-8 w-8 rounded-full bg-blue-100 text-blue-600 font-bold text-sm shrink-0">
+                            <div id={q.id} className={`border rounded-xl bg-card transition-all hover:shadow-sm ${hasError ? 'border-destructive/40 bg-destructive/[0.02]' : 'border-border/70 hover:border-primary/25'}`}>
+                              <div className="flex items-start gap-3.5 p-4 group">
+                                <div className={`relative flex items-center justify-center h-9 w-9 rounded-xl font-bold text-sm shrink-0 tabular-nums ${hasError ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'}`}>
                                   {idx + 1}
                                   {hasError && (
                                     <span
                                       className="absolute -top-1.5 -right-1.5 flex items-center justify-center"
                                       title="This question has issues: missing text, options, or correct answer"
                                     >
-                                      <AlertCircle className="h-4 w-4 text-red-500 fill-white" />
+                                      <AlertCircle className="h-4 w-4 text-destructive fill-card" />
                                     </span>
                                   )}
                                 </div>
-                                <div className="flex-1 space-y-2 min-w-0">
-                                  {q.image_url && (
-                                    <div className="flex items-center gap-2 text-sm text-blue-600">
-                                      <ImageIcon className="h-4 w-4" />
-                                      Has image
-                                    </div>
-                                  )}
+                                <div className="flex-1 space-y-1.5 min-w-0">
                                   {q.text ? (() => {
                                     // Extract only question-section content for collapsed view, stripping passage-section and images
                                     const questionSectionMatch = q.text.match(/<div class="question-section">([\s\S]*?)<\/div>/);
                                     const displayText = questionSectionMatch
                                       ? questionSectionMatch[1].replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim()
                                       : q.text.replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim();
-                                    return <p className="font-medium truncate">{displayText || 'Question with passage'}</p>;
+                                    return <p className="text-sm font-medium leading-snug truncate">{displayText || 'Question with passage'}</p>;
                                   })() : (
-                                    <p className="font-medium">Question with image</p>
+                                    <p className="text-sm font-medium leading-snug">Question with image</p>
                                   )}
-                                  <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{q.answer_type}</span>
+                                    {(q.image_url || (Array.isArray(q.image_urls) && q.image_urls.length > 0) || (typeof q.text === "string" && /<img\b/i.test(q.text))) && (
+                                      <span
+                                        className="inline-flex items-center gap-1 rounded-md bg-primary/[0.07] px-1.5 py-0.5 text-[10px] font-semibold text-primary ring-1 ring-inset ring-primary/15"
+                                        title="This question has an image"
+                                      >
+                                        <ImageIcon className="h-3 w-3" />
+                                        Image
+                                      </span>
+                                    )}
+                                  </div>
                                   {hasError && (
-                                    <p className="text-xs text-red-500 font-medium">{questionErrors[0]}</p>
+                                    <p className="text-xs text-destructive font-medium">{questionErrors[0]}</p>
                                   )}
                                 </div>
                                 {/* Marks Schema Badge */}
@@ -2780,13 +2978,14 @@ export default function ExamDetail() {
                                 >
                                   <MarksQuestionBadge config={marksResolvedConfigs.get(q.id) ?? null} size="sm" />
                                   {marksResolvedConfigs.get(q.id) && (
-                                    <Edit className="h-3 w-3 text-muted-foreground/40 group-hover:text-purple-500 transition-colors shrink-0" />
+                                    <Edit className="h-3 w-3 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0" />
                                   )}
                                 </div>
-                                <div className="flex gap-2">
+                                <div className="flex gap-1">
                                   <Button
-                                    variant="outline"
-                                    size="sm"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
                                     onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
                                   >
                                     {isExpanded ? (
@@ -2798,7 +2997,7 @@ export default function ExamDetail() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                                    className="h-8 w-8 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
                                     onClick={() => handleEditQuestion(q)}
                                   >
                                     <Edit className="h-4 w-4" />
@@ -2807,7 +3006,7 @@ export default function ExamDetail() {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="text-destructive opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                                      className="h-8 w-8 rounded-lg text-destructive hover:bg-destructive/10 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
                                       onClick={() => handleDeleteQuestionClick(q.id)}
                                     >
                                       <Trash2 className="h-4 w-4" />
@@ -2817,14 +3016,14 @@ export default function ExamDetail() {
                               </div>
 
                               {isExpanded && (
-                                <div className="px-4 pb-4 pt-2 border-t space-y-4">
+                                <div className="px-4 pb-4 pt-4 border-t border-dashed border-border/70 space-y-4">
                                   {q.image_url && (
-                                    <div className="border rounded-lg p-4 bg-slate-50">
-                                      <Label className="mb-2 block font-semibold">Question Image</Label>
+                                    <div className="border border-border/70 rounded-xl p-4 bg-muted/40">
+                                      <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question Image</Label>
                                       <img
                                         src={q.image_url}
                                         alt="Question"
-                                        className="max-w-full h-auto rounded-md"
+                                        className="max-w-full h-auto rounded-lg"
                                       />
                                     </div>
                                   )}
@@ -2838,14 +3037,14 @@ export default function ExamDetail() {
                                     return (
                                       <>
                                         {hasPassageSection && passageSectionMatch && (
-                                          <div className="border rounded-lg p-4 bg-amber-50">
-                                            <Label className="mb-2 block font-semibold">Passage</Label>
-                                            <div className="text-sm" dangerouslySetInnerHTML={{ __html: passageSectionMatch[1] }} />
+                                          <div className="border border-primary/15 rounded-xl p-4 bg-primary/[0.03]">
+                                            <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-primary">Passage</Label>
+                                            <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: passageSectionMatch[1] }} />
                                           </div>
                                         )}
                                         <div>
-                                          <Label className="mb-2 block font-semibold">Question Text</Label>
-                                          <div className="text-sm p-3 bg-slate-50 rounded-md" dangerouslySetInnerHTML={{
+                                          <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question Text</Label>
+                                          <div className="text-sm leading-relaxed p-3.5 bg-muted/40 border border-border/60 rounded-xl" dangerouslySetInnerHTML={{
                                             __html: hasPassageSection && questionSectionMatch
                                               ? questionSectionMatch[1]
                                               : q.text
@@ -2856,21 +3055,21 @@ export default function ExamDetail() {
                                   })()}
 
                                   <div>
-                                    <Label className="mb-2 block font-semibold">Question Type</Label>
-                                    <p className="text-sm p-3 bg-slate-50 rounded-md capitalize">
+                                    <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question Type</Label>
+                                    <span className="inline-flex items-center rounded-lg bg-muted px-2.5 py-1 text-xs font-semibold text-foreground/80">
                                       {q.answer_type === "single" ? "Multiple Choice (Single)" :
                                         q.answer_type === "multi" ? "Multiple Choice (Multiple)" :
                                           q.answer_type === "numeric" ? "Numeric" : "Text"}
-                                    </p>
+                                    </span>
                                   </div>
 
                                   {(q.answer_type === "single" || q.answer_type === "multi") && q.options && (
                                     <div>
-                                      <Label className="mb-2 block font-semibold">Options</Label>
-                                      <div className="space-y-2">
+                                      <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Options</Label>
+                                      <div className="space-y-1.5">
                                         {(Array.isArray(q.options) ? q.options : []).map((opt: string, optIdx: number) => (
-                                          <div key={optIdx} className="flex items-center gap-2 p-2 bg-slate-50 rounded-md">
-                                            <span className="font-semibold text-sm">{String.fromCharCode(65 + optIdx)}.</span>
+                                          <div key={optIdx} className="flex items-center gap-2.5 p-2 pl-2.5 bg-muted/40 border border-border/50 rounded-lg">
+                                            <span className="flex items-center justify-center h-6 w-6 rounded-md bg-card border border-border/70 font-bold text-[11px] text-muted-foreground shrink-0">{String.fromCharCode(65 + optIdx)}</span>
                                             <span className="text-sm">{opt}</span>
                                           </div>
                                         ))}
@@ -2879,30 +3078,112 @@ export default function ExamDetail() {
                                   )}
 
                                   <div>
-                                    <Label className="mb-2 block font-semibold">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
-                                    <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                                      {Array.isArray(q.correct_answer) ? (
-                                        <div className="space-y-1">
-                                          {q.correct_answer.map((ans: string, ansIdx: number) => {
-                                            const idx = Number(ans);
-                                            const resolved = !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
-                                              ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
-                                              : ans;
-                                            return (
-                                              <div key={ansIdx} className="text-sm font-medium text-green-700">{"\u2022"} {resolved}</div>
-                                            );
-                                          })}
-                                        </div>
-                                      ) : (
-                                        <p className="text-sm font-medium text-green-700">
-                                          {q.correct_answer !== null && q.correct_answer !== undefined && q.correct_answer !== ""
-                                            ? (() => { const idx = Number(q.correct_answer); return !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
-                                              ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
-                                              : q.correct_answer; })()
-                                            : "Not specified"}
-                                        </p>
+                                    <div className="flex items-center justify-between mb-2">
+                                      <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
+                                      {(!isMultiLang || isPrimaryLanguage) && inlineAnswerQuestionId !== q.id && (
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-7 w-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                          onClick={() => startInlineAnswerEdit(q)}
+                                          title="Edit correct answer"
+                                        >
+                                          <Edit className="h-4 w-4" />
+                                        </Button>
                                       )}
                                     </div>
+
+                                    {inlineAnswerQuestionId === q.id ? (
+                                      <div className="space-y-3">
+                                        {q.answer_type === "single" ? (
+                                          <Select
+                                            value={typeof inlineAnswerDraft === "string" ? inlineAnswerDraft : ""}
+                                            onValueChange={(val) => setInlineAnswerDraft(val)}
+                                          >
+                                            <SelectTrigger>
+                                              <SelectValue placeholder="Select correct option" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => (
+                                                opt && opt.trim() !== "" ? (
+                                                  <SelectItem key={idx} value={String(idx)}>
+                                                    {String.fromCharCode(65 + idx)}. {opt}
+                                                  </SelectItem>
+                                                ) : null
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        ) : q.answer_type === "multi" ? (
+                                          <div className="space-y-2 border border-border/70 rounded-xl p-3 bg-muted/30">
+                                            {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => {
+                                              const idxStr = String(idx);
+                                              const isEmpty = !opt || opt.trim() === "";
+                                              const draftArr = Array.isArray(inlineAnswerDraft) ? inlineAnswerDraft : [];
+                                              return (
+                                                <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
+                                                  <Checkbox
+                                                    id={`inline-opt-${q.id}-${idx}`}
+                                                    checked={draftArr.includes(idxStr)}
+                                                    onCheckedChange={() => toggleInlineMultiAnswer(idx)}
+                                                    disabled={isEmpty}
+                                                  />
+                                                  <label
+                                                    htmlFor={`inline-opt-${q.id}-${idx}`}
+                                                    className="text-sm font-medium leading-none cursor-pointer"
+                                                  >
+                                                    {String.fromCharCode(65 + idx)}. {opt || "(empty)"}
+                                                  </label>
+                                                </div>
+                                              );
+                                            })}
+                                            {(Array.isArray(q.options) ? q.options : []).every((opt: string) => !opt || opt.trim() === "") && (
+                                              <p className="text-sm text-muted-foreground">No options available.</p>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <Input
+                                            placeholder="Enter correct answer"
+                                            value={typeof inlineAnswerDraft === "string" ? inlineAnswerDraft : ""}
+                                            onChange={(e) => setInlineAnswerDraft(e.target.value)}
+                                          />
+                                        )}
+                                        <div className="flex gap-2">
+                                          <Button size="sm" className="rounded-lg" onClick={() => saveInlineAnswer(q)} disabled={savingInlineAnswer}>
+                                            <Check className="h-4 w-4 mr-1" /> Save
+                                          </Button>
+                                          <Button size="sm" variant="outline" className="rounded-lg" onClick={cancelInlineAnswerEdit} disabled={savingInlineAnswer}>
+                                            <X className="h-4 w-4 mr-1" /> Cancel
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-start gap-2.5 p-3 bg-success/[0.06] border border-success/25 rounded-xl">
+                                        <span className="flex items-center justify-center h-5 w-5 rounded-full bg-success/15 shrink-0 mt-0.5">
+                                          <Check className="h-3 w-3 text-success" />
+                                        </span>
+                                        {Array.isArray(q.correct_answer) ? (
+                                          <div className="space-y-1">
+                                            {q.correct_answer.map((ans: string, ansIdx: number) => {
+                                              const idx = Number(ans);
+                                              const resolved = !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
+                                                ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
+                                                : ans;
+                                              return (
+                                                <div key={ansIdx} className="text-sm font-semibold text-success">{resolved}</div>
+                                              );
+                                            })}
+                                          </div>
+                                        ) : (
+                                          <p className="text-sm font-semibold text-success">
+                                            {q.correct_answer !== null && q.correct_answer !== undefined && q.correct_answer !== ""
+                                              ? (() => { const idx = Number(q.correct_answer); return !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
+                                                ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
+                                                : q.correct_answer; })()
+                                              : "Not specified"}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
 
                                   {/* Marking Schema */}
@@ -2911,21 +3192,21 @@ export default function ExamDetail() {
                                     if (!resolvedConfig) return null;
                                     return (
                                       <div>
-                                        <Label className="mb-2 block font-semibold">Marking Schema</Label>
-                                        <div className="p-3 bg-purple-50 border border-purple-200 rounded-md">
+                                        <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Marking Schema</Label>
+                                        <div className="p-3 bg-primary/[0.04] border border-primary/15 rounded-xl">
                                           <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-4">
                                               <div className="flex items-center gap-1.5">
-                                                <span className="text-xs font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 tabular-nums">+{formatMarks(resolvedConfig.marks_correct)}</span>
+                                                <span className="text-xs font-bold text-success-foreground bg-success rounded-full px-2 py-0.5 tabular-nums">+{formatMarks(resolvedConfig.marks_correct)}</span>
                                                 <span className="text-xs text-muted-foreground">Correct</span>
                                               </div>
                                               <div className="flex items-center gap-1.5">
-                                                <span className={`text-xs font-bold text-white rounded-full px-2 py-0.5 tabular-nums ${resolvedConfig.marks_wrong > 0 ? 'bg-red-500' : 'bg-muted text-muted-foreground'}`}>−{formatMarks(resolvedConfig.marks_wrong)}</span>
+                                                <span className={`text-xs font-bold rounded-full px-2 py-0.5 tabular-nums ${resolvedConfig.marks_wrong > 0 ? 'text-destructive-foreground bg-destructive' : 'bg-muted text-muted-foreground'}`}>−{formatMarks(resolvedConfig.marks_wrong)}</span>
                                                 <span className="text-xs text-muted-foreground">Wrong</span>
                                               </div>
                                               {resolvedConfig.marks_skipped > 0 && (
                                                 <div className="flex items-center gap-1.5">
-                                                  <span className="text-xs font-bold text-white bg-gray-400 rounded-full px-2 py-0.5 tabular-nums">−{formatMarks(resolvedConfig.marks_skipped)}</span>
+                                                  <span className="text-xs font-bold text-white bg-muted-foreground/60 rounded-full px-2 py-0.5 tabular-nums">−{formatMarks(resolvedConfig.marks_skipped)}</span>
                                                   <span className="text-xs text-muted-foreground">Skipped</span>
                                                 </div>
                                               )}
@@ -2934,7 +3215,7 @@ export default function ExamDetail() {
                                               <Button
                                                 variant="ghost"
                                                 size="sm"
-                                                className="text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-100 h-7 px-2"
+                                                className="text-xs text-primary hover:text-primary hover:bg-primary/10 h-7 px-2 rounded-lg"
                                                 onClick={(e) => {
                                                   e.stopPropagation();
                                                   setMarksDeepLinkQuestionId(q.id);
@@ -2967,19 +3248,19 @@ export default function ExamDetail() {
           {/* Add/Edit Question Form */}
           {isMultiLang && !isPrimaryLanguage && !editingQuestionId ? (
             /* Secondary Language: Lock the Add Question card */
-            <Card>
-              <CardContent className="py-12">
+            <Card className="rounded-2xl border-border/60 shadow-sm">
+              <CardContent className="py-14">
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto">
+                  <div className="w-14 h-14 bg-warning/15 text-warning rounded-2xl flex items-center justify-center mx-auto">
                     <Lock className="w-6 h-6" />
                   </div>
-                  <h3 className="text-lg font-semibold">Questions Can Only Be Added in the Primary Language</h3>
-                  <p className="text-muted-foreground max-w-md mx-auto text-sm">
+                  <h3 className="text-lg font-bold">Questions Can Only Be Added in the Primary Language</h3>
+                  <p className="text-muted-foreground max-w-md mx-auto text-sm leading-relaxed">
                     New questions must be created in {AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage}. They will automatically appear here for translation.
                   </p>
                   <Button
                     variant="outline"
-                    className="mt-2"
+                    className="mt-2 rounded-lg"
                     onClick={() => handleLanguageSwitch(primaryLanguage)}
                   >
                     Switch to {AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage} (Primary)
@@ -2988,39 +3269,47 @@ export default function ExamDetail() {
               </CardContent>
             </Card>
           ) : (
-          <Card ref={questionFormRef}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <CardTitle>{editingQuestionId ? "Edit Question" : "Add Question"}</CardTitle>
+          <Card ref={questionFormRef} className="rounded-2xl border-border/60 shadow-sm overflow-hidden">
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between space-y-3 sm:space-y-0 px-5 py-4 border-b border-border/50 bg-muted/30">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-bold text-foreground hidden sm:inline-block">Question Format:</span>
+                <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  {editingQuestionId ? <Edit className="h-4 w-4 text-primary" /> : <Plus className="h-4 w-4 text-primary" />}
+                </div>
+                <div>
+                  <CardTitle className="text-sm font-bold">{editingQuestionId ? "Edit Question" : "Add Question"}</CardTitle>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{editingQuestionId ? "Update the selected question" : "Snip from PDF or write it manually"}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground hidden sm:inline-block">Format</span>
                 <Select value={questionFormat} onValueChange={setQuestionFormat}>
-                  <SelectTrigger className="w-[280px] h-auto py-2">
+                  <SelectTrigger className="w-full sm:w-[280px] h-auto py-2 rounded-lg bg-card">
                     <SelectValue placeholder="Select format" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="standard" className="py-2 group">
                       <div className="flex flex-col text-left">
                         <span className="font-bold text-foreground group-focus:text-white">Standard Question</span>
-                        <span className="text-xs font-medium text-zinc-600 group-focus:text-white/80">Single question with options</span>
+                        <span className="text-xs font-medium text-muted-foreground group-focus:text-white/80">Single question with options</span>
                       </div>
                     </SelectItem>
                     <SelectItem value="passage" className="py-2 group">
                       <div className="flex flex-col text-left">
                         <span className="font-bold text-foreground group-focus:text-white">Passage-based Question</span>
-                        <span className="text-xs font-medium text-zinc-600 group-focus:text-white/80">Question linked to a shared passage</span>
+                        <span className="text-xs font-medium text-muted-foreground group-focus:text-white/80">Question linked to a shared passage</span>
                       </div>
                     </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-5">
               <Tabs defaultValue="pdf" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-6">
-                  <TabsTrigger value="pdf">PDF Snipping/Direct Upload</TabsTrigger>
-                  <TabsTrigger value="ai" className="gap-2">
+                <TabsList className="grid w-full grid-cols-2 mb-6 h-11 rounded-xl p-1">
+                  <TabsTrigger value="pdf" className="rounded-lg text-xs sm:text-sm font-semibold">PDF Snipping/Direct Upload</TabsTrigger>
+                  <TabsTrigger value="ai" className="gap-2 rounded-lg text-xs sm:text-sm font-semibold">
                     AI Parse
-                    <Badge variant="secondary" className="h-5 text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 hover:bg-blue-100 border-blue-200">
+                    <Badge variant="secondary" className="h-5 text-[10px] px-1.5 py-0 bg-primary/10 text-primary hover:bg-primary/10 border-primary/20">
                       Coming Soon
                     </Badge>
                   </TabsTrigger>
@@ -3029,9 +3318,9 @@ export default function ExamDetail() {
 
                 <TabsContent value="pdf" className="space-y-6">
                   <div className="space-y-2">
-                    <Label>Upload PDF Document</Label>
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload PDF Document</Label>
                     <div className="flex gap-2">
-                      <Button variant="outline" className="w-full h-12 border-dashed" onClick={() => document.getElementById('pdf-upload')?.click()}>
+                      <Button variant="outline" className="w-full h-14 rounded-xl border-dashed text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/[0.03]" onClick={() => document.getElementById('pdf-upload')?.click()}>
                         <FileText className="mr-2 h-4 w-4" />
                         {section?.pdf_url ? "Change PDF File" : "Select PDF File"}
                         <input
@@ -3046,7 +3335,7 @@ export default function ExamDetail() {
                   </div>
 
                   {section?.pdf_url ? (
-                    <div className="border rounded-lg overflow-hidden h-[600px]">
+                    <div className="border border-border/70 rounded-xl overflow-hidden h-[600px] shadow-sm">
                       <Suspense fallback={<div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading PDF viewer…</div>}>
                         <PdfSnipper
                           pdfUrl={section.pdf_url}
@@ -3056,19 +3345,23 @@ export default function ExamDetail() {
                       </Suspense>
                     </div>
                   ) : (
-                    <div className="text-center py-12 border rounded-lg bg-slate-50 text-muted-foreground">
-                      Please upload a PDF to start snipping questions.
+                    <div className="flex flex-col items-center justify-center text-center py-14 border border-dashed border-border rounded-xl bg-muted/30">
+                      <div className="h-12 w-12 rounded-2xl bg-card border border-border/70 flex items-center justify-center mb-3 shadow-xs">
+                        <FileText className="h-6 w-6 text-muted-foreground/60" />
+                      </div>
+                      <p className="text-sm font-semibold text-foreground">No PDF uploaded</p>
+                      <p className="text-xs text-muted-foreground mt-1">Upload a PDF to start snipping questions.</p>
                     </div>
                   )}
 
                   {questionFormat === "passage" && (
-                    <div className="pt-4 border-t">
-                      <h3 className="font-semibold mb-4">Passage Details</h3>
+                    <div className="pt-5 border-t border-dashed border-border/70">
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-4">Passage Details</h3>
                       <div className="space-y-4 mb-6">
                         <div className="space-y-2 mb-4">
-                          <Label>Passage Image</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Passage Image</Label>
                           <div className="flex items-center gap-4">
-                            <Button variant="outline" className="h-10 border-dashed" onClick={() => document.getElementById('pdf-passage-image-upload')?.click()}>
+                            <Button variant="outline" className="h-10 rounded-lg border-dashed text-muted-foreground hover:text-primary hover:border-primary/40" onClick={() => document.getElementById('pdf-passage-image-upload')?.click()}>
                               <Upload className="mr-2 h-4 w-4" />
                               Upload Image
                               <input
@@ -3080,18 +3373,18 @@ export default function ExamDetail() {
                               />
                             </Button>
                             {passageImage && (
-                              <span className="text-sm text-green-600 flex items-center">
+                              <span className="text-sm font-medium text-success flex items-center">
                                 <Check className="mr-1 h-4 w-4" /> 1 Image attached
                               </span>
                             )}
                           </div>
                           {passageImage && (
                             <div className="mt-2 flex flex-wrap gap-2">
-                              <div className="border rounded-md p-2 bg-slate-50 w-fit relative group">
-                                <img src={passageImage} alt="Passage" className="h-32 object-contain" />
+                              <div className="border border-border/70 rounded-xl p-2 bg-muted/40 w-fit relative group">
+                                <img src={passageImage} alt="Passage" className="h-32 object-contain rounded-lg" />
                                 <button
                                   onClick={handlePassageImageRemove}
-                                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                                  className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 shadow-md hover:bg-destructive/90 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                                   title="Remove image"
                                 >
                                   <X className="h-3 w-3" />
@@ -3101,7 +3394,7 @@ export default function ExamDetail() {
                           )}
                         </div>
                         <div className="space-y-2">
-                          <Label>Passage Text</Label>
+                          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Passage Text</Label>
                           <RichTextEditor
                             value={passageText}
                             onChange={setPassageText}
@@ -3113,27 +3406,29 @@ export default function ExamDetail() {
                     </div>
                   )}
 
-                  <div className="pt-4 border-t">
+                  <div className="pt-5 border-t border-dashed border-border/70">
                     <div className="flex justify-between items-start mb-0">
-                      <h3 className="font-semibold">Question Details</h3>
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-primary">Question Details</h3>
                       {editingQuestionId && (
                         <div className="flex flex-col gap-2">
-                          <Button onClick={handleUpdateQuestion} size="sm">
+                          <Button onClick={handleUpdateQuestion} size="sm" className="rounded-lg btn-primary-glow">
                             <Save className="mr-2 h-4 w-4" />
                             Update
                           </Button>
-                          <Button variant="outline" onClick={handleCancelEdit} size="sm">
+                          <Button variant="outline" onClick={handleCancelEdit} size="sm" className="rounded-lg">
                             Cancel
                           </Button>
                         </div>
                       )}
                     </div>
-                    
+
                     {isMultiLang && !editingQuestionId && (
-                      <div className="bg-blue-50 border border-blue-200 text-blue-800 text-sm p-3.5 rounded-lg flex items-start gap-3 mt-3 mb-4">
-                        <Globe className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
+                      <div className="bg-primary/[0.04] border border-primary/15 text-foreground/80 text-sm p-3.5 rounded-xl flex items-start gap-3 mt-3 mb-4">
+                        <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                          <Globe className="h-4 w-4 text-primary" />
+                        </div>
                         <div>
-                          <p className="font-semibold mb-0.5">Multi-Language Exam</p>
+                          <p className="font-semibold text-foreground mb-0.5">Multi-Language Exam</p>
                           <p>Adding a new question here will automatically create linked placeholder questions in all other language variants. This keeps your exam structure perfectly synced.</p>
                         </div>
                       </div>
@@ -3165,8 +3460,8 @@ export default function ExamDetail() {
 
                 <TabsContent value="ai" className="space-y-6">
                   {/* Coming Soon Overlay */}
-                  <div className="text-center py-16 border rounded-lg bg-slate-50">
-                    <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <div className="text-center py-16 border border-primary/15 rounded-2xl bg-gradient-surface">
+                    <div className="w-16 h-16 bg-gradient-brand text-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-glow">
                       <Sparkles className="w-8 h-8" />
                     </div>
                     <h3 className="text-xl font-bold mb-2">AI Parse Coming Soon</h3>

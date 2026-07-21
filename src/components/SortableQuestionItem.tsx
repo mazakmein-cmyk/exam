@@ -31,8 +31,8 @@ export function SortableQuestionItem({ id, children, disabled = false }: Sortabl
         <div ref={setNodeRef} style={style} className="relative flex items-start gap-2">
             {!disabled && (
                 <div className="mt-4" {...attributes} {...listeners}>
-                    <Button variant="ghost" size="icon" className="cursor-grab active:cursor-grabbing hover:bg-slate-100 h-8 w-8">
-                        <GripVertical className="h-4 w-4 text-slate-400" />
+                    <Button variant="ghost" size="icon" className="cursor-grab active:cursor-grabbing rounded-lg hover:bg-muted h-8 w-8">
+                        <GripVertical className="h-4 w-4 text-muted-foreground/50" />
                     </Button>
                 </div>
             )}

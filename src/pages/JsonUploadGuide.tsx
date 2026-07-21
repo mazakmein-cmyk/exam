@@ -61,11 +61,15 @@ SCHEMA (v1.0) — these are the ONLY recognized fields
     "source_pdf": "<file name>",
     "model": "<your model name and version>",
     "total_in_pdf": <integer — total questions you counted in source>,
-    "extracted": <integer — questions emitted in this JSON>,
+    "extracted": <integer — questions emitted in sections.questions, including placeholders>,
     "skipped": [
+      // Reserve for questions you literally could not read (page damaged,
+      // stem illegible). v1-unsupported types (numeric, TITA, sequence-
+      // input, etc.) go into sections.questions as placeholders, NOT here.
       { "reason": "<short label>", "page": <int, optional>, "q_no": <int, optional> }
     ],
     "needs_manual_review": [
+      // Every placeholder MUST appear here. Reason starts with "placeholder — …".
       { "section": "<exact section name>", "q_no": <int>, "reason": "<short label>" }
     ],
     "marks_source":  "found_in_pdf" | "not_present",
@@ -93,11 +97,19 @@ SCHEMA (v1.0) — these are the ONLY recognized fields
           "answer_type": "single" | "multi",
           "options": ["<option 1>", "<option 2>", ...],
           "correct_answer": "<zero-based-index-as-string>" | ["0","2"] | null,
-          "marks_config": { ... per-question override, OPTIONAL }
+          "marks_config": { ... per-question override, OPTIONAL },
+          "image_region": {
+            "page": <1-based PDF page>,
+            "x_min": <0-1000 normalised>,
+            "y_min": <0-1000 normalised>,
+            "x_max": <0-1000 normalised>,
+            "y_max": <0-1000 normalised>
+          }
         }
       ]
     }
-  ]
+  ],
+  "image_padding_pct": 5
 }
 
 NO OTHER FIELDS ARE RECOGNIZED. The parser silently drops anything
@@ -138,17 +150,21 @@ RULES — non-negotiable
    single = exactly one correct option (regular MCQ).
    multi  = two or more correct options (rare; the PDF will say so).
 
-   These input types are NOT supported in v1 — SKIP them and log
-   in _extraction_summary.skipped with the listed reason:
+   These input types CANNOT be encoded directly in v1:
 
-     • True / False with only 2 options       → "true/false unsupported"
-     • Numeric / TITA / type-in-the-answer    → "numeric unsupported"
-     • Fill in the blank (no options listed)  → "fill-in unsupported"
-     • Short answer / descriptive             → "descriptive unsupported"
-     • Para-jumble keyed by sequence (e.g.
-       CAT "key in 4123" with no options)     → "sequence-input unsupported"
-     • Pure match-the-following with no
-       pre-synthesized MCQ options            → "match unsupported"
+     • True / False with only 2 options
+     • Numeric / TITA / type-in-the-answer
+     • Fill in the blank (no options listed)
+     • Short answer / descriptive / essay
+     • Para-jumble keyed by sequence (e.g. CAT "key in 4123" with no options)
+     • Pure match-the-following with no pre-synthesized MCQ options
+
+   DO NOT drop these into _extraction_summary.skipped. Instead,
+   emit each one as a PLACEHOLDER MCQ at the same q_no, preserving
+   the passage / question text / image_region — see the
+   PRESERVE QUESTION NUMBERING section below. This keeps q_no
+   slots aligned 1:1 with the PDF so the creator can cross-
+   reference and finish them manually after import.
 
    IMPORTANT: A question that LOOKS like one of these but has been
    PRE-CONVERTED to MCQ in the PDF — e.g. a column-match question
@@ -163,8 +179,13 @@ RULES — non-negotiable
      क/ख/ग/घ) all map to 0/1/2/3 regardless of the label style.
 
 4. SKIP-AND-CONTINUE at the question level. One bad question does
-   NOT halt the batch. Every skipped question MUST appear in
-   _extraction_summary.skipped with a reason.
+   NOT halt the batch. The bar for using _extraction_summary.skipped
+   is now HIGH — reserve it for questions where the stem itself is
+   unreadable (page damaged, OCR illegible). For unsupported
+   answer formats whose stem you CAN read, emit a placeholder
+   (see PRESERVE QUESTION NUMBERING) — placeholders go INTO
+   sections.questions and INTO needs_manual_review, never into
+   skipped.
 
 5. PASSAGES, DIRECTIONS, SHARED SETUPS — see the dedicated section
    below. TL;DR: use the OPTIONAL "passage" field on each question
@@ -266,6 +287,107 @@ RULES — non-negotiable
 
 
 ═══════════════════════════════════════════════════════════════════
+PRESERVE QUESTION NUMBERING — placeholders for unsupported types
+═══════════════════════════════════════════════════════════════════
+
+THE PROBLEM this section solves:
+If the source PDF has 66 questions and 23 of them are numeric /
+TITA / sequence-input (which v1 can't encode as MCQs), dropping
+all 23 into _extraction_summary.skipped produces a JSON with only
+43 question entries. The creator opens the upload and sees Q5
+followed by Q8 — Q6 and Q7 are simply gone. They can no longer
+cross-reference against the PDF, and they lose passages /
+diagrams that those questions shared with their siblings.
+
+THE FIX — emit a PLACEHOLDER MCQ at the same q_no instead of
+dropping the question. The creator finishes the placeholder by
+hand after import, but everything else (passage, figure crop,
+sibling alignment) is preserved automatically.
+
+RULE — when a question's answer format is v1-unsupported
+(numeric, TITA, true/false, fill-in, descriptive, sequence-input,
+match, options malformed in PDF) AND you can read its stem, emit
+it as a placeholder MCQ inside sections.questions. DO NOT drop it
+into skipped. The placeholder shape — copy this exactly:
+
+  {
+    "q_no": <SAME q_no as in PDF>,
+    "passage": "<FULL verbatim passage if the question is in a
+                 shared-context cluster — same string as siblings>",
+    "text": "<FULL question stem exactly as in the PDF>",
+    "answer_type": "single",
+    "options": [
+      "[Manual entry needed — unsupported type in v1]",
+      "[See PDF Q<q_no> for the actual answer]"
+    ],
+    "correct_answer": null,
+    "image_region": { ... if the question depends on a figure ... }
+  }
+
+Use those two sentinel option strings VERBATIM (the parser
+detects them and flags the question as "needs manual completion"
+in the upload preview). Substitute the real q_no in the second
+sentinel — e.g. "[See PDF Q17 for the actual answer]". Do NOT
+invent plausible options. Do NOT put the numeric / TITA answer
+into a sentinel — the creator must type real options in the
+MockSetu editor.
+
+ALSO log each placeholder in _extraction_summary.needs_manual_review
+with one of these reason strings:
+
+  • "placeholder — numeric/TITA unsupported in v1"
+  • "placeholder — sequence-input unsupported in v1"
+  • "placeholder — true/false unsupported in v1"
+  • "placeholder — fill-in unsupported in v1"
+  • "placeholder — descriptive unsupported in v1"
+  • "placeholder — match unsupported in v1"
+  • "placeholder — options malformed in PDF"
+
+Each placeholder counts toward "extracted" (it lives in
+sections.questions). _extraction_summary.total_in_pdf must equal
+the real PDF question count — including placeholders. After this
+pass:
+
+  total_in_pdf === extracted + skipped.length
+
+and "skipped" should be EMPTY in almost every case (only damaged /
+unreadable stems land there).
+
+SHARED CONTEXT REMINDER:
+If the placeholder is part of a passage cluster (e.g. Q6 is a
+numeric question that shares the housing-schematic passage with
+Q7-Q10), copy the SAME passage string AND the SAME image_region
+onto the placeholder. Sibling questions must be indistinguishable
+in terms of context. A placeholder without its passage / figure
+is useless to the creator — they cannot fill it in without the
+shared setup.
+
+EXAMPLE — CAT-2023 Section 02 Q6 (numeric, shares the housing-
+schematic passage + figure on page 15 with Q7-Q10):
+
+  {
+    "q_no": 6,
+    "passage": "The schematic diagram below shows 12 rectangular houses in a housing complex … [FULL passage text including the layout, road adjacency rule, neighbour count rule, pricing formula, and all 4 numbered constraints — IDENTICAL string to the passage on Q7, Q8, Q9, Q10] …",
+    "text": "How many houses are vacant in Block XX?",
+    "answer_type": "single",
+    "options": [
+      "[Manual entry needed — unsupported type in v1]",
+      "[See PDF Q6 for the actual answer]"
+    ],
+    "correct_answer": null,
+    "image_region": { "page": 15, "x_min": 50, "y_min": 80, "x_max": 950, "y_max": 480 }
+  }
+
+And the matching entry in needs_manual_review:
+
+  {
+    "section": "Section 02: Data Interpretation and Logical Reasoning",
+    "q_no": 6,
+    "reason": "placeholder — numeric/TITA unsupported in v1"
+  }
+
+
+═══════════════════════════════════════════════════════════════════
 PASSAGES, DIRECTIONS, COMPREHENSIONS, SHARED SETUPS
 ═══════════════════════════════════════════════════════════════════
 
@@ -341,6 +463,52 @@ Same rule for Setup:, Data:, Directions: blocks. Repeat in full.
 
 Use exactly these prefixes — "Passage:", "Directions:", "Data:",
 "Setup:" — so MockSetu's editor can format them consistently.
+
+═══ PASSAGES THAT REFERENCE OR ARE FIGURES ═══════════════════════
+
+A shared-context cluster's setup takes one of three forms.
+Handle each correctly so EVERY question in the cluster carries
+the same context — text AND image when applicable, AND on
+placeholders too.
+
+  (1) PURE TEXT passage (CAT RC, banking error-spotting):
+        → emit "passage" string only. No image_region.
+
+  (2) TEXT PASSAGE THAT REFERENCES A FIGURE
+      Phrases that signal this: "the diagram below shows…",
+      "the graph below depicts…", "refer to the table on the
+      next page", "in the figure above…", "the schematic
+      shows…", "based on the chart…".
+      The figure is essential — you cannot answer the
+      questions from the text alone.
+        → emit BOTH:
+          • "passage" — FULL TEXT of the surrounding setup.
+            Do NOT summarise just because the figure carries
+            half the meaning. Transcribe every word the PDF
+            shows around the figure (rules, definitions,
+            examples, formulas — all of it).
+          • "image_region" — on EVERY question in the cluster,
+            with the SAME page + same bbox. Even on
+            placeholders. The auto-snipper crops it once and
+            attaches the same crop to every question.
+
+  (3) IMAGE-ONLY passage (rare):
+      The "passage" is itself a chart, schematic, or
+      photograph with no usable surrounding text.
+        → OMIT the "passage" field. Don't try to transcribe
+          a figure into prose.
+        → emit "image_region" on each question in the cluster.
+        → add ONE entry to needs_manual_review for the cluster:
+          { "section": "...", "q_no": <first q_no in cluster>,
+            "reason": "passage image required — figure-only cluster" }
+          The creator will paste the cropped image manually
+          after import.
+
+RULE FOR PLACEHOLDERS IN FIGURE-BEARING CLUSTERS:
+A numeric / TITA placeholder that sits in a DI set MUST carry
+the same image_region as its sibling MCQs. Skipping image_region
+on the placeholder defeats the point — the creator cannot fill
+in the numeric answer without seeing the chart.
 
 CASES YOU WILL SEE AND HOW TO HANDLE EACH:
 
@@ -510,33 +678,192 @@ unambiguous. If a whole sentence is unreadable, SKIP and log
 
 
 ═══════════════════════════════════════════════════════════════════
-IMAGES — when to flag, when to transcribe, when to skip
+IMAGES — when to flag, when to transcribe, when to auto-snip
 ═══════════════════════════════════════════════════════════════════
 
-The v1 parser does NOT import images. Any image_url you put in
-the JSON is silently ignored. Three policies based on what the
-image contains:
+MockSetu can AUTO-SNIP figures directly from the PDF you are
+reading — but ONLY if you emit accurate image_region coordinates.
+This is the single highest-value thing you can do for questions
+with diagrams, charts, or figures. Get this right and the creator
+uploads JSON + PDF and every figure is cropped automatically.
 
-  (i)   DECORATIVE or DUPLICATES info already in text → ignore.
+Any "image_url" field you put in the JSON is silently IGNORED.
+Do NOT use "image_url". Use "image_region" instead.
 
-  (ii)  TRANSCRIBABLE (table with visible cells, simple bar chart
-        with labelled values, geometric figure with all sides
-        labelled in text) → transcribe into the question's text
-        field as a pipe-delimited table or "Data:" list. Treat
-        these as text-only questions.
+─── DECISION TREE (evaluate for EVERY figure/diagram/chart) ────
 
-  (iii) ESSENTIAL and CANNOT be transcribed (pie chart with no
-        labels, complex circuit diagram, photograph, unlabelled
-        geometry) →
-        (a) extract whatever question text accompanies it;
-        (b) add an entry to _extraction_summary.needs_manual_review
-            with reason: "image required";
-        (c) emit the question anyway with the partial text — the
-            user will attach the image manually in MockSetu's
-            editor after upload.
+  (i)   DECORATIVE or DUPLICATES text already in the question →
+        IGNORE. Do not emit image_region. Do not mention it.
 
-DO NOT fabricate ASCII art for a complex diagram. DO NOT guess at
-values you cannot read.
+  (ii)  FULLY TRANSCRIBABLE (table with readable cells, simple bar
+        chart with labelled values, geometry with all dimensions in
+        the text) → TRANSCRIBE into the question's "text" field as
+        a pipe-delimited table or "Data:" list. No image_region
+        needed. Treat as a text-only question.
+
+  (iii) ESSENTIAL and CANNOT be fully transcribed (schematic
+        diagrams, circuit layouts, complex geometry figures,
+        pie/stacked charts, maps, photographs, seating arrangements
+        with spatial layout, Venn diagrams, flowcharts) →
+        EMIT "image_region". This is the critical path — read
+        every detail below.
+
+
+─── THE image_region FIELD ─────────────────────────────────────
+
+  "image_region": {
+    "page": <1-based PDF page number>,
+    "x_min": <integer 0-1000>,
+    "y_min": <integer 0-1000>,
+    "x_max": <integer 0-1000>,
+    "y_max": <integer 0-1000>
+  }
+
+  "page" is REQUIRED. The x/y bbox fields are OPTIONAL but
+  STRONGLY PREFERRED — they make the auto-snip dramatically
+  better.
+
+
+─── COORDINATE SYSTEM — how the 0-1000 grid works ─────────────
+
+  Imagine the PDF page as a 1000×1000 pixel grid, regardless of
+  the actual page dimensions (A4, Letter, whatever):
+
+    (0, 0)───────────────────────────(1000, 0)
+    │                                         │
+    │   figure sits                           │
+    │   somewhere in                          │
+    │   this grid                             │
+    │                                         │
+    (0, 1000)────────────────────────(1000, 1000)
+
+  x_min = left edge of the figure   (0 = page left margin)
+  y_min = top edge of the figure    (0 = page top margin)
+  x_max = right edge of the figure  (1000 = page right margin)
+  y_max = bottom edge of the figure (1000 = page bottom margin)
+
+  RULES:
+    • x_min < x_max   (left before right)
+    • y_min < y_max   (top before bottom)
+    • All values are integers in [0, 1000]
+    • The system adds ~5% padding on each side automatically,
+      so be SLIGHTLY LOOSE (10-30 units) rather than pixel-tight.
+      Cutting INTO the figure is far worse than including a thin
+      strip of surrounding whitespace.
+
+
+─── HOW TO ESTIMATE COORDINATES — mental model ─────────────────
+
+  Step 1: Identify which PDF page the figure is on (1-based).
+
+  Step 2: Mentally divide the page into a 10×10 grid (each cell
+           is 100×100 in the coordinate system). Ask yourself:
+           • "The figure starts about X/10 of the way from the
+             left" → x_min ≈ X × 100.
+           • "The figure starts about Y/10 of the way from the
+             top" → y_min ≈ Y × 100.
+           • "The figure ends about X'/10 from the left" →
+             x_max ≈ X' × 100.
+           • "The figure ends about Y'/10 from the top" →
+             y_max ≈ Y' × 100.
+
+  Step 3: Nudge each edge OUTWARD by 10-30 units for safety.
+
+  COMMON POSITIONS (use as anchors):
+    • Full-width figure, upper half of page:
+      x_min: 30,  y_min: 50,  x_max: 970, y_max: 500
+    • Full-width figure, lower half of page:
+      x_min: 30,  y_min: 500, x_max: 970, y_max: 950
+    • Left-column figure (2-column layout):
+      x_min: 30,  y_min: 200, x_max: 490, y_max: 600
+    • Right-column figure (2-column layout):
+      x_min: 510, y_min: 200, x_max: 970, y_max: 600
+    • Centred medium figure:
+      x_min: 150, y_min: 300, x_max: 850, y_max: 700
+    • Small inline figure (e.g. a triangle next to a question):
+      x_min: 500, y_min: 400, x_max: 900, y_max: 650
+
+
+─── THREE CONFIDENCE TIERS ─────────────────────────────────────
+
+  TIER 1 — CONFIDENT BBOX (preferred; best snip quality):
+    You can visually locate the figure's bounding rectangle.
+    Emit all four coordinates.
+
+      "image_region": {
+        "page": 5,
+        "x_min": 80,  "y_min": 320,
+        "x_max": 920, "y_max": 680
+      }
+
+    This gives the auto-snipper a tight crop. The 5% padding
+    ensures no content is cut off even if you're off by 20-30
+    units.
+
+  TIER 2 — PAGE-ONLY (fallback; acceptable):
+    You know the page but cannot estimate the bbox position.
+    Omit x/y fields entirely.
+
+      "image_region": { "page": 5 }
+
+    The system snips the ENTIRE page and then auto-trims white
+    margins to find the content. Works reliably but produces
+    a looser crop (may include question text around the figure).
+
+  TIER 3 — CANNOT DETERMINE PAGE (last resort):
+    You cannot even identify which page the figure is on. Do NOT
+    emit image_region. Instead, add to needs_manual_review:
+
+      { "section": "...", "q_no": 8,
+        "reason": "image required — cannot locate figure in PDF" }
+
+
+─── MULTIPLE FIGURES ON THE SAME PAGE ──────────────────────────
+
+  If a page has multiple figures (e.g. questions 6-10 each have
+  their own small diagram clustered on page 12), emit a SEPARATE
+  image_region on EACH question with bbox coordinates that target
+  ONLY that question's specific figure.
+
+  DO NOT use the same whole-page bbox for all of them — that
+  would give every question an identical image of the full page.
+  Take the extra time to estimate each figure's individual bbox.
+
+  If you truly cannot separate them (overlapping figures), use
+  page-only on all of them and add a needs_manual_review note.
+
+
+─── FIGURES THAT SPAN MULTIPLE QUESTIONS ───────────────────────
+
+  Some exam setups have ONE diagram shared by 4-5 questions
+  (e.g. a housing layout for Q6-Q10). In this case, emit the
+  SAME image_region (identical page + bbox) on EVERY question in
+  the group. The system deduplicates page renders internally, so
+  this is efficient. Each question gets its own copy of the snip.
+
+
+─── WHAT NOT TO DO ─────────────────────────────────────────────
+
+  ✗ DO NOT emit pixel coordinates or PDF point units.
+    Always normalised 0-1000.
+
+  ✗ DO NOT emit {x_min:0, y_min:0, x_max:1000, y_max:1000}
+    when you mean "the whole page". That is a sentinel value the
+    system treats as "AI couldn't localise it" and falls back to
+    auto-trim — it works, but a proper bbox is ALWAYS better.
+    If you genuinely mean "whole page", just omit the x/y coords:
+    "image_region": { "page": 5 }
+
+  ✗ DO NOT fabricate ASCII art for a complex diagram.
+    Emit image_region and let the auto-snipper crop it.
+
+  ✗ DO NOT guess at numeric values you cannot read from a chart.
+    Emit image_region for the chart and transcribe only what you
+    can confidently read.
+
+  ✗ DO NOT set page to 0 or negative. Pages are 1-based.
+
+  ✗ DO NOT use "image_url". It is silently ignored.
 
 
 ═══════════════════════════════════════════════════════════════════
@@ -668,9 +995,113 @@ EXAMPLE 9 — Puzzle setup (8 people on 8 floors)
   "correct_answer": "3"
 }
 
-EXAMPLE 10 — Skipped (numeric / TITA)
-Goes into _extraction_summary.skipped, NOT into sections.questions:
-{ "q_no": 21, "page": 11, "reason": "numeric unsupported — TITA" }
+EXAMPLE 10 — Numeric / TITA emitted as PLACEHOLDER (NOT skipped)
+The PDF asks "How many UK applications were scheduled on that
+day?" — a TITA question with no options in the PDF. Emit it as a
+placeholder MCQ at the same q_no, preserving the passage and (if
+applicable) the image_region. The creator fills the real options
+in MockSetu after import.
+
+  {
+    "q_no": 11,
+    "passage": "A visa processing office (VPO) accepts visa applications in four categories — US, UK, Schengen, and Others. … [FULL setup — same string as on the sibling MCQs Q13, Q14, Q15] …",
+    "text": "How many UK applications were scheduled on that day?",
+    "answer_type": "single",
+    "options": [
+      "[Manual entry needed — unsupported type in v1]",
+      "[See PDF Q11 for the actual answer]"
+    ],
+    "correct_answer": null
+  }
+
+And in _extraction_summary.needs_manual_review:
+  { "section": "Section 02: Data Interpretation and Logical Reasoning",
+    "q_no": 11,
+    "reason": "placeholder — numeric/TITA unsupported in v1" }
+
+EXAMPLE 10b — TRULY skipped (stem unreadable)
+Only when you cannot read the question at all does it go into
+_extraction_summary.skipped:
+{ "q_no": 21, "page": 11, "reason": "page damaged — stem unreadable" }
+
+EXAMPLE 11 — Question with image_region (confident bbox)
+A DI question whose diagram is on page 15, centred in the upper
+half of the page. The figure spans roughly from the left margin
+to the right margin, top third to mid-page:
+{
+  "q_no": 26,
+  "passage": "The schematic diagram below shows 12 rectangular houses in a housing complex …",
+  "text": "Which of the following options best describes the number of vacant houses in Row-2?",
+  "answer_type": "single",
+  "options": ["Either 2 or 3", "Exactly 3", "Exactly 2", "Either 3 or 4"],
+  "correct_answer": null,
+  "image_region": {
+    "page": 15,
+    "x_min": 50,
+    "y_min": 80,
+    "x_max": 950,
+    "y_max": 480
+  }
+}
+
+EXAMPLE 12 — Shared diagram across multiple questions
+Questions 26-30 all refer to the same housing layout on page 15.
+Each question repeats the SAME image_region:
+{
+  "q_no": 27,
+  "passage": "The schematic diagram below shows 12 rectangular houses …",
+  "text": "Which house in Block YY has parking space?",
+  "answer_type": "single",
+  "options": ["E2", "F2", "E1", "F1"],
+  "correct_answer": null,
+  "image_region": {
+    "page": 15,
+    "x_min": 50,
+    "y_min": 80,
+    "x_max": 950,
+    "y_max": 480
+  }
+}
+
+EXAMPLE 13 — Question with page-only image_region (fallback)
+You know the pie chart is on page 9 but can't estimate the bbox:
+{
+  "q_no": 18,
+  "text": "What is the percentage share of sector D in the total?",
+  "answer_type": "single",
+  "options": ["12%", "18%", "22%", "25%"],
+  "correct_answer": null,
+  "image_region": { "page": 9 }
+}
+
+EXAMPLE 14 — Placeholder INSIDE a figure-bearing cluster
+A DI set on page 15 has a housing schematic. Q6 is numeric, Q7-Q10
+are MCQs. ALL FIVE questions share the same passage AND the same
+image_region — including the placeholder. This is what keeps the
+upload preview aligned with the PDF:
+
+  {
+    "q_no": 6,
+    "passage": "The schematic diagram below shows 12 rectangular houses in a housing complex. House numbers are mentioned in the rectangles representing the houses. … [full passage text — IDENTICAL string on Q7, Q8, Q9, Q10] …",
+    "text": "How many houses are vacant in Block XX?",
+    "answer_type": "single",
+    "options": [
+      "[Manual entry needed — unsupported type in v1]",
+      "[See PDF Q6 for the actual answer]"
+    ],
+    "correct_answer": null,
+    "image_region": { "page": 15, "x_min": 50, "y_min": 80, "x_max": 950, "y_max": 480 }
+  },
+  {
+    "q_no": 7,
+    "passage": "[SAME full passage as Q6]",
+    "text": "Which of the following houses is definitely occupied?",
+    "answer_type": "single",
+    "options": ["D2", "A1", "B1", "F2"],
+    "correct_answer": "2",
+    "image_region": { "page": 15, "x_min": 50, "y_min": 80, "x_max": 950, "y_max": 480 }
+  }
+  // … Q8, Q9, Q10 follow the same pattern …
 
 
 ═══════════════════════════════════════════════════════════════════
@@ -709,10 +1140,34 @@ SELF-CHECK — verify ALL of these BEFORE emitting
     FULL VERBATIM source text, not a paraphrase or summary.
     Same passage repeats across all questions in the group.
   □ marks_wrong (if present anywhere) is a POSITIVE magnitude.
-  □ _extraction_summary.skipped accounts for every question
-    counted in total_in_pdf but absent from sections.
-  □ No image_url, no passage, no explanation, no
-    difficulty, no other unrecognized fields anywhere.
+  □ NUMBERING IS PRESERVED:
+    total_in_pdf === extracted + skipped.length
+    "skipped" should usually be empty. Every v1-unsupported
+    answer format (numeric, TITA, true/false, fill-in,
+    descriptive, sequence-input, match) lives in
+    sections.questions as a PLACEHOLDER MCQ at its real q_no,
+    NOT in skipped.
+  □ Every placeholder uses these two sentinel options VERBATIM:
+      ["[Manual entry needed — unsupported type in v1]",
+       "[See PDF Q<q_no> for the actual answer]"]
+    correct_answer is null. Substitute the real q_no in the
+    second sentinel.
+  □ Every placeholder has a matching entry in
+    _extraction_summary.needs_manual_review with the correct
+    section name, q_no, and a "placeholder — …" reason.
+  □ Placeholders in shared-context clusters carry the SAME
+    passage and SAME image_region as their MCQ siblings.
+  □ No image_url, no explanation, no difficulty, no topic, no
+    tags, no other unrecognized fields anywhere.
+  □ Every image_region has "page" ≥ 1 (integer).
+  □ Every image_region bbox (when present) has
+    0 ≤ x_min < x_max ≤ 1000 and 0 ≤ y_min < y_max ≤ 1000.
+  □ No image_region uses {0,0,1000,1000} as a bbox — if you
+    mean "whole page", omit x/y fields and emit page only.
+  □ Shared diagrams: every question in the group has the SAME
+    image_region (same page + same bbox). Not just the first one.
+  □ Multiple figures on same page: each question has its OWN
+    bbox targeting its specific figure, not a shared whole-page.
 
 FINAL PASS — before emitting, read your JSON ONE MORE TIME,
 character by character. Specifically grep for:
@@ -721,6 +1176,9 @@ character by character. Specifically grep for:
   • Any "Ã" "Â" "â€" sequence → fix encoding to native Unicode
   • Any passage shorter than 5 sentences (likely summarised) →
     expand to full source text
+  • Any image_region with x_min=0, y_min=0, x_max=1000, y_max=1000
+    → replace with page-only (omit x/y) or estimate a real bbox
+  • Any essential figure WITHOUT an image_region → add one
 Catching these now saves a round-trip with the user.
 
 
@@ -999,6 +1457,29 @@ const JsonUploadGuide = () => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // Honor #anchor in the URL on mount and on hash changes. The browser's
+  // built-in hash scroll fires before this React tree has painted, so the
+  // target element doesn't exist yet and the page lands at the top. We
+  // re-run scrollIntoView after paint (via rAF) so deep links from the
+  // upload dialog's "See how to fix this →" link land on the right section.
+  useEffect(() => {
+    const scrollToHash = () => {
+      const hash = window.location.hash.slice(1);
+      if (!hash) return;
+      // Wait one frame so SectionHeading nodes are mounted.
+      requestAnimationFrame(() => {
+        const el = document.getElementById(hash);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          setActiveSection(hash);
+        }
+      });
+    };
+    scrollToHash();
+    window.addEventListener("hashchange", scrollToHash);
+    return () => window.removeEventListener("hashchange", scrollToHash);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <SEO
@@ -1155,6 +1636,7 @@ const JsonUploadGuide = () => {
                 "Per-section match status: ✓ matched in your exam, ✗ not in this exam.",
                 "How many questions are valid vs skipped, with the reason for each skip.",
                 "AI-flagged questions that need your eyes (math, images, ambiguity).",
+                "Placeholder questions (numeric / TITA / sequence-input rows the AI emits at the right q_no with sentinel options — they show as warnings; open each in the editor and fill the real options before publishing).",
                 "Whether a marks scheme was found in the PDF.",
               ]}
             />
@@ -1590,9 +2072,38 @@ const JsonUploadGuide = () => {
                   <tr className="border-b border-border/30 align-top">
                     <td className="py-3 px-4">Many questions show as "skipped"</td>
                     <td className="py-3 px-4">
-                      Check the reasons in the preview. Common causes: math/image questions,
-                      true/false (not supported), missing options. Add those manually after
-                      upload in the editor.
+                      Check the reasons in the preview. The current prompt only routes
+                      questions to "skipped" when the stem is genuinely unreadable. If an
+                      older or alternate prompt dropped many numeric / TITA / sequence-input
+                      questions into "skipped", re-run with the Step 1 prompt: it now emits
+                      those as placeholder MCQs at the correct q_no so the JSON's numbering
+                      stays aligned with the PDF.
+                    </td>
+                  </tr>
+                  <tr className="border-b border-border/30 align-top">
+                    <td className="py-3 px-4">
+                      Question count is lower than the PDF / numbering skips
+                    </td>
+                    <td className="py-3 px-4">
+                      Same root cause: the AI dropped unsupported types instead of
+                      emitting placeholders. Re-run Step 1 with the current prompt — for
+                      every numeric / TITA / sequence-input it should emit a placeholder
+                      MCQ at the right q_no with the sentinel options
+                      <Code>[Manual entry needed — unsupported type in v1]</Code> and
+                      <Code>[See PDF Q&lt;n&gt; for the actual answer]</Code>. The
+                      upload preview flags each placeholder so you can fill them in.
+                    </td>
+                  </tr>
+                  <tr className="border-b border-border/30 align-top">
+                    <td className="py-3 px-4">
+                      A placeholder lost its passage / diagram
+                    </td>
+                    <td className="py-3 px-4">
+                      Placeholders in a shared-context cluster MUST carry the same
+                      <Code>passage</Code> and same <Code>image_region</Code> as their
+                      MCQ siblings. If the AI omitted them, ask it to re-emit the cluster
+                      and copy the passage / image_region from the sibling MCQs onto every
+                      placeholder in the group.
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">

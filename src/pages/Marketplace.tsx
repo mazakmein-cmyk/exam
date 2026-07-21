@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, BookOpen, Store, Search, ArrowLeft, Share2, MoreVertical } from "lucide-react";
+import VerifiedBadge from "@/components/VerifiedBadge";
+import { getVerificationTier } from "@/lib/verification";
 import Navbar from "@/components/Navbar";
 import SEO from "@/components/SEO";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
@@ -27,6 +29,8 @@ type Exam = {
     exam_category: string | null;
     user_id: string;
     creator_username?: string;
+    creator_verified?: boolean;
+    creator_gold?: boolean;
 };
 
 import { useUserRole } from "@/hooks/use-user-role";
@@ -82,14 +86,16 @@ const Marketplace = () => {
             if (userIds.length > 0) {
                 const { data: profiles } = await supabase
                     .from('profiles')
-                    .select('id, username')
+                    .select('id, username, is_verified, is_admin_gold')
                     .in('id', userIds);
 
-                const profileMap = new Map(profiles?.map(p => [p.id, p.username]) || []);
+                const profileMap = new Map(profiles?.map((p: any) => [p.id, { username: p.username, is_verified: p.is_verified, is_admin_gold: p.is_admin_gold }]) || []);
 
                 const examsWithUsernames = examsData.map(exam => ({
                     ...exam,
-                    creator_username: profileMap.get(exam.user_id) || 'Unknown'
+                    creator_username: profileMap.get(exam.user_id)?.username || 'Unknown',
+                    creator_verified: profileMap.get(exam.user_id)?.is_verified || false,
+                    creator_gold: profileMap.get(exam.user_id)?.is_admin_gold || false
                 }));
 
                 setExams(examsWithUsernames);
@@ -247,9 +253,13 @@ const Marketplace = () => {
                                         </div>
                                     </div>
                                     <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{exam.description || "No description provided."}</p>
-                                    <p className="text-[11px] text-muted-foreground">
+                                    <div className="text-[11px] text-muted-foreground flex items-center gap-1">
                                         by <span className="font-semibold text-[#6C3EF4]">{exam.creator_username || "Unknown"}</span>
-                                    </p>
+                                        {(() => {
+                                            const tier = getVerificationTier({ is_admin_gold: exam.creator_gold, is_verified: exam.creator_verified });
+                                            return tier && <VerifiedBadge size={14} tier={tier} />;
+                                        })()}
+                                    </div>
                                 </div>
                                 <div className="px-5 pb-5">
                                     <button

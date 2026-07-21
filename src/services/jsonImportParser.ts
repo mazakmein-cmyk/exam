@@ -22,6 +22,13 @@ const VALID_MCQ_MODE = new Set(["partial", "all_or_nothing"]);
 const VALID_MCQ_WRONG_PENALTY = new Set(["flat", "per_option"]);
 const VALID_ROUNDING = new Set(["floor", "round", "ceil", "none"]);
 
+// Sentinel option strings the extraction prompt instructs Gemini to use
+// when emitting a PLACEHOLDER question (numeric/TITA/sequence-input etc.
+// — formats v1 can't encode but whose q_no must still appear so PDF
+// numbering aligns with the imported exam).
+const PLACEHOLDER_OPTION_PRIMARY = "[Manual entry needed — unsupported type in v1]";
+const PLACEHOLDER_OPTION_HINT_RE = /^\[See PDF Q\d+ for the actual answer\]$/i;
+
 const START_DELIM = "<<<EXAM_JSON_START>>>";
 const END_DELIM = "<<<EXAM_JSON_END>>>";
 
@@ -32,6 +39,15 @@ export type NormalisedQuestion = {
   options: string[];
   correct_answer: string | string[] | null;
   marks_config?: Partial<ScoringConfig>;
+  imageRegion?: NormalisedImageRegion;
+};
+
+export type NormalisedImageRegion = {
+  page: number;
+  // bbox in 0-1000 normalised space. If absent, treat as whole-page snip.
+  bbox?: { xMin: number; yMin: number; xMax: number; yMax: number };
+  // Set when the AI-provided bbox was invalid and we fell back to whole-page.
+  invalidBboxFallback?: string;
 };
 
 export type NormalisedSection = {
@@ -81,6 +97,10 @@ export type ParseReport = {
   extractionSummary: any | null;
   repairApplied: boolean;
   repairCategories: RepairCategory[];
+  // Auto-snip plumbing (§12): top-level padding override + a derived flag
+  // the dialog reads to decide whether a PDF file is required.
+  imagePaddingPct: number;
+  hasImageRegions: boolean;
 };
 
 export type ParseContext = {
@@ -111,6 +131,8 @@ export function parseExamJson(rawText: string, ctx: ParseContext): ParseReport {
     extractionSummary: null,
     repairApplied: false,
     repairCategories: [],
+    imagePaddingPct: 5,
+    hasImageRegions: false,
   };
 
   // [1] Pre-clean — always applied, deterministic, cheap.
@@ -240,6 +262,20 @@ export function parseExamJson(rawText: string, ctx: ParseContext): ParseReport {
 
   const globalWarnings: string[] = [];
   baseReport.extractionSummary = json._extraction_summary ?? null;
+
+  // [3a] Top-level image_padding_pct (clamped 0..25; default 5)
+  if (json.image_padding_pct !== undefined) {
+    const n = Number(json.image_padding_pct);
+    if (!Number.isFinite(n)) {
+      globalWarnings.push("image_padding_pct is not a finite number — using default 5.");
+    } else if (n < 0 || n > 25) {
+      const clamped = Math.max(0, Math.min(25, n));
+      globalWarnings.push(`image_padding_pct ${n} out of range — clamped to ${clamped}.`);
+      baseReport.imagePaddingPct = clamped;
+    } else {
+      baseReport.imagePaddingPct = n;
+    }
+  }
 
   // [3] Top-level marks_config (primary only)
   let marksConfig: ParseReport["marksConfig"] = null;
@@ -394,6 +430,8 @@ export function parseExamJson(rawText: string, ctx: ParseContext): ParseReport {
     extractionSummary: json._extraction_summary ?? null,
     repairApplied: baseReport.repairApplied,
     repairCategories: baseReport.repairCategories,
+    imagePaddingPct: baseReport.imagePaddingPct,
+    hasImageRegions: perSection.some((s) => s.accepted.some((q) => q.imageRegion !== undefined)),
   };
 }
 
@@ -710,6 +748,23 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
       if (isPrimary && optionsOut.length < 2) {
         reasons.push(`need at least 2 non-empty options (got ${optionsOut.length})`);
       }
+
+      // Placeholder detection — the extraction prompt asks Gemini to emit
+      // numeric/TITA/sequence-input/etc. questions as placeholder MCQs with
+      // these two sentinel options, so q_no slots align with the source PDF.
+      // We accept the question (it parses fine) but surface a warning so the
+      // creator knows to fill in real options before publishing.
+      const hasPrimarySentinel = optionsOut.some(
+        (o) => o === PLACEHOLDER_OPTION_PRIMARY
+      );
+      const hasHintSentinel = optionsOut.some((o) =>
+        PLACEHOLDER_OPTION_HINT_RE.test(o)
+      );
+      if (hasPrimarySentinel && hasHintSentinel) {
+        warnings.push(
+          `question #${index + 1} is a PLACEHOLDER (unsupported type — fill real options in the editor before publishing).`
+        );
+      }
     }
   } else if (isPrimary) {
     reasons.push("missing options");
@@ -786,6 +841,67 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
     warnings.push(`question #${index + 1} has image_url — images aren't imported in v1; add manually after upload.`);
   }
 
+  // image_region — optional. AI-emitted coordinates the auto-snipper uses.
+  // Validate page (≥ 1 integer) and optional bbox (each coord in 0..1000 with max > min).
+  // If the bbox is malformed, fall back to whole-page snip with a warning rather
+  // than dropping the region entirely — the creator still gets *something* useful.
+  let imageRegion: NormalisedImageRegion | undefined;
+  if (raw.image_region !== undefined && raw.image_region !== null) {
+    if (typeof raw.image_region !== "object" || Array.isArray(raw.image_region)) {
+      warnings.push(`question #${index + 1} image_region must be an object — dropped.`);
+    } else {
+      const rawPage = Number(raw.image_region.page);
+      if (!Number.isInteger(rawPage) || rawPage < 1) {
+        warnings.push(`question #${index + 1} image_region.page must be an integer ≥ 1 — dropped.`);
+      } else {
+        // Extract bbox if any of x_min/y_min/x_max/y_max is provided.
+        const hasAnyBbox =
+          raw.image_region.x_min !== undefined ||
+          raw.image_region.y_min !== undefined ||
+          raw.image_region.x_max !== undefined ||
+          raw.image_region.y_max !== undefined;
+
+        if (!hasAnyBbox) {
+          imageRegion = { page: rawPage };
+        } else {
+          const xMin = Number(raw.image_region.x_min);
+          const yMin = Number(raw.image_region.y_min);
+          const xMax = Number(raw.image_region.x_max);
+          const yMax = Number(raw.image_region.y_max);
+
+          const allFinite =
+            Number.isFinite(xMin) &&
+            Number.isFinite(yMin) &&
+            Number.isFinite(xMax) &&
+            Number.isFinite(yMax);
+          const inRange =
+            xMin >= 0 && yMin >= 0 && xMax <= 1000 && yMax <= 1000;
+          const properOrder = xMin < xMax && yMin < yMax;
+
+          if (allFinite && inRange && properOrder) {
+            imageRegion = {
+              page: rawPage,
+              bbox: { xMin, yMin, xMax, yMax },
+            };
+          } else {
+            const reason = !allFinite
+              ? "non-numeric coords"
+              : !inRange
+                ? "coords outside 0..1000"
+                : "x_max ≤ x_min or y_max ≤ y_min";
+            warnings.push(
+              `question #${index + 1} image_region bbox invalid (${reason}) — falling back to whole-page snip.`
+            );
+            imageRegion = {
+              page: rawPage,
+              invalidBboxFallback: reason,
+            };
+          }
+        }
+      }
+    }
+  }
+
   // passage — optional. If present, wraps `text` using the same HTML contract
   // the manual-add flow uses (see ExamDetail.tsx:1098-1100), so the existing
   // simulator/review renderers pick it up with no changes.
@@ -838,6 +954,7 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
       options: optionsOut,
       correct_answer,
       marks_config,
+      imageRegion,
     },
   };
 }

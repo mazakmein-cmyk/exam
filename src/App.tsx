@@ -75,7 +75,7 @@ const router = createBrowserRouter([
       { path: "/exam/:examId/section/:sectionId/simulator", element: <ExamSimulator /> },
       { path: "/exam/review/:attemptId", element: <ExamReview /> },
       { path: "/analytics", element: <Analytics /> },
-      { path: "/barnwal3008-admin", element: <AdminDashboard /> },
+      { path: "/barnwal3008/admin", element: <AdminDashboard /> },
       { path: "/privacy-policy", element: <PrivacyPolicy /> },
       { path: "/terms-of-service", element: <TermsOfService /> },
       { path: "/for-creators", element: <ForCreators /> },

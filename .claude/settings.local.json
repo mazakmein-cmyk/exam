@@ -15,7 +15,11 @@
       "PowerShell(git config user.email)",
       "PowerShell(cmdkey /list)",
       "Bash(dir /s /b)",
-      "Bash(pandoc --version)"
+      "Bash(pandoc --version)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main show HEAD:src/pages/ExamDetail.tsx)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main diff --stat -- src/pages/ExamDetail.tsx)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main rev-parse HEAD:src/pages/ExamDetail.tsx)",
+      "Bash(git -C c:/Users/Shivm/Downloads/pp-2/paper-to-practise-main diff --stat HEAD -- src/pages/ExamDetail.tsx src/components/JsonUploadDialog.tsx src/components/SortableQuestionItem.tsx src/components/SortableSectionItem.tsx)"
     ]
   }
 }
