@@ -87,15 +87,20 @@ const AdminDashboard = () => {
     }, []);
 
     const checkSession = async () => {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user?.email === "abarnwal3008@mocksetu.in" || session?.user?.email === "admin@mocksetu.in") {
-            setIsAuthenticated(true);
-            fetchStats();
-            fetchExams();
-            fetchUsers();
-            fetchCategories();
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user?.email === "abarnwal3008@mocksetu.in" || session?.user?.email === "admin@mocksetu.in") {
+                setIsAuthenticated(true);
+                fetchStats();
+                fetchExams();
+                fetchUsers();
+                fetchCategories();
+            }
+        } finally {
+            // Never leave the page stuck on "Loading..." — fall through to the
+            // login form and let the admin sign in again.
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const fetchStats = async () => {
