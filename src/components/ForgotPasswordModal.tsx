@@ -17,14 +17,12 @@ interface ForgotPasswordModalProps {
     isOpen: boolean;
     onOpenChange: (open: boolean) => void;
     defaultEmail?: string;
-    redirectTo?: string;
 }
 
 const ForgotPasswordModal = ({
     isOpen,
     onOpenChange,
     defaultEmail = "",
-    redirectTo = "/auth",
 }: ForgotPasswordModalProps) => {
     const [email, setEmail] = useState(defaultEmail);
     const [loading, setLoading] = useState(false);
@@ -34,8 +32,10 @@ const ForgotPasswordModal = ({
         e.preventDefault();
         setLoading(true);
 
+        // All reset links land on the dedicated page, which handles the
+        // recovery token, expired links, and routing back to the right portal.
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}${redirectTo}`,
+            redirectTo: `${window.location.origin}/reset-password`,
         });
 
         if (error) {

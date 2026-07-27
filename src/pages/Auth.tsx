@@ -5,11 +5,11 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { getSignInErrorToast } from "@/lib/signInErrors";
 import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 
 import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
-import UpdatePasswordModal from "@/components/UpdatePasswordModal";
 import OnboardingModal from "@/components/OnboardingModal";
 import SEO from "@/components/SEO";
 
@@ -22,7 +22,6 @@ const Auth = () => {
   const [loading, setLoading] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
-  const [showUpdatePasswordModal, setShowUpdatePasswordModal] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -37,15 +36,16 @@ const Auth = () => {
       }
     };
     checkUser();
-    supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setShowUpdatePasswordModal(true);
-      } else if (event === "SIGNED_IN" && session) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // PASSWORD_RECOVERY is handled globally in AuthStateListener, which
+      // routes to the dedicated /reset-password page.
+      if (event === "SIGNED_IN" && session) {
         if (session.user.user_metadata?.user_type === 'creator') {
           navigate("/dashboard");
         }
       }
     });
+    return () => subscription.unsubscribe();
   }, [navigate]);
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -116,11 +116,7 @@ const Auth = () => {
     setLoading(true);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      if (error.message === "Invalid login credentials") {
-        toast({ title: "Account not found", description: "No account exists with these credentials. Please sign up to create one.", variant: "destructive" });
-      } else {
-        toast({ title: "Sign in failed", description: error.message, variant: "destructive" });
-      }
+      toast(await getSignInErrorToast(error, email));
     } else {
       if (!data.user?.email_confirmed_at) {
         await supabase.auth.signOut();
@@ -162,8 +158,7 @@ const Auth = () => {
           return !error && !!data.session;
         }}
       />
-      <ForgotPasswordModal isOpen={showForgotPasswordModal} onOpenChange={setShowForgotPasswordModal} defaultEmail={email} redirectTo="/auth" />
-      <UpdatePasswordModal isOpen={showUpdatePasswordModal} onOpenChange={setShowUpdatePasswordModal} />
+      <ForgotPasswordModal isOpen={showForgotPasswordModal} onOpenChange={setShowForgotPasswordModal} defaultEmail={email} />
       <OnboardingModal isOpen={showOnboardingModal} onComplete={handleOnboardingComplete} />
 
       {/* Back Button */}

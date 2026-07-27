@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { isRecoveryLanding } from "@/lib/recoveryLanding";
 
 const AuthStateListener = () => {
     const navigate = useNavigate();
@@ -26,10 +27,36 @@ const AuthStateListener = () => {
                 return;
             }
 
+            if (event === 'PASSWORD_RECOVERY') {
+                // Password-reset email links sign the user in and emit this event.
+                // Always route to the dedicated reset page, no matter where the
+                // link landed (Site URL fallback sends users to the homepage).
+                if (currentPath !== '/reset-password') {
+                    navigate('/reset-password');
+                }
+                return;
+            }
+
+            // Safety net for the Site-URL fallback: if the app started on a
+            // recovery URL but we subscribed too late to catch the one-shot
+            // PASSWORD_RECOVERY event, the recovery session still arrives here as
+            // INITIAL_SESSION/SIGNED_IN. Route it to the reset page too.
+            if (isRecoveryLanding && session && currentPath !== '/reset-password') {
+                navigate('/reset-password');
+                return;
+            }
+
             if (event === 'SIGNED_OUT') {
                 // Never redirect if user is taking an exam
                 if (isExamPage) {
                     console.log("Skipping redirect on exam page due to SIGNED_OUT event");
+                    return;
+                }
+
+                // Auth pages sign the user out themselves (wrong account type,
+                // post password-reset) and handle their own navigation — a
+                // forced trip to the homepage would override it.
+                if (currentPath === '/auth' || currentPath === '/student-auth' || currentPath === '/reset-password') {
                     return;
                 }
 
@@ -44,8 +71,9 @@ const AuthStateListener = () => {
                             pathNow.includes('/simulator') ||
                             pathNow.includes('/review') ||
                             pathNow.includes('/intro');
+                        const onAuthPage = pathNow === '/auth' || pathNow === '/student-auth' || pathNow === '/reset-password';
 
-                        if (currentSession === null && !stillOnExamPage) {
+                        if (currentSession === null && !stillOnExamPage && !onAuthPage) {
                             navigate("/");
                         }
                     }, 500);

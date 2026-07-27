@@ -15,6 +15,7 @@ import NotFound from "./pages/NotFound";
 // routes that actually use them.
 const Auth = lazy(() => import("./pages/Auth"));
 const StudentAuth = lazy(() => import("./pages/StudentAuth"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Marketplace = lazy(() => import("./pages/Marketplace"));
 const ExamDetail = lazy(() => import("./pages/ExamDetail"));
@@ -67,6 +68,7 @@ const router = createBrowserRouter([
       { path: "/", element: <Index /> },
       { path: "/auth", element: <Auth /> },
       { path: "/student-auth", element: <StudentAuth /> },
+      { path: "/reset-password", element: <ResetPassword /> },
       { path: "/dashboard", element: <Dashboard /> },
       { path: "/marketplace", element: <Marketplace /> },
       { path: "/exam/:examId", element: <ExamDetail /> },
