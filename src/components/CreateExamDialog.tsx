@@ -6,8 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TransliterateInput } from "@/components/TransliterateInput";
 import { TransliterateTextarea } from "@/components/TransliterateTextarea";
-import { Plus, X, Upload, Globe, Crown, Info } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Plus, X, Upload, Globe, Crown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
@@ -280,15 +279,6 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       });
       return;
     }
-    if (sections.length === 0) {
-      toast({
-        title: "No sections added",
-        description: "Please add at least one section to create an exam",
-        variant: "destructive",
-      });
-      return;
-    }
-
     if (selectedLanguages.length === 0) {
       toast({
         title: "No language selected",
@@ -487,17 +477,10 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                       <div className="flex items-center gap-2">
                         <Crown className="h-4 w-4 text-amber-600 shrink-0" />
                         <span className="text-sm font-medium text-amber-800 dark:text-amber-200">Select Primary Language</span>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="h-3.5 w-3.5 text-amber-500 cursor-help" />
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-xs text-xs">
-                              The primary language controls question structure, correct answers, and scoring. Other languages only need translated content.
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
                       </div>
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        The primary language controls question structure, correct answers, and scoring. Other languages only need translated content.
+                      </p>
                       <div className="flex flex-wrap gap-2">
                         {selectedLanguages.map((langCode) => {
                           const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === langCode);
@@ -537,7 +520,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           <div className="space-y-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 text-foreground/90">
               <div className="h-6 w-1 bg-primary rounded-full" />
-              2. Add Exam Sections <span className="text-destructive">*</span>
+              2. Add Exam Sections
             </h3>
 
             <div className="pl-3 space-y-4">
@@ -612,7 +595,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                     </div>
                   ) : (
                     <div className="text-center py-4 text-sm text-muted-foreground bg-background/50 rounded-lg border border-dashed">
-                      No sections added yet. Add at least one section to proceed.
+                      No sections added yet. Sections are optional now — you can add them later, but at least one section is required before you can publish the exam.
                     </div>
                   )}
                 </div>

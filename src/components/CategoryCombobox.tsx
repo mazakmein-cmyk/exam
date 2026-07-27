@@ -15,7 +15,7 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
-import { EXAM_CATEGORIES } from "@/lib/constants"
+import { useExamCategories } from "@/hooks/use-exam-categories"
 
 type Props = {
     value: string
@@ -25,23 +25,25 @@ type Props = {
 export function CategoryCombobox({ value, onChange }: Props) {
     const [open, setOpen] = React.useState(false)
     const [search, setSearch] = React.useState("")
+    // Live admin-managed list (falls back to the bundled constant internally).
+    const { categories } = useExamCategories()
 
     // Custom filter function
     const filteredCategories = React.useMemo(() => {
-        if (!search) return EXAM_CATEGORIES
+        if (!search) return categories
 
         const lowerSearch = search.toLowerCase()
 
         // Split into startsWith and contains (but not startsWith)
-        const startsWith = EXAM_CATEGORIES.filter(c =>
+        const startsWith = categories.filter(c =>
             c.toLowerCase().startsWith(lowerSearch)
         )
-        const contains = EXAM_CATEGORIES.filter(c =>
+        const contains = categories.filter(c =>
             c.toLowerCase().includes(lowerSearch) && !c.toLowerCase().startsWith(lowerSearch)
         )
 
         return [...startsWith, ...contains]
-    }, [search])
+    }, [search, categories])
 
     return (
         <Popover open={open} onOpenChange={setOpen} modal={true}>
@@ -53,7 +55,7 @@ export function CategoryCombobox({ value, onChange }: Props) {
                     className="w-full justify-between"
                 >
                     {value
-                        ? EXAM_CATEGORIES.find((framework) => framework === value)
+                        ? categories.find((framework) => framework === value) ?? value
                         : <span className="text-muted-foreground/50">Select category...</span>}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>

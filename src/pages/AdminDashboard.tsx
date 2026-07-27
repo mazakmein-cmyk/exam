@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Lock, Users, UserCheck, LogOut, Eye, EyeOff, Search, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, MoreVertical, Ban, TrendingUp, Activity, X, Filter, CalendarIcon } from "lucide-react";
+import { Lock, Users, UserCheck, LogOut, Eye, EyeOff, Search, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, MoreVertical, Ban, TrendingUp, Activity, X, Filter, CalendarIcon, Plus, Tag } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -66,8 +66,16 @@ const AdminDashboard = () => {
     // Custom Date Filter State
     const [customDateRange, setCustomDateRange] = useState<DateRange | undefined>();
     
+    // Exam Categories State
+    const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+    const [newCategoryName, setNewCategoryName] = useState("");
+    const [addingCategory, setAddingCategory] = useState(false);
+    const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<{ id: string; name: string } | null>(null);
+    const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState("");
+
     // Collapse/Expand State
     const [examsExpanded, setExamsExpanded] = useState(true);
+    const [categoriesExpanded, setCategoriesExpanded] = useState(true);
     const [usersExpanded, setUsersExpanded] = useState(true);
     const [customDateType, setCustomDateType] = useState<'signup' | 'active'>('signup');
     const [customFilterOpen, setCustomFilterOpen] = useState(false);
@@ -85,6 +93,7 @@ const AdminDashboard = () => {
             fetchStats();
             fetchExams();
             fetchUsers();
+            fetchCategories();
         }
         setLoading(false);
     };
@@ -122,6 +131,64 @@ const AdminDashboard = () => {
         } catch (error: any) {
             console.error("Error fetching users:", error);
             toast.error("Failed to load users list");
+        }
+    };
+
+    const fetchCategories = async () => {
+        try {
+            const { data, error } = await (supabase as any)
+                .from('exam_categories')
+                .select('id, name')
+                .order('name', { ascending: true });
+            if (error) throw error;
+            setCategories(data || []);
+        } catch (error: any) {
+            console.error("Error fetching categories:", error);
+            toast.error("Failed to load categories");
+        }
+    };
+
+    const handleAddCategory = async () => {
+        const name = newCategoryName.trim();
+        if (!name) {
+            toast.error("Enter a category name");
+            return;
+        }
+        if (categories.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+            toast.error(`"${name}" already exists`);
+            return;
+        }
+        setAddingCategory(true);
+        try {
+            const { error } = await (supabase.rpc as any)('admin_add_exam_category', {
+                category_name: name,
+            });
+            if (error) throw error;
+            toast.success(`Category "${name}" created`);
+            setNewCategoryName("");
+            fetchCategories();
+        } catch (error: any) {
+            console.error("Error adding category:", error);
+            toast.error(error.message || "Failed to add category");
+        } finally {
+            setAddingCategory(false);
+        }
+    };
+
+    const handleDeleteCategory = async (category: { id: string; name: string }) => {
+        try {
+            const { error } = await (supabase.rpc as any)('admin_delete_exam_category', {
+                category_id: category.id,
+            });
+            if (error) throw error;
+            toast.success(`Category "${category.name}" removed`);
+            setCategories(prev => prev.filter(c => c.id !== category.id));
+        } catch (error: any) {
+            console.error("Error deleting category:", error);
+            toast.error(error.message || "Failed to remove category");
+        } finally {
+            setDeleteCategoryTarget(null);
+            setDeleteCategoryConfirm("");
         }
     };
 
@@ -318,6 +385,7 @@ const AdminDashboard = () => {
                 fetchStats();
                 fetchExams();
                 fetchUsers();
+                fetchCategories();
                 toast.success("Welcome back, Admin");
             } else {
                 await supabase.auth.signOut();
@@ -336,6 +404,7 @@ const AdminDashboard = () => {
         setStats(null);
         setExams([]);
         setUsers([]);
+        setCategories([]);
         setUsername("");
         setPassword("");
         toast.success("Logged out");
@@ -491,8 +560,16 @@ const AdminDashboard = () => {
                     </Button>
                 </div>
 
+                <Tabs defaultValue="stats" className="w-full">
+                    <TabsList className="mb-2">
+                        <TabsTrigger value="stats">Stats</TabsTrigger>
+                        <TabsTrigger value="config">Config</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="stats" className="space-y-8 mt-2 focus-visible:outline-none">
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <Card 
+                    <Card
                         className="hover:shadow-lg transition-shadow cursor-pointer border-transparent hover:border-blue-200"
                         onClick={() => {
                             setUserTypeFilter('creator');
@@ -762,171 +839,6 @@ const AdminDashboard = () => {
                     </Card>
                 </div>
 
-                <div className="space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div>
-                            <div 
-                                className="flex items-center gap-2 cursor-pointer select-none group"
-                                onClick={() => setExamsExpanded(!examsExpanded)}
-                            >
-                                <div className="p-1 rounded hover:bg-gray-200 transition-colors">
-                                    {examsExpanded ? <ChevronDown className="h-5 w-5 text-gray-700" /> : <ChevronRight className="h-5 w-5 text-gray-700" />}
-                                </div>
-                                <h2 className="text-2xl font-bold text-gray-900">Exams Management</h2>
-                            </div>
-                            <p className="text-sm text-gray-500 mt-1 pl-9">
-                                Showing: {filteredExams.length} |
-                                Total: {exams.length} |
-                                Published: {exams.filter(e => e.is_published).length} |
-                                Unpublished: {exams.filter(e => !e.is_published).length}
-                            </p>
-                        </div>
-                        {examsExpanded && (
-                            <div className="flex items-center gap-3">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                                <Input
-                                    placeholder="Search by title or creator..."
-                                    value={examSearch}
-                                    onChange={(e) => setExamSearch(e.target.value)}
-                                    className="pl-9 w-[300px] bg-white"
-                                />
-                            </div>
-                            <div className="w-[160px]">
-                                <Select
-                                    value={filter}
-                                    onValueChange={(val: any) => setFilter(val)}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Filter Status" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Exams</SelectItem>
-                                        <SelectItem value="published">Published Only</SelectItem>
-                                        <SelectItem value="unpublished">Unpublished Only</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
-                        )}
-                    </div>
-
-                    {examsExpanded && (
-                        <div className="bg-white rounded-lg shadow overflow-hidden">
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left text-sm text-gray-500">
-                                <thead className="bg-gray-50 text-xs uppercase text-gray-700">
-                                    <tr>
-                                        <th scope="col" className="px-6 py-3">
-                                            <button
-                                                className="flex items-center gap-1 hover:text-gray-900"
-                                                onClick={() => toggleExamSort('name')}
-                                            >
-                                                Exam Title
-                                                {examSortField === 'name' ? (
-                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
-                                            </button>
-                                        </th>
-                                        <th scope="col" className="px-6 py-3">
-                                            <button
-                                                className="flex items-center gap-1 hover:text-gray-900"
-                                                onClick={() => toggleExamSort('username')}
-                                            >
-                                                Creator
-                                                {examSortField === 'username' ? (
-                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
-                                            </button>
-                                        </th>
-                                        <th scope="col" className="px-6 py-3">
-                                            <button
-                                                className="flex items-center gap-1 hover:text-gray-900"
-                                                onClick={() => toggleExamSort('created_at')}
-                                            >
-                                                Created At
-                                                {examSortField === 'created_at' ? (
-                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
-                                            </button>
-                                        </th>
-                                        <th scope="col" className="px-6 py-3">
-                                            <button
-                                                className="flex items-center gap-1 hover:text-gray-900"
-                                                onClick={() => toggleExamSort('status')}
-                                            >
-                                                Status
-                                                {examSortField === 'status' ? (
-                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
-                                            </button>
-                                        </th>
-                                        <th scope="col" className="px-6 py-3 text-right pr-10 w-[150px] sticky right-0 bg-gray-50 z-10 shadow-[-12px_0_15px_-4px_rgba(0,0,0,0.05)] border-l border-gray-200">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-200 border-t border-gray-200">
-                                    {filteredExams.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
-                                                No exams found.
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        filteredExams
-                                            .map((exam) => (
-                                                <tr key={exam.id} className="hover:bg-gray-50 group">
-                                                    <td className="px-6 py-4 font-medium text-gray-900">
-                                                        {exam.name || "Untitled Exam"}
-                                                    </td>
-                                                    <td className="px-6 py-4 text-sm text-gray-900">
-                                                        <div>
-                                                            <div className="font-medium">{exam.username || "Unknown"}</div>
-                                                            <div className="text-xs text-gray-500">{users.find(u => u.id === exam.user_id)?.email || ""}</div>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        {new Date(exam.created_at).toLocaleDateString()}
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset ${exam.is_published
-                                                            ? "bg-green-50 text-green-700 ring-green-600/20"
-                                                            : "bg-gray-50 text-gray-600 ring-gray-500/10"
-                                                            }`}>
-                                                            {exam.is_published ? "Published" : "Draft"}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 pr-10 text-right sticky right-0 bg-white group-hover:bg-gray-50 z-10 shadow-[-12px_0_15px_-4px_rgba(0,0,0,0.05)] border-l border-gray-200">
-                                                        <div className="flex items-center justify-end gap-4">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-xs text-gray-500">
-                                                                {exam.is_published ? "Live" : "Hidden"}
-                                                            </span>
-                                                            <Switch
-                                                                checked={exam.is_published}
-                                                                onCheckedChange={() => handleToggleStatus(exam.id, exam.is_published)}
-                                                            />
-                                                        </div>
-                                                        <Button
-                                                            variant="outline"
-                                                            size="icon"
-                                                            className="h-8 w-8"
-                                                            title="Quick Glance"
-                                                            onClick={() => handlePreview(exam)}
-                                                        >
-                                                            <Eye className="h-4 w-4" />
-                                                        </Button>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                    )}
-                </div>
-
                 {/* Users Management */}
                 <div className="space-y-4" ref={usersTableRef}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1175,6 +1087,255 @@ const AdminDashboard = () => {
                     </div>
                     )}
                 </div>
+                    </TabsContent>
+
+                    <TabsContent value="config" className="space-y-8 mt-2 focus-visible:outline-none">
+
+                {/* Exam Categories Management */}
+                <div className="space-y-4">
+                    <div>
+                        <div
+                            className="flex items-center gap-2 cursor-pointer select-none group"
+                            onClick={() => setCategoriesExpanded(!categoriesExpanded)}
+                        >
+                            <div className="p-1 rounded hover:bg-gray-200 transition-colors">
+                                {categoriesExpanded ? <ChevronDown className="h-5 w-5 text-gray-700" /> : <ChevronRight className="h-5 w-5 text-gray-700" />}
+                            </div>
+                            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                                <Tag className="h-5 w-5 text-primary" />
+                                Exam Categories
+                            </h2>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1 pl-9">
+                            {categories.length} categor{categories.length === 1 ? 'y' : 'ies'} available to creators when they create or edit an exam.
+                        </p>
+                    </div>
+
+                    {categoriesExpanded && (
+                        <div className="bg-white rounded-lg shadow p-6 space-y-6">
+                            {/* Add new category */}
+                            <div>
+                                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                    Create a new category
+                                </label>
+                                <div className="flex items-center gap-3 mt-2 max-w-lg">
+                                    <Input
+                                        placeholder="e.g. NEET, UPSC CSE, SSC CGL..."
+                                        value={newCategoryName}
+                                        onChange={(e) => setNewCategoryName(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleAddCategory(); }}
+                                        className="bg-white"
+                                    />
+                                    <Button
+                                        onClick={handleAddCategory}
+                                        disabled={addingCategory || !newCategoryName.trim()}
+                                        className="flex items-center gap-2 whitespace-nowrap"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        {addingCategory ? "Adding..." : "Add Category"}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            {/* Existing categories */}
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">
+                                    Existing categories
+                                </p>
+                                {categories.length === 0 ? (
+                                    <p className="text-sm text-gray-400">No categories yet. Add your first one above.</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                        {categories.map((cat) => (
+                                            <span
+                                                key={cat.id}
+                                                className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 border border-gray-200 pl-3 pr-1.5 py-1 text-sm text-gray-700"
+                                            >
+                                                {cat.name}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setDeleteCategoryTarget(cat)}
+                                                    className="p-0.5 rounded-full text-gray-400 hover:bg-red-100 hover:text-red-600 transition-colors"
+                                                    title={`Remove ${cat.name}`}
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Exams Management */}
+                <div className="space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                            <div
+                                className="flex items-center gap-2 cursor-pointer select-none group"
+                                onClick={() => setExamsExpanded(!examsExpanded)}
+                            >
+                                <div className="p-1 rounded hover:bg-gray-200 transition-colors">
+                                    {examsExpanded ? <ChevronDown className="h-5 w-5 text-gray-700" /> : <ChevronRight className="h-5 w-5 text-gray-700" />}
+                                </div>
+                                <h2 className="text-2xl font-bold text-gray-900">Exams Management</h2>
+                            </div>
+                            <p className="text-sm text-gray-500 mt-1 pl-9">
+                                Showing: {filteredExams.length} |
+                                Total: {exams.length} |
+                                Published: {exams.filter(e => e.is_published).length} |
+                                Unpublished: {exams.filter(e => !e.is_published).length}
+                            </p>
+                        </div>
+                        {examsExpanded && (
+                            <div className="flex items-center gap-3">
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                                <Input
+                                    placeholder="Search by title or creator..."
+                                    value={examSearch}
+                                    onChange={(e) => setExamSearch(e.target.value)}
+                                    className="pl-9 w-[300px] bg-white"
+                                />
+                            </div>
+                            <div className="w-[160px]">
+                                <Select
+                                    value={filter}
+                                    onValueChange={(val: any) => setFilter(val)}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Filter Status" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Exams</SelectItem>
+                                        <SelectItem value="published">Published Only</SelectItem>
+                                        <SelectItem value="unpublished">Unpublished Only</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                        )}
+                    </div>
+
+                    {examsExpanded && (
+                        <div className="bg-white rounded-lg shadow overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm text-gray-500">
+                                <thead className="bg-gray-50 text-xs uppercase text-gray-700">
+                                    <tr>
+                                        <th scope="col" className="px-6 py-3">
+                                            <button
+                                                className="flex items-center gap-1 hover:text-gray-900"
+                                                onClick={() => toggleExamSort('name')}
+                                            >
+                                                Exam Title
+                                                {examSortField === 'name' ? (
+                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+                                            </button>
+                                        </th>
+                                        <th scope="col" className="px-6 py-3">
+                                            <button
+                                                className="flex items-center gap-1 hover:text-gray-900"
+                                                onClick={() => toggleExamSort('username')}
+                                            >
+                                                Creator
+                                                {examSortField === 'username' ? (
+                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+                                            </button>
+                                        </th>
+                                        <th scope="col" className="px-6 py-3">
+                                            <button
+                                                className="flex items-center gap-1 hover:text-gray-900"
+                                                onClick={() => toggleExamSort('created_at')}
+                                            >
+                                                Created At
+                                                {examSortField === 'created_at' ? (
+                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+                                            </button>
+                                        </th>
+                                        <th scope="col" className="px-6 py-3">
+                                            <button
+                                                className="flex items-center gap-1 hover:text-gray-900"
+                                                onClick={() => toggleExamSort('status')}
+                                            >
+                                                Status
+                                                {examSortField === 'status' ? (
+                                                    examSortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                                                ) : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+                                            </button>
+                                        </th>
+                                        <th scope="col" className="px-6 py-3 text-right pr-10 w-[150px] sticky right-0 bg-gray-50 z-10 shadow-[-12px_0_15px_-4px_rgba(0,0,0,0.05)] border-l border-gray-200">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200 border-t border-gray-200">
+                                    {filteredExams.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
+                                                No exams found.
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        filteredExams
+                                            .map((exam) => (
+                                                <tr key={exam.id} className="hover:bg-gray-50 group">
+                                                    <td className="px-6 py-4 font-medium text-gray-900">
+                                                        {exam.name || "Untitled Exam"}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-sm text-gray-900">
+                                                        <div>
+                                                            <div className="font-medium">{exam.username || "Unknown"}</div>
+                                                            <div className="text-xs text-gray-500">{users.find(u => u.id === exam.user_id)?.email || ""}</div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        {new Date(exam.created_at).toLocaleDateString()}
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset ${exam.is_published
+                                                            ? "bg-green-50 text-green-700 ring-green-600/20"
+                                                            : "bg-gray-50 text-gray-600 ring-gray-500/10"
+                                                            }`}>
+                                                            {exam.is_published ? "Published" : "Draft"}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 pr-10 text-right sticky right-0 bg-white group-hover:bg-gray-50 z-10 shadow-[-12px_0_15px_-4px_rgba(0,0,0,0.05)] border-l border-gray-200">
+                                                        <div className="flex items-center justify-end gap-4">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-xs text-gray-500">
+                                                                {exam.is_published ? "Live" : "Hidden"}
+                                                            </span>
+                                                            <Switch
+                                                                checked={exam.is_published}
+                                                                onCheckedChange={() => handleToggleStatus(exam.id, exam.is_published)}
+                                                            />
+                                                        </div>
+                                                        <Button
+                                                            variant="outline"
+                                                            size="icon"
+                                                            className="h-8 w-8"
+                                                            title="Quick Glance"
+                                                            onClick={() => handlePreview(exam)}
+                                                        >
+                                                            <Eye className="h-4 w-4" />
+                                                        </Button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    )}
+                </div>
+                    </TabsContent>
+                </Tabs>
             </div>
 
             {/* Verification Confirmation Dialog */}
@@ -1195,6 +1356,56 @@ const AdminDashboard = () => {
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction onClick={() => verifyTargetUser && handleToggleVerified(verifyTargetUser)}>
                             {verifyTargetUser?.is_verified ? 'Remove Blue Tick' : 'Give Blue Tick'}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Delete Category Confirmation Dialog */}
+            <AlertDialog
+                open={!!deleteCategoryTarget}
+                onOpenChange={(open) => { if (!open) { setDeleteCategoryTarget(null); setDeleteCategoryConfirm(""); } }}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Remove category?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Remove <strong>"{deleteCategoryTarget?.name}"</strong> from the category list? Creators
+                            will no longer be able to pick it for new exams. Exams already tagged with it keep their
+                            category and are not affected.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-gray-600">
+                            To confirm, type <strong className="text-gray-900">{deleteCategoryTarget?.name}</strong> below:
+                        </label>
+                        <Input
+                            autoFocus
+                            value={deleteCategoryConfirm}
+                            onChange={(e) => setDeleteCategoryConfirm(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (
+                                    e.key === 'Enter' &&
+                                    deleteCategoryTarget &&
+                                    deleteCategoryConfirm.trim() === deleteCategoryTarget.name
+                                ) {
+                                    handleDeleteCategory(deleteCategoryTarget);
+                                }
+                            }}
+                            placeholder={deleteCategoryTarget?.name}
+                            className="bg-white"
+                        />
+                    </div>
+
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={!deleteCategoryTarget || deleteCategoryConfirm.trim() !== deleteCategoryTarget.name}
+                            onClick={() => deleteCategoryTarget && handleDeleteCategory(deleteCategoryTarget)}
+                            className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none"
+                        >
+                            Remove
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

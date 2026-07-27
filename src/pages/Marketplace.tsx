@@ -11,6 +11,7 @@ import { getVerificationTier } from "@/lib/verification";
 import Navbar from "@/components/Navbar";
 import SEO from "@/components/SEO";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
+import { orderExamCategories } from "@/hooks/use-exam-categories";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -45,8 +46,11 @@ const Marketplace = () => {
     const [showOnboardingModal, setShowOnboardingModal] = useState(false);
     const navigate = useNavigate();
 
-    const uniqueCategories = Array.from(new Set(exams.map(e => e.exam_category).filter(Boolean))) as string[];
-    const categoryOptions = uniqueCategories.map(c => ({ label: c, value: c }));
+    // Only show categories that actually have a published exam — no dead filter
+    // options. (Creators still pick from the full admin list when tagging exams.)
+    const examCategories = Array.from(new Set(exams.map(e => e.exam_category).filter(Boolean))) as string[];
+    const categoryOptions = orderExamCategories(examCategories)
+        .map(c => ({ label: c, value: c }));
 
     useEffect(() => {
         const checkProfile = async () => {

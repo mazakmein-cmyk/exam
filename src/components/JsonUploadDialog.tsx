@@ -33,6 +33,7 @@ import {
   Info,
   FileJson,
   Loader2,
+  Pencil,
 } from "lucide-react";
 import {
   parseExamJson,
@@ -176,6 +177,9 @@ export default function JsonUploadDialog({
   const [skipImages, setSkipImages] = useState(false);
   const [resnipForKey, setResnipForKey] = useState<string | null>(null);
 
+  // Section id currently being persisted by an inline rename (drives its spinner).
+  const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
 
@@ -234,6 +238,67 @@ export default function JsonUploadDialog({
       setLoadingStatus(false);
     }
   }, [examId, supportedLanguages, toast]);
+
+  /**
+   * Persist an inline section-name rename to the `sections` row, then patch
+   * local state so the chips + upload matching reflect the new name without a
+   * full reload. Returns true when the edit closes (saved or a no-op).
+   */
+  const handleRenameSection = useCallback(
+    async (lang: string, sectionId: string, rawName: string): Promise<boolean> => {
+      const name = rawName.trim();
+      const current = sectionsByLang[lang]?.find((s) => s.id === sectionId);
+      if (!current) return false;
+
+      if (!name) {
+        toast({
+          title: "Name can't be empty",
+          description: "Enter a section name.",
+          variant: "destructive",
+        });
+        return false;
+      }
+      if (name === current.name) return true; // unchanged — just close the editor
+
+      const isDuplicate = (sectionsByLang[lang] ?? []).some(
+        (s) => s.id !== sectionId && s.name.trim().toLowerCase() === name.toLowerCase()
+      );
+      if (isDuplicate) {
+        toast({
+          title: "Duplicate section name",
+          description: `"${name}" already exists in ${langLabel(lang)}.`,
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      setSavingSectionId(sectionId);
+      try {
+        const { error } = await supabase
+          .from("sections")
+          .update({ name })
+          .eq("id", sectionId);
+        if (error) throw error;
+
+        setSectionsByLang((prev) => ({
+          ...prev,
+          [lang]: (prev[lang] ?? []).map((s) => (s.id === sectionId ? { ...s, name } : s)),
+        }));
+        toast({ title: "Section renamed", description: `Now "${name}".` });
+        return true;
+      } catch (err: any) {
+        toast({
+          title: "Couldn't rename section",
+          description: err?.message ?? "Try again.",
+          variant: "destructive",
+        });
+        return false;
+      } finally {
+        setSavingSectionId(null);
+      }
+    },
+    [sectionsByLang, toast]
+  );
 
   useEffect(() => {
     if (open) {
@@ -647,6 +712,8 @@ export default function JsonUploadDialog({
             primaryLanguage={primaryLanguage}
             langStatus={langStatus}
             sectionsByLang={sectionsByLang}
+            savingSectionId={savingSectionId}
+            onRenameSection={handleRenameSection}
             docsUrl={docsUrl}
             lastError={lastError}
             onDismissError={() => setLastError(null)}
@@ -740,6 +807,126 @@ export default function JsonUploadDialog({
   );
 }
 
+// ─── Section Name Editor ───────────────────────────────────────────────
+// Renders one language's sections as chips; clicking a chip turns it into an
+// inline text field that persists on Enter / ✓ and reverts on Esc / ✕.
+
+function SectionNameEditor({
+  lang,
+  sections,
+  savingSectionId,
+  onRename,
+}: {
+  lang: string;
+  sections: SectionMeta[];
+  savingSectionId: string | null;
+  onRename: (lang: string, sectionId: string, newName: string) => Promise<boolean>;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+
+  const startEdit = (s: SectionMeta) => {
+    setEditingId(s.id);
+    setDraft(s.name);
+  };
+  const cancel = () => {
+    setEditingId(null);
+    setDraft("");
+  };
+  const commit = async () => {
+    if (!editingId) return;
+    const ok = await onRename(lang, editingId, draft);
+    if (ok) cancel();
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <span className="text-foreground/80">{langLabel(lang)}</span>
+        <span className="text-muted-foreground/50">·</span>
+        <span>
+          {sections.length} section{sections.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {sections.length === 0 ? (
+        <p className="text-xs italic text-muted-foreground/70">No sections yet</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {sections.map((s) => {
+            const isEditing = editingId === s.id;
+            const isSaving = savingSectionId === s.id;
+
+            if (isEditing) {
+              return (
+                <div
+                  key={s.id}
+                  className="inline-flex items-center gap-1 rounded-md border border-primary/60 bg-background py-0.5 pl-2 pr-1 shadow-sm"
+                >
+                  <input
+                    autoFocus
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commit();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancel();
+                      }
+                    }}
+                    disabled={isSaving}
+                    aria-label={`Rename section ${s.name}`}
+                    className="bg-transparent text-xs text-foreground outline-none disabled:opacity-60"
+                    style={{ width: `${Math.min(Math.max(draft.length, 6) + 1, 36)}ch` }}
+                  />
+                  <button
+                    type="button"
+                    onClick={commit}
+                    disabled={isSaving}
+                    aria-label="Save name"
+                    className="rounded p-0.5 text-green-600 hover:bg-green-50 disabled:opacity-50 dark:text-green-400 dark:hover:bg-green-950/40"
+                  >
+                    {isSaving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancel}
+                    disabled={isSaving}
+                    aria-label="Cancel rename"
+                    className="rounded p-0.5 text-muted-foreground hover:bg-muted disabled:opacity-50"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => startEdit(s)}
+                title="Click to rename"
+                className="group inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs text-foreground transition-colors hover:border-primary/40 hover:bg-muted"
+              >
+                <span className="truncate max-w-[16rem]">{s.name}</span>
+                <Pencil className="h-3 w-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Language Picker View ──────────────────────────────────────────────
 
 function LanguagePickerView({
@@ -748,6 +935,8 @@ function LanguagePickerView({
   primaryLanguage,
   langStatus,
   sectionsByLang,
+  savingSectionId,
+  onRenameSection,
   docsUrl,
   lastError,
   onDismissError,
@@ -759,6 +948,8 @@ function LanguagePickerView({
   primaryLanguage: string;
   langStatus: Record<string, LangStatus>;
   sectionsByLang: Record<string, SectionMeta[]>;
+  savingSectionId: string | null;
+  onRenameSection: (lang: string, sectionId: string, newName: string) => Promise<boolean>;
   docsUrl?: string;
   lastError: { code: DialogErrorCode; message: string } | null;
   onDismissError: () => void;
@@ -819,27 +1010,39 @@ function LanguagePickerView({
           </div>
         )}
 
-        {docsUrl && (
-          <a
-            href={docsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-          >
-            Get the prompt →
-          </a>
-        )}
+        {/* Exam sections — reference + inline rename. JSON section names must
+            match these, so let the admin fix a name without leaving the dialog. */}
+        <div className="rounded-lg border bg-muted/20 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h4 className="text-sm font-semibold">Exam sections</h4>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Your JSON's section names must match these. Click a name to rename it.
+              </p>
+            </div>
+            {docsUrl && (
+              <a
+                href={docsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                Get the prompt →
+              </a>
+            )}
+          </div>
 
-        <div className="text-xs text-muted-foreground space-y-1">
-          {supportedLanguages.map((lang) => {
-            const names = sectionsByLang[lang]?.map((s) => s.name) ?? [];
-            return (
-              <div key={lang}>
-                <span className="font-semibold">Section names ({langLabel(lang)}):</span>{" "}
-                {names.length > 0 ? names.join(" · ") : <span className="italic">no sections yet</span>}
-              </div>
-            );
-          })}
+          <div className="mt-3 space-y-3">
+            {supportedLanguages.map((lang) => (
+              <SectionNameEditor
+                key={lang}
+                lang={lang}
+                sections={sectionsByLang[lang] ?? []}
+                savingSectionId={savingSectionId}
+                onRename={onRenameSection}
+              />
+            ))}
+          </div>
         </div>
 
         <div className="border-t pt-4 space-y-3">

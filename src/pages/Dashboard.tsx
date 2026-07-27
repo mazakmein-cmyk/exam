@@ -8,6 +8,7 @@ import { LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, BarCh
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
+import PublishExamDialog from "@/components/PublishExamDialog";
 import SEO from "@/components/SEO";
 import {
   DropdownMenu,
@@ -62,11 +63,6 @@ const Dashboard = () => {
   // Publish/Unpublish Confirmation State
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishAction, setPublishAction] = useState<{ examId: string; examName: string; isPublishing: boolean } | null>(null);
-  
-  // New States for precise Language Publishing
-  const [publishLangErrors, setPublishLangErrors] = useState<Record<string, string[]>>({});
-  const [supportedLangsToPublish, setSupportedLangsToPublish] = useState<string[]>([]);
-  const [selectedLangsForPublish, setSelectedLangsForPublish] = useState<string[]>([]);
 
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -376,149 +372,12 @@ const Dashboard = () => {
     }
   };
 
-  const handleTogglePublishClick = async (examId: string, examName: string, isPublishing: boolean) => {
-    // Reset publish states
-    setPublishLangErrors({});
-    setSupportedLangsToPublish([]);
-    setSelectedLangsForPublish([]);
-
-    // If publishing, evaluate errors for every supported language independently
-    if (isPublishing) {
-      try {
-        // Fetch exam to check for supported languages and current published languages
-        const { data: examData } = await supabase
-          .from("exams")
-          .select("supported_languages, published_languages")
-          .eq("id", examId)
-          .single();
-
-        const supportedLangs = (examData as any)?.supported_languages || ["en"];
-        setSupportedLangsToPublish(supportedLangs);
-
-        // Fetch sections for this exam
-        const { data: sections, error: sectionsError } = await supabase
-          .from("sections")
-          .select("id, name, language")
-          .eq("exam_id", examId);
-
-        if (sectionsError) throw sectionsError;
-
-        if (!sections || sections.length === 0) {
-          toast({
-            title: "Cannot Publish Exam",
-            description: "This exam has no sections. Please add at least one section with questions.",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        // Validate each language independently
-        const errorsMap: Record<string, string[]> = {};
-        const validLangs: string[] = [];
-
-        for (const lang of supportedLangs) {
-          const langErrors: string[] = [];
-          const langSections = sections.filter((s: any) => (s as any).language === lang);
-          
-          if (langSections.length === 0) {
-            langErrors.push(`No sections found.`);
-          } else {
-            for (const section of langSections) {
-              const { count, error: countError } = await supabase
-                .from("parsed_questions")
-                .select("id", { count: "exact", head: true })
-                .eq("section_id", section.id);
-
-              if (countError) throw countError;
-              if (count === 0) {
-                langErrors.push(`Section "${section.name}" has no questions.`);
-              }
-
-              // Check for blank placeholder questions and get their numbers
-              const { data: blankQs } = await supabase
-                .from("parsed_questions")
-                .select("q_no")
-                .eq("section_id", section.id)
-                .eq("text", "")
-                .order("q_no", { ascending: true });
-
-              if (blankQs && blankQs.length > 0) {
-                const qNos = blankQs.map(q => q.q_no).join(", ");
-                langErrors.push(`In Section "${section.name}", Question(s) [${qNos}] are blank/untranslated.`);
-              }
-            }
-          }
-
-          errorsMap[lang] = langErrors;
-          if (langErrors.length === 0) {
-             validLangs.push(lang);
-          }
-        }
-
-        setPublishLangErrors(errorsMap);
-        
-        // Let the user start with the currently published languages, or all valid ones if none published yet
-        const currentlyPublished = (examData as any)?.published_languages || [];
-        setSelectedLangsForPublish(currentlyPublished.length > 0 ? currentlyPublished : []);
-
-      } catch (error: any) {
-        toast({
-          title: "Validation Error",
-          description: error.message || "Failed to validate exam",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
+  // Open the shared publish dialog. All validation (blank/invalid questions,
+  // cross-language parity, marking-scheme checks) lives in PublishExamDialog so
+  // the dashboard toggle enforces the exact same gates as the edit-exam page.
+  const handleTogglePublishClick = (examId: string, examName: string, isPublishing: boolean) => {
     setPublishAction({ examId, examName, isPublishing });
     setShowPublishDialog(true);
-  };
-
-  const executeTogglePublish = async () => {
-    if (!publishAction) return;
-
-    const { examId, isPublishing } = publishAction;
-    
-    if (isPublishing && selectedLangsForPublish.length === 0) {
-      toast({
-        title: "No Languages Selected",
-        description: "Please select at least one language to publish.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      const payloadLangs = isPublishing ? selectedLangsForPublish : [];
-
-      const { error } = await supabase
-        .from("exams")
-        .update({
-          is_published: isPublishing,
-          published_languages: payloadLangs,
-        })
-        .eq("id", examId);
-
-      if (error) throw error;
-
-      setExams(exams.map(e => e.id === examId ? { ...e, is_published: isPublishing } : e));
-      toast({
-        title: isPublishing ? "Published" : "Unpublished",
-        description: isPublishing
-          ? `Exam is now visible in Marketplace${payloadLangs.length > 1 ? ` in ${payloadLangs.length} languages` : ""}`
-          : "Exam removed from Marketplace",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to update publish status",
-        variant: "destructive",
-      });
-    } finally {
-      setShowPublishDialog(false);
-      setPublishAction(null);
-    }
   };
 
   if (!user) return null;
@@ -736,103 +595,28 @@ const Dashboard = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Publish/Unpublish Confirmation Dialog */}
-      <AlertDialog open={showPublishDialog} onOpenChange={setShowPublishDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {publishAction?.isPublishing ? "Publish Exam" : "Unpublish Exam"}
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="mt-2 outline-none">
-                {publishAction?.isPublishing ? (
-                  <div className="space-y-4 text-sm text-muted-foreground outline-none">
-                    <p>Select the languages you want to publish for "{publishAction?.examName}".</p>
-                    <div className="rounded-md border p-4 space-y-4">
-                      <div className="flex items-center justify-between pb-4 border-b">
-                        <span className="font-semibold text-foreground">Select All Valid</span>
-                        <Switch 
-                          checked={
-                            selectedLangsForPublish.length > 0 && 
-                            selectedLangsForPublish.length === supportedLangsToPublish.filter(l => publishLangErrors[l]?.length === 0).length
-                          }
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              const validLangs = supportedLangsToPublish.filter(l => publishLangErrors[l]?.length === 0);
-                              setSelectedLangsForPublish(validLangs);
-                              const skipped = supportedLangsToPublish.filter(l => publishLangErrors[l]?.length > 0);
-                              if (skipped.length > 0) {
-                                toast({
-                                  title: "Languages Skipped",
-                                  description: "Some languages have errors and were not selected.",
-                                });
-                              }
-                            } else {
-                              setSelectedLangsForPublish([]);
-                            }
-                          }}
-                        />
-                      </div>
-                      <div className="space-y-3">
-                        {supportedLangsToPublish.map((lang) => {
-                          const hasErrors = publishLangErrors[lang] && publishLangErrors[lang].length > 0;
-                          const getLangName = (code: string) => {
-                            if (code === 'en') return 'English';
-                            if (code === 'hi') return 'Hindi';
-                            return code.toUpperCase();
-                          };
-
-                          return (
-                            <div key={lang} className="flex flex-col gap-1">
-                              <div className="flex items-center justify-between">
-                                <span className={`${hasErrors ? 'text-destructive font-medium' : 'text-foreground'}`}>
-                                  {getLangName(lang)} {hasErrors ? "(Errors)" : ""}
-                                </span>
-                                <Switch 
-                                  checked={selectedLangsForPublish.includes(lang)}
-                                  onCheckedChange={(checked) => {
-                                    if (checked && hasErrors) {
-                                      toast({
-                                        title: `Cannot Publish ${getLangName(lang)}`,
-                                        description: (
-                                          <div className="mt-1 space-y-1">
-                                            {publishLangErrors[lang].map((err, i) => (
-                                              <p key={i} className="text-xs font-medium">• {err}</p>
-                                            ))}
-                                          </div>
-                                        ),
-                                        variant: "destructive"
-                                      });
-                                      return;
-                                    }
-                                    if (checked) {
-                                      setSelectedLangsForPublish(prev => [...prev, lang]);
-                                    } else {
-                                      setSelectedLangsForPublish(prev => prev.filter(l => l !== lang));
-                                    }
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <span className="block mt-2">Are you sure you want to unpublish "{publishAction?.examName}"? This will remove the exam from the Marketplace.</span>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { setShowPublishDialog(false); setPublishAction(null); }}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={executeTogglePublish} className={publishAction?.isPublishing ? "bg-primary" : "bg-orange-500 hover:bg-orange-600"}>
-              {publishAction?.isPublishing ? "Publish" : "Unpublish"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Publish/Unpublish Confirmation Dialog — shares the exact validation
+          used on the edit-exam page via the PublishExamDialog component. */}
+      {publishAction && (
+        <PublishExamDialog
+          open={showPublishDialog}
+          onOpenChange={(open) => {
+            setShowPublishDialog(open);
+            if (!open) setPublishAction(null);
+          }}
+          examId={publishAction.examId}
+          examName={publishAction.examName}
+          isPublishing={publishAction.isPublishing}
+          onSuccess={(isPublishing) => {
+            setExams(prev => prev.map(e => e.id === publishAction.examId ? { ...e, is_published: isPublishing } : e));
+          }}
+          onNavigateToQuestion={(sectionId, qNo) => {
+            // The dashboard has no inline section editor, so send the creator to
+            // the full editor to fix the flagged question.
+            navigate(`/exam/${publishAction.examId}`);
+          }}
+        />
+      )}
 
       <OnboardingModal
         isOpen={showOnboardingModal}

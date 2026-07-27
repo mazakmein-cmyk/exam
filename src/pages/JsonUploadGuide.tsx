@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileJson, ChevronRight, ArrowUp, Copy, Check } from "lucide-react";
+import { FileJson, ChevronRight, ArrowUp, Copy, Check, AlertTriangle } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
@@ -1572,11 +1572,16 @@ const JsonUploadGuide = () => {
               items={[
                 "Open ChatGPT, Claude, or Gemini in a new tab and start a fresh chat.",
                 "Paste the prompt from Step 1.",
-                <>
-                  <strong>Before sending</strong>, fill in the placeholders at the bottom of the
-                  prompt: the language code (<Code>en</Code> or <Code>hi</Code>) and your exam's
-                  section names in the order they appear in MockSetu.
-                </>,
+                <span className="block rounded-md bg-amber-50 dark:bg-amber-950/30 border-l-4 border-amber-400 dark:border-amber-500 px-3 py-2.5 -ml-1">
+                  <span className="flex gap-2">
+                    <AlertTriangle className="h-4 w-4 mt-[3px] flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span className="text-amber-900 dark:text-amber-200 font-semibold">
+                      <strong>Before sending, don't skip this:</strong> fill in the placeholders at the
+                      bottom of the prompt — the language code (<Code>en</Code> or <Code>hi</Code>) and
+                      your exam's section names in the order they appear in MockSetu.
+                    </span>
+                  </span>
+                </span>,
                 "Attach your PDF to the chat.",
                 "Send.",
               ]}

@@ -377,30 +377,9 @@ export default function ExamDetail() {
         currentSections = allSecs.filter(s => !(s as any).language || (s as any).language === "en");
       }
 
-      let currentSection = currentSections[0];
-
-      // If no section exists at all, create one for each language
-      if (allSecs.length === 0) {
-        const groupId = crypto.randomUUID();
-        const newSectionsToCreate = examLangs.map((l: string) => ({
-          exam_id: examId,
-          name: "General Section",
-          time_minutes: 60,
-          language: l,
-          section_group_id: groupId,
-        }));
-
-        const { data: newSections, error: createError } = await supabase
-          .from("sections")
-          .insert(newSectionsToCreate)
-          .select();
-
-        if (createError) throw createError;
-        const created = (newSections || []) as Section[];
-        setAllSections(created);
-        currentSections = created.filter(s => (s as any).language === effectiveLang);
-        currentSection = currentSections[0];
-      }
+      // No auto-creation of sections — an exam can exist without sections,
+      // but questions can only be added once a section is created.
+      const currentSection = currentSections[0] ?? null;
 
       setSections(currentSections);
       setSection(currentSection);
@@ -408,6 +387,8 @@ export default function ExamDetail() {
       // Fetch Questions for the current section
       if (currentSection) {
         fetchQuestions(currentSection.id);
+      } else {
+        setQuestions([]);
       }
 
     } catch (error: any) {
@@ -970,14 +951,6 @@ export default function ExamDetail() {
   };
 
   const handleDeleteSectionClick = (sectionId: string) => {
-    if (sections.length <= 1) {
-      toast({
-        title: "Cannot Delete",
-        description: "Exam must have at least one section",
-        variant: "destructive",
-      });
-      return;
-    }
     setDeleteSectionId(sectionId);
     setShowDeleteDialog(true);
   };
@@ -1016,9 +989,13 @@ export default function ExamDetail() {
       setSections(updatedSections);
 
       if (section?.id === deleteSectionId) {
-        const nextSection = updatedSections[0];
+        const nextSection = updatedSections[0] ?? null;
         setSection(nextSection);
-        fetchQuestions(nextSection.id);
+        if (nextSection) {
+          fetchQuestions(nextSection.id);
+        } else {
+          setQuestions([]);
+        }
       }
 
       toast({
@@ -2782,21 +2759,19 @@ export default function ExamDetail() {
                                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                               }}
                             />
-                            {sections.length > 1 && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 rounded-md text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 shrink-0"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  handleDeleteSectionClick(s.id);
-                                }}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            )}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 rounded-md text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 shrink-0"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleDeleteSectionClick(s.id);
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -2889,8 +2864,8 @@ export default function ExamDetail() {
                     <div className="h-12 w-12 rounded-2xl bg-muted flex items-center justify-center mb-3">
                       <HelpCircle className="h-6 w-6 text-muted-foreground/60" />
                     </div>
-                    <p className="text-sm font-semibold text-foreground">No questions added yet</p>
-                    <p className="text-xs text-muted-foreground mt-1">Snip from a PDF or add one manually below.</p>
+                    <p className="text-sm font-semibold text-foreground">{section ? "No questions added yet" : "No sections created yet"}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{section ? "Snip from a PDF or add one manually below." : "Please create a section first to start adding questions."}</p>
                   </div>
                 ) : (
                   <DndContext
@@ -3246,7 +3221,30 @@ export default function ExamDetail() {
           </Card>
 
           {/* Add/Edit Question Form */}
-          {isMultiLang && !isPrimaryLanguage && !editingQuestionId ? (
+          {!section ? (
+            /* No section yet: lock the Add Question card */
+            <Card className="rounded-2xl border-border/60 shadow-sm">
+              <CardContent className="py-14">
+                <div className="text-center space-y-3">
+                  <div className="w-14 h-14 bg-warning/15 text-warning rounded-2xl flex items-center justify-center mx-auto">
+                    <Layers className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-lg font-bold">Create a Section First</h3>
+                  <p className="text-muted-foreground max-w-md mx-auto text-sm leading-relaxed">
+                    Questions live inside sections. Please create a section first to start adding questions.
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="mt-2 rounded-lg gap-2"
+                    onClick={handleAddSection}
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Section
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : isMultiLang && !isPrimaryLanguage && !editingQuestionId ? (
             /* Secondary Language: Lock the Add Question card */
             <Card className="rounded-2xl border-border/60 shadow-sm">
               <CardContent className="py-14">
