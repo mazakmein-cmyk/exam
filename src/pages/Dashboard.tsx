@@ -4,10 +4,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, BarChart, FileText } from "lucide-react";
+import { LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, Users, BarChart, FileText, Radio } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
+import ExamTypeDialog from "@/components/ExamTypeDialog";
+import CreateLiveExamDialog from "@/components/CreateLiveExamDialog";
+import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCount, type LiveExam } from "@/services/liveExamService";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import SEO from "@/components/SEO";
 import {
@@ -54,6 +57,13 @@ const Dashboard = () => {
   const [user, setUser] = useState<any>(null);
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"mock" | "live">("mock");
+  const [liveExams, setLiveExams] = useState<LiveExam[]>([]);
+  const [liveParticipantCounts, setLiveParticipantCounts] = useState<Record<string, number>>({});
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [duplicatingLiveId, setDuplicatingLiveId] = useState<string | null>(null);
+  const [showExamTypeDialog, setShowExamTypeDialog] = useState(false);
+  const [showCreateLiveDialog, setShowCreateLiveDialog] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [examToDelete, setExamToDelete] = useState<{ id: string; name: string } | null>(null);
@@ -137,6 +147,102 @@ const Dashboard = () => {
   const handleExamCreated = () => {
     fetchExams();
     setShowCreateDialog(false);
+  };
+
+  // ─── Live Exam Handlers ───────────────────────────────────
+
+  const fetchLiveExamsData = async () => {
+    try {
+      setLiveLoading(true);
+      const data = await fetchMyLiveExams();
+      setLiveExams(data);
+      // Paint the list immediately; participant counts fill in as they arrive
+      // (cards render `?? 0` in the meantime).
+      setLiveLoading(false);
+      Promise.all(data.map(e => getParticipantCount(e.id).catch(() => 0)))
+        .then(counts => {
+          const countMap: Record<string, number> = {};
+          data.forEach((e, i) => { countMap[e.id] = counts[i]; });
+          setLiveParticipantCounts(countMap);
+        });
+    } catch (error: any) {
+      toast({
+        title: "Error loading live exams",
+        description: error.message,
+        variant: "destructive",
+      });
+      setLiveLoading(false);
+    }
+  };
+
+  const handleLiveExamCreated = () => {
+    fetchLiveExamsData();
+    setShowCreateLiveDialog(false);
+  };
+
+  const handleDeleteLiveExam = async (exam: LiveExam) => {
+    if (exam.status === "live") {
+      toast({
+        title: "Cannot delete a live exam",
+        description: "Please end the live session first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      await deleteLiveExam(exam.id);
+      setLiveExams(prev => prev.filter(e => e.id !== exam.id));
+      toast({ title: "Deleted", description: "Live exam deleted successfully" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  // Duplicating is allowed from any status — copying an ended exam to re-run it
+  // with a new batch is the common case. The copy always comes back as a draft
+  // with its own share code and an empty leaderboard.
+  const handleDuplicateLiveExam = async (exam: LiveExam) => {
+    if (duplicatingLiveId) return;
+    try {
+      setDuplicatingLiveId(exam.id);
+      const newExam = await duplicateLiveExam(exam.id);
+      await fetchLiveExamsData();
+      toast({
+        title: "Duplicated",
+        description: `"${newExam.name}" created as a draft — questions, timers and languages copied.`,
+      });
+    } catch (error: any) {
+      console.error("Duplicate live exam error:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to duplicate live exam",
+        variant: "destructive",
+      });
+    } finally {
+      setDuplicatingLiveId(null);
+    }
+  };
+
+  const handleShareLiveExam = (exam: LiveExam) => {
+    if (exam.status === "draft") {
+      toast({
+        title: "Cannot Share Exam",
+        description: "Please publish the exam first to share it.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const url = `${window.location.origin}/live/${exam.share_code}`;
+    navigator.clipboard.writeText(url);
+    toast({ title: "Link copied", description: "The live exam link has been copied to your clipboard." });
+  };
+
+  // Fetch live exams when tab switches
+  const handleTabChange = (tab: "mock" | "live") => {
+    setActiveTab(tab);
+    if (tab === "live" && liveExams.length === 0) {
+      fetchLiveExamsData();
+    }
   };
 
   const handleTakeExam = async (examId: string) => {
@@ -454,128 +560,275 @@ const Dashboard = () => {
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 text-[11px] font-semibold text-[#A855F7] uppercase tracking-wider">Creator Dashboard</span>
             </div>
             <h1 className="text-3xl font-bold tracking-tight text-foreground">My Exams</h1>
-            <p className="text-muted-foreground mt-1 text-sm">Create and manage your mock exam simulations</p>
+            <p className="text-muted-foreground mt-1 text-sm">Create and manage your exam simulations</p>
           </div>
-          <Button onClick={() => setShowCreateDialog(true)} className="self-start md:self-auto bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-lg shadow-[#6C3EF4]/25 hover:shadow-[#6C3EF4]/35 hover:-translate-y-px transition-all duration-200">
+          <Button onClick={() => setShowExamTypeDialog(true)} className="self-start md:self-auto bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-lg shadow-[#6C3EF4]/25 hover:shadow-[#6C3EF4]/35 hover:-translate-y-px transition-all duration-200">
             <Plus className="mr-2 h-4 w-4" />
             New Exam
           </Button>
         </div>
 
-        {loading ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Loading exams...</p>
-          </div>
-        ) : exams.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-card/40 py-20 px-6 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#6C3EF4]/15 to-[#A855F7]/8 border border-[#6C3EF4]/15 flex items-center justify-center mb-4">
-              <FileText className="h-8 w-8 text-[#A855F7]/70" />
-            </div>
-            <h3 className="text-lg font-semibold mb-2 text-foreground">No exams yet</h3>
-            <p className="text-muted-foreground text-sm mb-6 max-w-xs">Create your first mock exam and start building question banks for your students</p>
-            <Button onClick={() => setShowCreateDialog(true)} className="bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-lg shadow-[#6C3EF4]/25 hover:-translate-y-px transition-all duration-200">
-              <Plus className="mr-2 h-4 w-4" />
-              Create Your First Exam
-            </Button>
-          </div>
-        ) : (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {exams.map((exam) => (
-              <Card key={exam.id} className="flex flex-col justify-between group hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 border-border/60">
-                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-xl font-bold break-all">{exam.name}</CardTitle>
-                    </div>
-                    <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
-                  </div>
-                  <div className="flex flex-col items-end gap-2 pl-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground hidden xs:inline">
-                        {exam.is_published ? "Published" : "Unpublished"}
-                      </span>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Switch
-                            checked={exam.is_published}
-                            onCheckedChange={(checked) => handleTogglePublishClick(exam.id, exam.name, checked)}
-                            className="aria-checked:!bg-blue-600 aria-[checked=false]:!bg-gray-400"
-                          />
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{exam.is_published ? "Unpublish" : "Publish"}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    {exam.exam_category && (
-                      <Badge variant="secondary" className="text-xs font-normal">
-                        {exam.exam_category}
-                      </Badge>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="mt-4">
-                  <div className="flex flex-wrap gap-3">
-                    <Button
-                      className="flex-1 min-w-[100px] bg-blue-600 hover:bg-blue-700"
-                      onClick={() => navigate(`/exam/${exam.id}`)}
-                    >
-                      <FileText className="mr-2 h-4 w-4" />
-                      <span className="hidden sm:inline">Edit</span>
-                      <span className="sm:hidden">Edit</span>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => navigate(`/analytics?examId=${exam.id}&from=dashboard`)}
-                    >
-                      <BarChart className="mr-2 h-4 w-4" />
-                      Analytics
-                    </Button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+        {/* Tab Toggle: Mock Exams | Live Exams */}
+        <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit mb-6 border border-border/50">
+          <button
+            onClick={() => handleTabChange("mock")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              activeTab === "mock"
+                ? "bg-background text-foreground shadow-sm border border-border/60"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <FileText className="h-4 w-4" />
+            Mock Exams
+          </button>
+          <button
+            onClick={() => handleTabChange("live")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              activeTab === "live"
+                ? "bg-background text-foreground shadow-sm border border-border/60"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Radio className="h-4 w-4" />
+            Live Exams
+          </button>
+        </div>
+
+        {/* ─── Mock Exams Tab ─── */}
+        {activeTab === "mock" && (
+          <>
+            {loading ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Loading exams...</p>
+              </div>
+            ) : exams.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-card/40 py-20 px-6 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#6C3EF4]/15 to-[#A855F7]/8 border border-[#6C3EF4]/15 flex items-center justify-center mb-4">
+                  <FileText className="h-8 w-8 text-[#A855F7]/70" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2 text-foreground">No exams yet</h3>
+                <p className="text-muted-foreground text-sm mb-6 max-w-xs">Create your first mock exam and start building question banks for your students</p>
+                <Button onClick={() => setShowExamTypeDialog(true)} className="bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-lg shadow-[#6C3EF4]/25 hover:-translate-y-px transition-all duration-200">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create Your First Exam
+                </Button>
+              </div>
+            ) : (
+              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {exams.map((exam) => (
+                  <Card key={exam.id} className="flex flex-col justify-between group hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 border-border/60">
+                    <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-xl font-bold break-all">{exam.name}</CardTitle>
+                        </div>
+                        <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
+                      </div>
+                      <div className="flex flex-col items-end gap-2 pl-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground hidden xs:inline">
+                            {exam.is_published ? "Published" : "Unpublished"}
+                          </span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Switch
+                                checked={exam.is_published}
+                                onCheckedChange={(checked) => handleTogglePublishClick(exam.id, exam.name, checked)}
+                                className="aria-checked:!bg-blue-600 aria-[checked=false]:!bg-gray-400"
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{exam.is_published ? "Unpublish" : "Publish"}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                        {exam.exam_category && (
+                          <Badge variant="secondary" className="text-xs font-normal">
+                            {exam.exam_category}
+                          </Badge>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="mt-4">
+                      <div className="flex flex-wrap gap-3">
                         <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-muted-foreground hover:text-foreground"
+                          className="flex-1 min-w-[100px] bg-blue-600 hover:bg-blue-700"
+                          onClick={() => navigate(`/exam/${exam.id}`)}
                         >
-                          <MoreVertical className="h-4 w-4" />
+                          <FileText className="mr-2 h-4 w-4" />
+                          <span className="hidden sm:inline">Edit</span>
+                          <span className="sm:hidden">Edit</span>
                         </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleShare(exam)}>
-                          <Share2 className="mr-2 h-4 w-4" />
-                          Share
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
-                          <BookOpen className="mr-2 h-4 w-4" />
-                          View Exam
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleDuplicateExam(exam)}>
-                          <Copy className="mr-2 h-4 w-4" />
-                          Duplicate
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDeleteExam(exam)}
-                          className="text-destructive focus:text-destructive"
+                        <Button
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => navigate(`/analytics?examId=${exam.id}&from=dashboard`)}
                         >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                          <BarChart className="mr-2 h-4 w-4" />
+                          Analytics
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleShare(exam)}>
+                              <Share2 className="mr-2 h-4 w-4" />
+                              Share
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
+                              <BookOpen className="mr-2 h-4 w-4" />
+                              View Exam
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleDuplicateExam(exam)}>
+                              <Copy className="mr-2 h-4 w-4" />
+                              Duplicate
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteExam(exam)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ─── Live Exams Tab ─── */}
+        {activeTab === "live" && (
+          <>
+            {liveLoading ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Loading live exams...</p>
+              </div>
+            ) : liveExams.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-card/40 py-20 px-6 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/15 to-teal-500/8 border border-emerald-500/15 flex items-center justify-center mb-4">
+                  <Radio className="h-8 w-8 text-emerald-500/70" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2 text-foreground">No live exams yet</h3>
+                <p className="text-muted-foreground text-sm mb-6 max-w-xs">Create your first live exam and broadcast it to your students in real-time</p>
+                <Button onClick={() => setShowCreateLiveDialog(true)} className="bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/25 hover:-translate-y-px transition-all duration-200">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create Your First Live Exam
+                </Button>
+              </div>
+            ) : (
+              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {liveExams.map((exam) => (
+                  <Card key={exam.id} className="flex flex-col justify-between group hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 border-border/60">
+                    <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-xl font-bold break-all">{exam.name}</CardTitle>
+                        </div>
+                        <CardDescription className="line-clamp-2">{exam.description || "No description"}</CardDescription>
+                      </div>
+                      <div className="flex flex-col items-end gap-2 pl-2">
+                        <Badge
+                          variant={exam.status === "live" ? "default" : "secondary"}
+                          className={`text-xs font-medium ${
+                            exam.status === "live" ? "bg-red-500 text-white animate-pulse" :
+                            exam.status === "published" ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/30" :
+                            exam.status === "ended" ? "bg-gray-500/15 text-gray-600" :
+                            ""
+                          }`}
+                        >
+                          {exam.status === "live" && "🔴 "}
+                          {exam.status.charAt(0).toUpperCase() + exam.status.slice(1)}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="mt-4">
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4">
+                        <span>
+                          Created {new Date(exam.created_at).toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" })}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Users className="h-3.5 w-3.5" />
+                          {liveParticipantCounts[exam.id] ?? 0} students
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <Button
+                          className="flex-1 min-w-[100px] bg-emerald-600 hover:bg-emerald-700"
+                          onClick={() => navigate(`/live-exam/${user.id}/${exam.id}`)}
+                        >
+                          <FileText className="mr-2 h-4 w-4" />
+                          Edit
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleShareLiveExam(exam)}>
+                              <Share2 className="mr-2 h-4 w-4" />
+                              Share
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDuplicateLiveExam(exam)}
+                              disabled={duplicatingLiveId !== null}
+                            >
+                              <Copy className="mr-2 h-4 w-4" />
+                              {duplicatingLiveId === exam.id ? "Duplicating..." : "Duplicate"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteLiveExam(exam)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </main>
+
+      <ExamTypeDialog
+        open={showExamTypeDialog}
+        onOpenChange={setShowExamTypeDialog}
+        onSelectMock={() => setShowCreateDialog(true)}
+        onSelectLive={() => setShowCreateLiveDialog(true)}
+      />
 
       <CreateExamDialog
         open={showCreateDialog}
         onOpenChange={setShowCreateDialog}
         onExamCreated={handleExamCreated}
+      />
+
+      <CreateLiveExamDialog
+        open={showCreateLiveDialog}
+        onOpenChange={setShowCreateLiveDialog}
+        onExamCreated={handleLiveExamCreated}
       />
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

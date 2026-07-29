@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, BookOpen, Store, Search, ArrowLeft, Share2, MoreVertical } from "lucide-react";
+import { FileText, BookOpen, Store, Search, ArrowLeft, Share2, MoreVertical, Radio } from "lucide-react";
 import VerifiedBadge from "@/components/VerifiedBadge";
 import { getVerificationTier } from "@/lib/verification";
 import Navbar from "@/components/Navbar";
@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/components/ui/use-toast";
 import OnboardingModal from "@/components/OnboardingModal";
+import { fetchMyParticipatedLiveExams } from "@/services/liveExamService";
 
 type Exam = {
     id: string;
@@ -44,6 +45,9 @@ const Marketplace = () => {
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+    const [activeTab, setActiveTab] = useState<"mock" | "live">("mock");
+    const [liveExams, setLiveExams] = useState<any[]>([]);
+    const [loadingLive, setLoadingLive] = useState(false);
     const navigate = useNavigate();
 
     // Only show categories that actually have a published exam — no dead filter
@@ -70,7 +74,20 @@ const Marketplace = () => {
 
         checkProfile();
         fetchPublishedExams();
+        fetchLiveExamsData();
     }, []);
+
+    const fetchLiveExamsData = async () => {
+        setLoadingLive(true);
+        try {
+            const data = await fetchMyParticipatedLiveExams();
+            setLiveExams(data);
+        } catch (error) {
+            console.error("Error fetching live exams:", error);
+        } finally {
+            setLoadingLive(false);
+        }
+    };
 
     const fetchPublishedExams = async () => {
         setLoading(true);
@@ -189,7 +206,34 @@ const Marketplace = () => {
                     </div>
                 </div>
 
-                <div className="flex flex-col md:flex-row gap-3 mb-8">
+                <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit mb-6 border border-border/50">
+                    <button
+                        onClick={() => setActiveTab("mock")}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                            activeTab === "mock"
+                                ? "bg-background text-foreground shadow-sm border border-border/60"
+                                : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        <FileText className="h-4 w-4" />
+                        Mock Exams
+                    </button>
+                    <button
+                        onClick={() => setActiveTab("live")}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                            activeTab === "live"
+                                ? "bg-background text-foreground shadow-sm border border-border/60"
+                                : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        <Radio className="h-4 w-4" />
+                        My Live Exams
+                    </button>
+                </div>
+
+                {activeTab === "mock" && (
+                    <>
+                        <div className="flex flex-col md:flex-row gap-3 mb-8">
                     <div className="relative flex-1">
                         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
@@ -277,6 +321,69 @@ const Marketplace = () => {
                             </div>
                         ))}
                     </div>
+                )}
+                </>
+                )}
+
+                {activeTab === "live" && (
+                    <>
+                        {loadingLive ? (
+                            <div className="text-center py-12">
+                                <p className="text-muted-foreground">Loading live exams...</p>
+                            </div>
+                        ) : liveExams.length === 0 ? (
+                            <Card>
+                                <CardContent className="flex flex-col items-center justify-center py-12">
+                                    <Radio className="h-16 w-16 text-muted-foreground mb-4" />
+                                    <h3 className="text-lg font-semibold mb-2">No live exams found</h3>
+                                    <p className="text-muted-foreground mb-4">You haven't participated in any live exams yet.</p>
+                                </CardContent>
+                            </Card>
+                        ) : (
+                            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                                {liveExams.map((participant) => {
+                                    const exam = participant.live_exam;
+                                    if (!exam) return null;
+                                    return (
+                                        <div key={participant.id} className="group flex flex-col justify-between rounded-xl border border-border/60 bg-card hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden">
+                                            <div className="p-5">
+                                                <div className="flex items-start justify-between gap-2 mb-2">
+                                                    <div className="flex-1 min-w-0">
+                                                        <h3 className="text-base font-bold text-foreground break-words leading-tight mb-1">{exam.name}</h3>
+                                                        <Badge variant="secondary" className="text-[10px] font-medium">
+                                                            {exam.status === "live" ? "🔴 LIVE" : exam.status === "ended" ? "ENDED" : exam.status}
+                                                        </Badge>
+                                                    </div>
+                                                </div>
+                                                {exam.description && (
+                                                    <p className="text-sm text-muted-foreground line-clamp-2 mt-1 leading-relaxed">{exam.description}</p>
+                                                )}
+                                                
+                                                {/* Stats */}
+                                                <div className="mt-4 flex items-center justify-between text-sm">
+                                                    <div className="flex items-center gap-1.5 text-emerald-600">
+                                                        <span className="font-semibold">{participant.total_correct}</span>
+                                                        <span className="text-muted-foreground">correct</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 text-amber-600">
+                                                        <span className="font-semibold">Rank {participant.rank || "-"}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="p-5 pt-0 mt-auto">
+                                                <Button
+                                                    className="w-full bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all duration-200 hover:-translate-y-px"
+                                                    onClick={() => window.open(`/live/${exam.share_code}`, '_blank')}
+                                                >
+                                                    {exam.status === "ended" ? "View Results" : "Rejoin Live Exam"}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
                 )}
             </main>
         </div>

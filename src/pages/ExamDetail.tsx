@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,7 @@ import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronD
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
+import { mockExamJsonSource } from "@/components/jsonUploadSources";
 import type { ParseReport } from "@/services/jsonImportParser";
 import {
   upsertExamDefault,
@@ -3014,15 +3016,15 @@ export default function ExamDetail() {
                                         {hasPassageSection && passageSectionMatch && (
                                           <div className="border border-primary/15 rounded-xl p-4 bg-primary/[0.03]">
                                             <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-primary">Passage</Label>
-                                            <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: passageSectionMatch[1] }} />
+                                            <div className="text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(passageSectionMatch[1]) }} />
                                           </div>
                                         )}
                                         <div>
                                           <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question Text</Label>
                                           <div className="text-sm leading-relaxed p-3.5 bg-muted/40 border border-border/60 rounded-xl" dangerouslySetInnerHTML={{
-                                            __html: hasPassageSection && questionSectionMatch
+                                            __html: renderMathInHtml(hasPassageSection && questionSectionMatch
                                               ? questionSectionMatch[1]
-                                              : q.text
+                                              : q.text)
                                           }} />
                                         </div>
                                       </>
@@ -3045,7 +3047,7 @@ export default function ExamDetail() {
                                         {(Array.isArray(q.options) ? q.options : []).map((opt: string, optIdx: number) => (
                                           <div key={optIdx} className="flex items-center gap-2.5 p-2 pl-2.5 bg-muted/40 border border-border/50 rounded-lg">
                                             <span className="flex items-center justify-center h-6 w-6 rounded-md bg-card border border-border/70 font-bold text-[11px] text-muted-foreground shrink-0">{String.fromCharCode(65 + optIdx)}</span>
-                                            <span className="text-sm">{opt}</span>
+                                            <span className="text-sm" dangerouslySetInnerHTML={{ __html: renderMathInText(opt) }} />
                                           </div>
                                         ))}
                                       </div>
@@ -3141,21 +3143,24 @@ export default function ExamDetail() {
                                             {q.correct_answer.map((ans: string, ansIdx: number) => {
                                               const idx = Number(ans);
                                               const resolved = !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
-                                                ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
-                                                : ans;
+                                                ? `${String.fromCharCode(65 + idx)}. ${renderMathInText(q.options[idx] || "")}`
+                                                : renderMathInText(ans);
                                               return (
-                                                <div key={ansIdx} className="text-sm font-semibold text-success">{resolved}</div>
+                                                <div key={ansIdx} className="text-sm font-semibold text-success" dangerouslySetInnerHTML={{ __html: resolved }} />
                                               );
                                             })}
                                           </div>
                                         ) : (
-                                          <p className="text-sm font-semibold text-success">
-                                            {q.correct_answer !== null && q.correct_answer !== undefined && q.correct_answer !== ""
-                                              ? (() => { const idx = Number(q.correct_answer); return !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
-                                                ? `${String.fromCharCode(65 + idx)}. ${q.options[idx] || ""}`
-                                                : q.correct_answer; })()
-                                              : "Not specified"}
-                                          </p>
+                                          <p
+                                            className="text-sm font-semibold text-success"
+                                            dangerouslySetInnerHTML={{
+                                              __html: q.correct_answer !== null && q.correct_answer !== undefined && q.correct_answer !== ""
+                                                ? (() => { const idx = Number(q.correct_answer); return !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
+                                                  ? `${String.fromCharCode(65 + idx)}. ${renderMathInText(q.options[idx] || "")}`
+                                                  : renderMathInText(q.correct_answer); })()
+                                                : "Not specified"
+                                            }}
+                                          />
                                         )}
                                       </div>
                                     )}
@@ -3523,7 +3528,7 @@ export default function ExamDetail() {
                                     {idx + 1}
                                   </div>
                                   <div>
-                                    <p className="font-medium">{q.text || "Question with image"}</p>
+                                    <p className="font-medium" dangerouslySetInnerHTML={{ __html: renderMathInText(q.text || "Question with image") }} />
                                     <p className="text-xs text-muted-foreground capitalize">{q.answer_type}</p>
                                   </div>
                                 </div>
@@ -3768,6 +3773,7 @@ export default function ExamDetail() {
           supportedLanguages={supportedLanguages}
           primaryLanguage={primaryLanguage}
           docsUrl="/json-upload-guide"
+          dataSource={mockExamJsonSource}
           commitJson={commitJson}
         />
       )}

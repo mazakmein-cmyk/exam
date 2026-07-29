@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -651,7 +652,10 @@ export default function ExamReview() {
       >
         <span className="font-bold tabular-nums">{letter}</span>
         {text !== null && text !== "" && (
-          <span className="opacity-80 truncate max-w-[180px]">{text}</span>
+          <span
+            className="opacity-80 truncate max-w-[180px]"
+            dangerouslySetInnerHTML={{ __html: renderMathInText(text) }}
+          />
         )}
       </span>
     );
@@ -803,7 +807,7 @@ export default function ExamReview() {
               className={`flex items-center gap-3 p-3 rounded-md border ${bgClass} ${borderClass}`}
             >
               <span className="font-medium text-sm">{String.fromCharCode(65 + idx)})</span>
-              <span className="flex-1">{option}</span>
+              <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
               {icon}
               {isSelected && <span className="text-xs text-muted-foreground">(Your choice)</span>}
             </div>
@@ -1164,7 +1168,7 @@ export default function ExamReview() {
                                         {passageContent && (
                                           <div
                                             className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
-                                            dangerouslySetInnerHTML={{ __html: passageContent }}
+                                            dangerouslySetInnerHTML={{ __html: renderMathInHtml(passageContent) }}
                                           />
                                         )}
                                       </div>
@@ -1199,12 +1203,12 @@ export default function ExamReview() {
                                           <div
                                             className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                                             dangerouslySetInnerHTML={{
-                                              __html: questionContent
+                                              __html: renderMathInHtml(questionContent
                                                 .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                                                 .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                                                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                                                 .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                                                .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                                                .replace(/~~(.*?)~~/g, '<del>$1</del>'))
                                             }}
                                           />
                                         )}
@@ -1248,12 +1252,12 @@ export default function ExamReview() {
                                     <div
                                       className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
                                       dangerouslySetInnerHTML={{
-                                        __html: response.question.text
+                                        __html: renderMathInHtml(response.question.text
                                           .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                                           .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                                           .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                                           .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                                          .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                                          .replace(/~~(.*?)~~/g, '<del>$1</del>'))
                                       }}
                                     />
 

@@ -340,7 +340,7 @@ export default function MarksConfigPanel({ examId, onClose, initialQuestionId, i
   const [tab, setTab] = useState<Tab>(initialQuestionId ? "question" : "exam");
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
   const [questionsList, setQuestionsList] = useState<
-    { id: string; section_id: string; q_no: number; answer_type: string }[]
+    { id: string; section_id: string; q_no: number; answer_type: string; text: string }[]
   >([]);
   const [selectedSectionId, setSelectedSectionId] = useState<string>("");
   const [saving, setSaving] = useState(false);
@@ -351,6 +351,7 @@ export default function MarksConfigPanel({ examId, onClose, initialQuestionId, i
   });
   const [sectionDraft, setSectionDraft] = useState<ScoringConfig>({ ...DEFAULT_SCORING_CONFIG });
   const [expandedQuestions, setExpandedQuestions] = useState<Set<string>>(new Set(initialQuestionId ? [initialQuestionId] : []));
+  const [previewQuestionId, setPreviewQuestionId] = useState<string | null>(null);
 
   const sectionIds = useMemo(() => sections.map((s) => s.id), [sections]);
   const questionIds = useMemo(() => questionsList.map((q) => q.id), [questionsList]);
@@ -397,7 +398,7 @@ export default function MarksConfigPanel({ examId, onClose, initialQuestionId, i
       }
 
       const { data: qs } = await supabase
-        .from("parsed_questions").select("id, section_id, q_no, answer_type")
+        .from("parsed_questions").select("id, section_id, q_no, answer_type, text")
         .in("section_id", (secs || []).map((s) => s.id))
         .order("q_no", { ascending: true });
       if (qs) setQuestionsList(qs as any);
@@ -707,9 +708,30 @@ export default function MarksConfigPanel({ examId, onClose, initialQuestionId, i
                             custom
                           </span>
                         )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewQuestionId(prev => prev === q.id ? null : q.id);
+                          }}
+                          className={`inline-flex items-center justify-center w-5 h-5 rounded hover:bg-muted/60 transition-colors ${
+                            previewQuestionId === q.id ? "text-[#6C3EF4]" : "text-muted-foreground/50 hover:text-foreground"
+                          }`}
+                        >
+                          {previewQuestionId === q.id ? <Eye className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5 opacity-50" />}
+                        </button>
                       </div>
                       <MarksQuestionBadge config={resolved} size="sm" />
                     </div>
+
+                    {/* Preview Glimpse */}
+                    {previewQuestionId === q.id && (
+                      <div className="px-4 pb-2.5 pt-0">
+                        <div className="text-[11px] text-muted-foreground bg-muted/30 p-3 rounded-lg border border-border/40 line-clamp-3">
+                          {q.text || "No text available"}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Expanded */}
                     {isExpanded && (

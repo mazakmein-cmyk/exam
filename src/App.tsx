@@ -32,6 +32,9 @@ const JsonUploadGuide = lazy(() => import("./pages/JsonUploadGuide"));
 const ExamLandingPage = lazy(() => import("./pages/ExamLandingPage"));
 const Blog = lazy(() => import("./pages/Blog"));
 const BlogPost = lazy(() => import("./pages/BlogPost"));
+const LiveExamDetail = lazy(() => import("./pages/LiveExamDetail"));
+const LiveExamControl = lazy(() => import("./pages/LiveExamControl"));
+const LiveExamStudent = lazy(() => import("./pages/LiveExamStudent"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -85,6 +88,9 @@ const router = createBrowserRouter([
       { path: "/mock-test/:examSlug", element: <ExamLandingPage /> },
       { path: "/blog", element: <Blog /> },
       { path: "/blog/:slug", element: <BlogPost /> },
+      { path: "/live/:shareCode", element: <LiveExamStudent /> },
+      { path: "/live-exam/:creatorId/:liveExamId", element: <LiveExamDetail /> },
+      { path: "/live-exam/:creatorId/:liveExamId/control", element: <LiveExamControl /> },
       { path: "*", element: <NotFound /> },
     ],
   },

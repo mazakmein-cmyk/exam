@@ -118,6 +118,324 @@ export type Database = {
         }
         Relationships: []
       }
+      live_exams: {
+        Row: {
+          created_at: string
+          current_question_index: number
+          current_question_unlocked_at: string | null
+          description: string | null
+          ended_at: string | null
+          id: string
+          instruction: string | null
+          name: string
+          primary_language: string
+          share_code: string
+          started_at: string | null
+          status: string
+          supported_languages: string[]
+          total_questions: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_question_index?: number
+          current_question_unlocked_at?: string | null
+          description?: string | null
+          ended_at?: string | null
+          id?: string
+          instruction?: string | null
+          name: string
+          primary_language?: string
+          share_code?: string
+          started_at?: string | null
+          status?: string
+          supported_languages?: string[]
+          total_questions?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          current_question_index?: number
+          current_question_unlocked_at?: string | null
+          description?: string | null
+          ended_at?: string | null
+          id?: string
+          instruction?: string | null
+          name?: string
+          primary_language?: string
+          share_code?: string
+          started_at?: string | null
+          status?: string
+          supported_languages?: string[]
+          total_questions?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      live_participants: {
+        Row: {
+          display_name: string
+          id: string
+          is_active: boolean
+          joined_at: string
+          live_exam_id: string
+          rank: number | null
+          total_answered: number
+          total_correct: number
+          total_time_ms: number
+          user_id: string
+        }
+        Insert: {
+          display_name?: string
+          id?: string
+          is_active?: boolean
+          joined_at?: string
+          live_exam_id: string
+          rank?: number | null
+          total_answered?: number
+          total_correct?: number
+          total_time_ms?: number
+          user_id: string
+        }
+        Update: {
+          display_name?: string
+          id?: string
+          is_active?: boolean
+          joined_at?: string
+          live_exam_id?: string
+          rank?: number | null
+          total_answered?: number
+          total_correct?: number
+          total_time_ms?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_participants_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_question_analytics: {
+        Row: {
+          avg_time_correct_ms: number | null
+          computed_at: string
+          correct_count: number
+          fastest_time_ms: number | null
+          fastest_user_id: string | null
+          fastest_user_name: string | null
+          id: string
+          live_exam_id: string
+          live_question_id: string
+          option_distribution: Json | null
+          skipped_count: number
+          total_responses: number
+          wrong_count: number
+        }
+        Insert: {
+          avg_time_correct_ms?: number | null
+          computed_at?: string
+          correct_count?: number
+          fastest_time_ms?: number | null
+          fastest_user_id?: string | null
+          fastest_user_name?: string | null
+          id?: string
+          live_exam_id: string
+          live_question_id: string
+          option_distribution?: Json | null
+          skipped_count?: number
+          total_responses?: number
+          wrong_count?: number
+        }
+        Update: {
+          avg_time_correct_ms?: number | null
+          computed_at?: string
+          correct_count?: number
+          fastest_time_ms?: number | null
+          fastest_user_id?: string | null
+          fastest_user_name?: string | null
+          id?: string
+          live_exam_id?: string
+          live_question_id?: string
+          option_distribution?: Json | null
+          skipped_count?: number
+          total_responses?: number
+          wrong_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_question_analytics_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_question_analytics_live_question_id_fkey"
+            columns: ["live_question_id"]
+            isOneToOne: false
+            referencedRelation: "live_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_questions: {
+        Row: {
+          answer_type: string
+          correct_answer: Json | null
+          created_at: string
+          global_index: number
+          id: string
+          image_url: string | null
+          image_urls: string[] | null
+          live_section_id: string
+          options: Json | null
+          q_no: number
+          question_group_id: string | null
+          section_label: string | null
+          text: string
+          time_seconds: number
+        }
+        Insert: {
+          answer_type?: string
+          correct_answer?: Json | null
+          created_at?: string
+          global_index?: number
+          id?: string
+          image_url?: string | null
+          image_urls?: string[] | null
+          live_section_id: string
+          options?: Json | null
+          q_no: number
+          question_group_id?: string | null
+          section_label?: string | null
+          text: string
+          time_seconds?: number
+        }
+        Update: {
+          answer_type?: string
+          correct_answer?: Json | null
+          created_at?: string
+          global_index?: number
+          id?: string
+          image_url?: string | null
+          image_urls?: string[] | null
+          live_section_id?: string
+          options?: Json | null
+          q_no?: number
+          question_group_id?: string | null
+          section_label?: string | null
+          text?: string
+          time_seconds?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_questions_live_section_id_fkey"
+            columns: ["live_section_id"]
+            isOneToOne: false
+            referencedRelation: "live_sections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_responses: {
+        Row: {
+          id: string
+          is_correct: boolean | null
+          live_exam_id: string
+          live_question_id: string
+          question_ordinal: number
+          selected_answer: Json | null
+          submitted_at: string
+          time_taken_ms: number
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          is_correct?: boolean | null
+          live_exam_id: string
+          live_question_id: string
+          question_ordinal?: number
+          selected_answer?: Json | null
+          submitted_at?: string
+          time_taken_ms?: number
+          user_id: string
+        }
+        Update: {
+          id?: string
+          is_correct?: boolean | null
+          live_exam_id?: string
+          live_question_id?: string
+          question_ordinal?: number
+          selected_answer?: Json | null
+          submitted_at?: string
+          time_taken_ms?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_responses_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_responses_live_question_id_fkey"
+            columns: ["live_question_id"]
+            isOneToOne: false
+            referencedRelation: "live_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_sections: {
+        Row: {
+          created_at: string
+          id: string
+          language: string
+          live_exam_id: string
+          name: string
+          pdf_url: string | null
+          section_group_id: string | null
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          language?: string
+          live_exam_id: string
+          name: string
+          pdf_url?: string | null
+          section_group_id?: string | null
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          language?: string
+          live_exam_id?: string
+          name?: string
+          pdf_url?: string | null
+          section_group_id?: string | null
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_sections_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       parsed_questions: {
         Row: {
           answer_hint: string | null
@@ -345,10 +663,162 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      live_questions_student: {
+        Row: {
+          answer_type: string
+          created_at: string
+          global_index: number
+          id: string
+          image_url: string | null
+          image_urls: string[] | null
+          live_section_id: string
+          options: Json | null
+          q_no: number
+          question_group_id: string | null
+          section_label: string | null
+          text: string
+          time_seconds: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_questions_live_section_id_fkey"
+            columns: ["live_section_id"]
+            isOneToOne: false
+            referencedRelation: "live_sections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
-      [_ in never]: never
+      compute_live_question_analytics: {
+        Args: { p_live_exam_id: string; p_live_question_id: string }
+        Returns: {
+          avg_time_correct_ms: number | null
+          computed_at: string
+          correct_count: number
+          fastest_time_ms: number | null
+          fastest_user_id: string | null
+          fastest_user_name: string | null
+          id: string
+          live_exam_id: string
+          live_question_id: string
+          option_distribution: Json | null
+          skipped_count: number
+          total_responses: number
+          wrong_count: number
+        }
+      }
+      compute_live_rankings: {
+        Args: { p_live_exam_id: string }
+        Returns: undefined
+      }
+      end_live_session: {
+        Args: { p_live_exam_id: string }
+        Returns: {
+          created_at: string
+          current_question_index: number
+          current_question_unlocked_at: string | null
+          description: string | null
+          ended_at: string | null
+          id: string
+          instruction: string | null
+          name: string
+          primary_language: string
+          share_code: string
+          started_at: string | null
+          status: string
+          supported_languages: string[]
+          total_questions: number
+          updated_at: string
+          user_id: string
+        }
+      }
+      get_my_live_responses: {
+        Args: { p_live_exam_id: string }
+        Returns: {
+          id: string
+          is_correct: boolean | null
+          live_exam_id: string
+          live_question_id: string
+          question_ordinal: number
+          selected_answer: Json | null
+          submitted_at: string
+          time_taken_ms: number
+          user_id: string
+        }[]
+      }
+      get_revealed_live_answers: {
+        Args: { p_live_exam_id: string }
+        Returns: {
+          correct_answer: Json
+          live_question_id: string
+        }[]
+      }
+      grade_live_answer: {
+        Args: { p_correct: Json; p_selected: Json }
+        Returns: boolean
+      }
+      start_live_session: {
+        Args: { p_live_exam_id: string }
+        Returns: {
+          created_at: string
+          current_question_index: number
+          current_question_unlocked_at: string | null
+          description: string | null
+          ended_at: string | null
+          id: string
+          instruction: string | null
+          name: string
+          primary_language: string
+          share_code: string
+          started_at: string | null
+          status: string
+          supported_languages: string[]
+          total_questions: number
+          updated_at: string
+          user_id: string
+        }
+      }
+      submit_live_response: {
+        Args: {
+          p_live_exam_id: string
+          p_live_question_id: string
+          p_selected_answer: Json
+        }
+        Returns: {
+          id: string
+          is_correct: boolean | null
+          live_exam_id: string
+          live_question_id: string
+          question_ordinal: number
+          selected_answer: Json | null
+          submitted_at: string
+          time_taken_ms: number
+          user_id: string
+        }
+      }
+      unlock_next_live_question: {
+        Args: { p_live_exam_id: string }
+        Returns: {
+          created_at: string
+          current_question_index: number
+          current_question_unlocked_at: string | null
+          description: string | null
+          ended_at: string | null
+          id: string
+          instruction: string | null
+          name: string
+          primary_language: string
+          share_code: string
+          started_at: string | null
+          status: string
+          supported_languages: string[]
+          total_questions: number
+          updated_at: string
+          user_id: string
+        }
+      }
     }
     Enums: {
       [_ in never]: never

@@ -5,8 +5,9 @@
  *   1. Languages — one row per language with status + Upload button.
  *   2. Preview   — parse report + mismatch panel + Replace/Append + Confirm.
  *
- * The parent (ExamDetail) provides `commitJson` which does the DB writes.
- * This component owns its own data fetching for language status and section names.
+ * The parent provides `commitJson` which does the DB writes, and a `dataSource`
+ * adapter (see jsonUploadSources.ts) which owns every table-specific read/write
+ * so the same dialog serves both mock exams and live exams.
  */
 import { useEffect, useRef, useState, useMemo, useCallback, lazy, Suspense } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,6 +46,11 @@ import {
   type RepairCategory,
 } from "@/services/jsonImportParser";
 import { autoSnip, type SnipRequest } from "@/services/autoSnipper";
+import type {
+  JsonUploadDataSource,
+  LangStatus,
+  SectionMeta,
+} from "@/components/jsonUploadSources";
 
 const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
 
@@ -116,6 +122,8 @@ export type JsonUploadDialogProps = {
   supportedLanguages: string[];
   primaryLanguage: string;
   docsUrl?: string;
+  /** Table-specific reads/writes — mockExamJsonSource or liveExamJsonSource. */
+  dataSource: JsonUploadDataSource;
   commitJson: (
     report: ParseReport,
     mode: "replace" | "append",
@@ -124,14 +132,6 @@ export type JsonUploadDialogProps = {
   ) => Promise<CommitResult>;
 };
 
-type LangStatus = {
-  questionCount: number;
-  sectionCount: number;
-  submittedAttemptCount: number;
-};
-
-type SectionMeta = { id: string; name: string; sort_order: number };
-
 export default function JsonUploadDialog({
   open,
   onOpenChange,
@@ -139,6 +139,7 @@ export default function JsonUploadDialog({
   supportedLanguages,
   primaryLanguage,
   docsUrl,
+  dataSource,
   commitJson,
 }: JsonUploadDialogProps) {
   const { toast } = useToast();
@@ -186,46 +187,10 @@ export default function JsonUploadDialog({
   const loadStatus = useCallback(async () => {
     setLoadingStatus(true);
     try {
-      const { data: sectionsData, error: sectionsErr } = await supabase
-        .from("sections")
-        .select("id, name, language, sort_order")
-        .eq("exam_id", examId);
-
-      if (sectionsErr) throw sectionsErr;
-
-      const byLang: Record<string, SectionMeta[]> = {};
-      for (const lang of supportedLanguages) {
-        byLang[lang] = (sectionsData || [])
-          .filter((s: any) => s.language === lang)
-          .map((s: any) => ({ id: s.id as string, name: s.name as string, sort_order: (s.sort_order as number) ?? 0 }))
-          .sort((a, b) => a.sort_order - b.sort_order);
-      }
+      const byLang = await dataSource.loadSectionsByLang(examId, supportedLanguages);
       setSectionsByLang(byLang);
 
-      const nextStatus: Record<string, LangStatus> = {};
-      for (const lang of supportedLanguages) {
-        const sectionIds = byLang[lang]?.map((s) => s.id) ?? [];
-        if (sectionIds.length === 0) {
-          nextStatus[lang] = { questionCount: 0, sectionCount: 0, submittedAttemptCount: 0 };
-          continue;
-        }
-        const [qRes, aRes] = await Promise.all([
-          supabase
-            .from("parsed_questions")
-            .select("id", { count: "exact", head: true })
-            .in("section_id", sectionIds),
-          supabase
-            .from("attempts")
-            .select("id", { count: "exact", head: true })
-            .in("section_id", sectionIds)
-            .not("submitted_at", "is", null),
-        ]);
-        nextStatus[lang] = {
-          questionCount: qRes.count ?? 0,
-          sectionCount: sectionIds.length,
-          submittedAttemptCount: aRes.count ?? 0,
-        };
-      }
+      const nextStatus = await dataSource.loadLangStatus(examId, supportedLanguages, byLang);
       setLangStatus(nextStatus);
     } catch (err: any) {
       console.error("JsonUploadDialog loadStatus error:", err);
@@ -237,12 +202,12 @@ export default function JsonUploadDialog({
     } finally {
       setLoadingStatus(false);
     }
-  }, [examId, supportedLanguages, toast]);
+  }, [dataSource, examId, supportedLanguages, toast]);
 
   /**
-   * Persist an inline section-name rename to the `sections` row, then patch
-   * local state so the chips + upload matching reflect the new name without a
-   * full reload. Returns true when the edit closes (saved or a no-op).
+   * Persist an inline section-name rename, then patch local state so the chips
+   * + upload matching reflect the new name without a full reload. Returns true
+   * when the edit closes (saved or a no-op).
    */
   const handleRenameSection = useCallback(
     async (lang: string, sectionId: string, rawName: string): Promise<boolean> => {
@@ -274,11 +239,7 @@ export default function JsonUploadDialog({
 
       setSavingSectionId(sectionId);
       try {
-        const { error } = await supabase
-          .from("sections")
-          .update({ name })
-          .eq("id", sectionId);
-        if (error) throw error;
+        await dataSource.renameSection(sectionId, name);
 
         setSectionsByLang((prev) => ({
           ...prev,
@@ -297,7 +258,7 @@ export default function JsonUploadDialog({
         setSavingSectionId(null);
       }
     },
-    [sectionsByLang, toast]
+    [dataSource, sectionsByLang, toast]
   );
 
   useEffect(() => {
@@ -537,10 +498,12 @@ export default function JsonUploadDialog({
           if (!user) throw new Error("Not signed in.");
           const pdfPath = `${user.id}/${examId}/json-pdf-${selectedLang}-${Date.now()}.pdf`;
           const { error: pdfErr } = await supabase.storage
-            .from("exam-pdfs")
+            .from(dataSource.storageBucket)
             .upload(pdfPath, pdfFile, { upsert: true, contentType: "application/pdf" });
           if (pdfErr) throw pdfErr;
-          const { data: pub } = supabase.storage.from("exam-pdfs").getPublicUrl(pdfPath);
+          const { data: pub } = supabase.storage
+            .from(dataSource.storageBucket)
+            .getPublicUrl(pdfPath);
           uploadedPdfUrl = pub.publicUrl;
         } catch (err: any) {
           toast({
@@ -552,10 +515,10 @@ export default function JsonUploadDialog({
         }
       }
 
-      // Step 2: Upload all snip blobs to the same `exam-pdfs` bucket the rest
-      // of the app uses for PDFs and manual passage images. Path starts with
-      // user.id so the bucket's `auth.uid()::text = foldername(name)[1]` RLS
-      // policy is satisfied — same pattern as
+      // Step 2: Upload all snip blobs to the same bucket the rest of the app
+      // uses for PDFs and manual passage images. Path starts with user.id so
+      // the bucket's `auth.uid()::text = foldername(name)[1]` RLS policy is
+      // satisfied — same pattern as
       // [ExamDetail.tsx:2226](src/pages/ExamDetail.tsx#L2226) and
       // [ManualFixEditor.tsx:150](src/pages/ManualFixEditor.tsx#L150).
       const snipUrls = new Map<string, string>();
@@ -571,11 +534,11 @@ export default function JsonUploadDialog({
             const safeKey = key.replace(/[^A-Za-z0-9_-]/g, "_");
             const snipPath = `${user.id}/${examId}/auto-snip-${safeKey}-${Date.now()}.png`;
             const { error: snipErr } = await supabase.storage
-              .from("exam-pdfs")
+              .from(dataSource.storageBucket)
               .upload(snipPath, val.blob, { upsert: true, contentType: "image/png" });
             if (snipErr) throw snipErr;
             const { data: pub } = supabase.storage
-              .from("exam-pdfs")
+              .from(dataSource.storageBucket)
               .getPublicUrl(snipPath);
             snipUrls.set(key, pub.publicUrl);
           }
@@ -659,7 +622,7 @@ export default function JsonUploadDialog({
   const existingQs = statusForLang?.questionCount ?? 0;
   const replaceBlockedReason =
     (statusForLang?.submittedAttemptCount ?? 0) > 0
-      ? `Cannot Replace — ${statusForLang!.submittedAttemptCount} student submission${statusForLang!.submittedAttemptCount > 1 ? "s" : ""} exist in this language. Use Append.`
+      ? dataSource.replaceBlockedReason(statusForLang!.submittedAttemptCount)
       : null;
 
   // Are images required and still pending? (Have regions, not skipped, but no PDF or no snips yet)
@@ -754,6 +717,7 @@ export default function JsonUploadDialog({
             onResnipRequest={setResnipForKey}
             snipStartTime={snipStartTimeRef.current}
             nowMs={nowMs}
+            showMarks={dataSource.showMarks}
           />
         ) : null}
 
@@ -1154,6 +1118,7 @@ function PreviewView({
   onResnipRequest,
   snipStartTime,
   nowMs,
+  showMarks,
 }: {
   report: ParseReport;
   mode: "replace" | "append";
@@ -1184,6 +1149,7 @@ function PreviewView({
   onResnipRequest: (key: string) => void;
   snipStartTime: number | null;
   nowMs: number;
+  showMarks: boolean;
 }) {
   const isSecondary = !report.isPrimary;
   const hasMismatch = report.unmatchedSections.length > 0;
@@ -1260,12 +1226,12 @@ function PreviewView({
               {totalSkipped} skipped
             </Badge>
           )}
-          {report.marksConfig?.exam_default && (
+          {showMarks && report.marksConfig?.exam_default && (
             <Badge variant="secondary" className="bg-blue-100 text-blue-800">
               Marks: yes
             </Badge>
           )}
-          {report.marksIgnoredReason && (
+          {showMarks && report.marksIgnoredReason && (
             <Badge variant="secondary" className="bg-slate-100 text-slate-700">
               Marks: ignored (secondary)
             </Badge>
@@ -1364,13 +1330,15 @@ function PreviewView({
         {/* Secondary banner */}
         {isSecondary && (
           <div className="space-y-2">
-            <div className="flex items-start gap-2 rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>
-                Marks config in this JSON will be ignored — marks are managed on the{" "}
-                <strong>{langLabel(primaryLanguage)}</strong> (primary) language only.
-              </span>
-            </div>
+            {showMarks && (
+              <div className="flex items-start gap-2 rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700">
+                <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  Marks config in this JSON will be ignored — marks are managed on the{" "}
+                  <strong>{langLabel(primaryLanguage)}</strong> (primary) language only.
+                </span>
+              </div>
+            )}
             <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
               <Info className="h-4 w-4 shrink-0 mt-0.5" />
               <span>

@@ -52,7 +52,7 @@ export async function getExamScoringDefault(
   if (error || !data) return null;
 
   return {
-    ...rowToConfig(data as Record<string, unknown>),
+    ...rowToConfig(data as unknown as Record<string, unknown>),
     show_marks_in_simulator: (data as any).show_marks_in_simulator ?? true,
   };
 }
@@ -91,7 +91,7 @@ export async function getSectionScoringDefaults(
 
   if (error || !data) return map;
 
-  for (const row of data as Record<string, unknown>[]) {
+  for (const row of data as unknown as Record<string, unknown>[]) {
     map.set(row.section_id as string, rowToConfig(row));
   }
   return map;
@@ -130,7 +130,7 @@ export async function getQuestionScoringConfigs(
 
     if (error) continue;
     if (data) {
-      for (const row of data as Record<string, unknown>[]) {
+      for (const row of data as unknown as Record<string, unknown>[]) {
         map.set(row.question_id as string, rowToConfig(row));
       }
     }
@@ -250,7 +250,7 @@ export async function getAttemptMarksLog(
 
     if (error) continue;
     if (data) {
-      for (const row of data as { question_id: string; marks_awarded: number }[]) {
+      for (const row of data as unknown as { question_id: string; marks_awarded: number }[]) {
         // If same question appears in multiple attempts (multi-section session),
         // sum them (though typically it's 1:1 question:attempt)
         const existing = map.get(row.question_id) ?? 0;

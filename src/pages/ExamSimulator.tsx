@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu, Info } from "lucide-react";
@@ -655,7 +656,7 @@ const ExamSimulator = () => {
                       }
                     }}
                   />
-                  <span className="flex-1 font-normal">{option}</span>
+                  <span className="flex-1 font-normal" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
                 </label>
               );
             })}
@@ -672,7 +673,7 @@ const ExamSimulator = () => {
           {currentQuestion.options?.map((option: any, idx: number) => (
             <label key={idx} htmlFor={`option-${idx}`} className="flex items-center space-x-2 border p-3 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
               <RadioGroupItem value={String(idx)} id={`option-${idx}`} />
-              <span className="flex-1 font-normal">{option}</span>
+              <span className="flex-1 font-normal" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
             </label>
           ))}
         </RadioGroup>
@@ -930,7 +931,7 @@ const ExamSimulator = () => {
                           {passageContent && (
                             <div
                               className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
-                              dangerouslySetInnerHTML={{ __html: passageContent }}
+                              dangerouslySetInnerHTML={{ __html: renderMathInHtml(passageContent) }}
                             />
                           )}
                         </div>
@@ -965,12 +966,12 @@ const ExamSimulator = () => {
                             <div
                               className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                               dangerouslySetInnerHTML={{
-                                __html: questionContent
+                                __html: renderMathInHtml(questionContent
                                   .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                                   .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                                   .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                                   .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                                  .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                                  .replace(/~~(.*?)~~/g, '<del>$1</del>'))
                               }}
                             />
                           )}
@@ -1011,12 +1012,12 @@ const ExamSimulator = () => {
                         <div
                           className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                           dangerouslySetInnerHTML={{
-                            __html: currentQuestion.text
+                            __html: renderMathInHtml(currentQuestion.text
                               .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                               .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                               .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                               .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                              .replace(/~~(.*?)~~/g, '<del>$1</del>')
+                              .replace(/~~(.*?)~~/g, '<del>$1</del>'))
                           }}
                         />
                       )}

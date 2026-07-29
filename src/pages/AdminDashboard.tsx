@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -1470,7 +1471,7 @@ const AdminDashboard = () => {
                                                             {/* Question Text (HTML or Plain) */}
                                                             <div
                                                                 className="prose prose-sm max-w-none [&>img]:max-w-full [&>img]:h-auto [&>img]:rounded-lg"
-                                                                dangerouslySetInnerHTML={{ __html: q.question_text || "" }}
+                                                                dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.question_text || "") }}
                                                             />
                                                             {(!q.question_text && !q.image_url && (!q.image_urls || q.image_urls.length === 0)) && (
                                                                 <p className="text-gray-400 italic">No text or image content.</p>
@@ -1487,7 +1488,7 @@ const AdminDashboard = () => {
                                                                             }`}
                                                                     >
                                                                         <span className="font-semibold mr-2">{String.fromCharCode(65 + idx)}.</span>
-                                                                        {opt}
+                                                                        <span dangerouslySetInnerHTML={{ __html: renderMathInText(opt) }} />
                                                                         {(q.correct_answer === String.fromCharCode(65 + idx) || q.correct_answer === opt) && (
                                                                             <span className="ml-2 text-xs font-bold text-green-600">(Correct)</span>
                                                                         )}

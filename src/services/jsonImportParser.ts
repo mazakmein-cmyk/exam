@@ -40,6 +40,8 @@ export type NormalisedQuestion = {
   correct_answer: string | string[] | null;
   marks_config?: Partial<ScoringConfig>;
   imageRegion?: NormalisedImageRegion;
+  /** Live exams only: per-question countdown in seconds (5–600). Mock ignores it. */
+  timeSeconds?: number;
 };
 
 export type NormalisedImageRegion = {
@@ -938,6 +940,19 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
   const rawQNo = Number(raw.q_no);
   const q_no = Number.isInteger(rawQNo) && rawQNo > 0 ? rawQNo : index + 1;
 
+  // Optional per-question timer for live exams; clamped to the editor's 5–600s
+  // range. Mock exams ignore this field entirely.
+  let timeSeconds: number | undefined;
+  const rawTime = raw.time_seconds ?? raw.timeSeconds;
+  if (rawTime !== undefined) {
+    const t = Number(rawTime);
+    if (!Number.isFinite(t) || t <= 0) {
+      warnings.push(`question #${index + 1}: time_seconds "${rawTime}" is not a positive number — ignored.`);
+    } else {
+      timeSeconds = Math.min(600, Math.max(5, Math.round(t)));
+    }
+  }
+
   // If passage is present, wrap text into the manual-flow HTML contract.
   const finalText =
     passageText && passageText.length > 0
@@ -955,6 +970,7 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
       correct_answer,
       marks_config,
       imageRegion,
+      timeSeconds,
     },
   };
 }

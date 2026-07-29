@@ -1,6 +1,7 @@
 import { useEffect, useState, Fragment, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1563,7 +1564,7 @@ export default function Analytics() {
                     )}
                     <div
                       className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
-                      dangerouslySetInnerHTML={{ __html: question.text }}
+                      dangerouslySetInnerHTML={{ __html: renderMathInHtml(question.text) }}
                     />
 
                     {question.options && (
@@ -1589,7 +1590,7 @@ export default function Analytics() {
                               className={`flex items-center gap-3 p-3 rounded-md border ${isCorrect ? "bg-green-50 border-green-500 dark:bg-green-950" : "bg-background border-border"}`}
                             >
                               <span className="font-medium text-sm">{String.fromCharCode(65 + oIdx)})</span>
-                              <span className="flex-1">{option}</span>
+                              <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
                               {isCorrect && <CheckCircle2 className="w-4 h-4 text-green-500" />}
                             </div>
                           );
@@ -1599,13 +1600,16 @@ export default function Analytics() {
 
                     <div className="bg-muted p-3 rounded-md mt-4">
                       <span className="font-semibold">Correct Answer: </span>
-                      <span className="text-green-600 font-medium">
-                        {Array.isArray(question.correctAnswer)
-                          ? question.correctAnswer.join(", ")
-                          : (typeof question.correctAnswer === 'object'
-                            ? (question.correctAnswer.answer || JSON.stringify(question.correctAnswer))
-                            : String(question.correctAnswer))}
-                      </span>
+                      <span
+                        className="text-green-600 font-medium"
+                        dangerouslySetInnerHTML={{
+                          __html: renderMathInText(Array.isArray(question.correctAnswer)
+                            ? question.correctAnswer.join(", ")
+                            : (typeof question.correctAnswer === 'object'
+                              ? (question.correctAnswer.answer || JSON.stringify(question.correctAnswer))
+                              : String(question.correctAnswer)))
+                        }}
+                      />
                     </div>
                   </div>
                 ))}
@@ -1649,7 +1653,7 @@ export default function Analytics() {
                 )}
                 <div
                   className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
-                  dangerouslySetInnerHTML={{ __html: selectedQuestion.text }}
+                  dangerouslySetInnerHTML={{ __html: renderMathInHtml(selectedQuestion.text) }}
                 />
 
                 {selectedQuestion.options && (
@@ -1680,7 +1684,7 @@ export default function Analytics() {
                             }`}
                         >
                           <span className="font-medium text-sm">{String.fromCharCode(65 + idx)})</span>
-                          <span className="flex-1">{option}</span>
+                          <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
                           {isCorrect && <CheckCircle2 className="w-4 h-4 text-green-500" />}
                           {!isCorrect && selectedQuestion.mostCommonWrong && normalize(selectedQuestion.mostCommonWrong) === normalize(option) && (
                             <Badge variant="destructive" className="text-[10px] h-5 px-1.5 ml-2 whitespace-nowrap">

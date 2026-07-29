@@ -38,6 +38,9 @@ const StudentAuth = () => {
   const [searchParams] = useSearchParams();
   const defaultTab = searchParams.get("mode") === "signup" ? "signup" : "signin";
   const isExamSubmit = searchParams.get("trigger") === "exam_submit";
+  // Same-origin relative paths only ("/x" but not "//host") — guards against open redirects.
+  const rawReturnTo = searchParams.get("returnTo");
+  const returnTo = rawReturnTo && rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//") ? rawReturnTo : null;
   const [showExitDialog, setShowExitDialog] = useState(false);
 
   useEffect(() => {
@@ -45,7 +48,7 @@ const StudentAuth = () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         if (session.user.user_metadata?.user_type === 'student' && !isExamSubmit) {
-          navigate("/marketplace");
+          navigate(returnTo || "/marketplace");
         }
       }
     };
@@ -55,12 +58,12 @@ const StudentAuth = () => {
       // routes to the dedicated /reset-password page.
       if (event === "SIGNED_IN" && session) {
         if (session.user.user_metadata?.user_type === 'student' && !isExamSubmit) {
-          navigate("/marketplace");
+          navigate(returnTo || "/marketplace");
         }
       }
     });
     return () => subscription.unsubscribe();
-  }, [navigate, isExamSubmit]);
+  }, [navigate, isExamSubmit, returnTo]);
 
   useEffect(() => {
     if (!isExamSubmit) return;
@@ -91,7 +94,7 @@ const StudentAuth = () => {
     }
     const { data, error } = await supabase.auth.signUp({
       email, password,
-      options: { emailRedirectTo: `${window.location.origin}/marketplace`, data: { user_type: "student" } },
+      options: { emailRedirectTo: `${window.location.origin}${returnTo || "/marketplace"}`, data: { user_type: "student" } },
     });
     if (error) {
       if (error.message.includes("already registered") || error.message.includes("User already exists")) {
@@ -104,7 +107,7 @@ const StudentAuth = () => {
       if (!signInError && signInData.user) {
         toast({ title: "Account already exists", description: "Please sign in to your account." });
       } else if (signInError && signInError.message.includes("Email not confirmed")) {
-        const { error: resendError } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/marketplace` } });
+        const { error: resendError } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}${returnTo || "/marketplace"}` } });
         if (resendError) {
           toast({ title: "Account already exists", description: "Please sign in instead." });
         } else {
@@ -189,7 +192,8 @@ const StudentAuth = () => {
     if (singleSubmissionStr) {
       try { pendingSubmissions.push(JSON.parse(singleSubmissionStr)); } catch (e) { console.error("Error parsing single submission", e); }
     }
-    if (pendingSubmissions.length === 0) { navigate("/marketplace"); return; }
+    // No pending mock-exam work: honor returnTo (e.g. back to a live exam) if present.
+    if (pendingSubmissions.length === 0) { navigate(returnTo || "/marketplace"); return; }
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate("/marketplace"); return; }
