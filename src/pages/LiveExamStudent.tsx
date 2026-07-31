@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import confetti from "canvas-confetti";
 import { supabase } from "@/integrations/supabase/client";
-import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1053,6 +1053,11 @@ export default function LiveExamStudent() {
                     <Badge variant="outline" className="text-xs font-bold border-emerald-500/30 text-emerald-700 bg-emerald-500/10">
                       Q{currentQuestionIndex + 1} of {exam.total_questions}
                     </Badge>
+                    {currentQuestion?.live_section_id && (
+                      <Badge variant="secondary" className="text-xs font-medium bg-muted text-muted-foreground">
+                        {sections.find(s => s.id === currentQuestion.live_section_id)?.name}
+                      </Badge>
+                    )}
                   </div>
                   {isTimerActive && (
                     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-base font-bold ${
@@ -1068,7 +1073,69 @@ export default function LiveExamStudent() {
                 </div>
 
                 <CardContent className="p-6 space-y-6">
-                  <div className="text-base leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(currentQuestion.text) }} />
+                  {(() => {
+                    // Parse passage content from question text
+                    const questionText = currentQuestion?.text || "";
+
+                    // Check if this is a passage-based question
+                    const hasPassageSection = questionText.includes('class="passage-section"');
+
+                    // Extract passage image - handle both src before class and class before src
+                    const passageImageMatch = questionText.match(/<img[^>]*src="([^"]*)"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/) ||
+                      questionText.match(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*src="([^"]*)"[^>]*>/);
+
+                    if (hasPassageSection) {
+                      // Extract content between <div class="passage-section"> and </div><div class="question-section">
+                      const passageSectionMatch = questionText.match(/<div class="passage-section"[^>]*>([\s\S]*?)<\/div><div class="question-section"/);
+                      let passageContent = passageSectionMatch ? passageSectionMatch[1] : "";
+
+                      // Remove the passage image from passageContent (we'll render it separately)
+                      passageContent = passageContent.replace(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "")
+                        .replace(/<img[^>]*src="[^"]*"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "").trim();
+                      const passageImageUrl = passageImageMatch ? passageImageMatch[1] : null;
+
+                      // Extract question content from <div class="question-section">...</div>
+                      const questionSectionMatch = questionText.match(/<div class="question-section"[^>]*>([\s\S]*?)<\/div>$/);
+                      const questionContent = questionSectionMatch ? questionSectionMatch[1].trim() : "";
+
+                      return (
+                        <div className="flex flex-col lg:flex-row gap-6">
+                          {/* Left: Passage Section */}
+                          <div className="lg:w-1/2 space-y-4 border-r-0 lg:border-r lg:pr-6">
+                            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Passage</h3>
+                            {passageImageUrl && (
+                              <div className="border rounded-lg p-4 bg-slate-50 dark:bg-slate-900/50 flex justify-center">
+                                <img
+                                  src={passageImageUrl}
+                                  alt="Passage"
+                                  className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                                />
+                              </div>
+                            )}
+                            {passageContent && (
+                              <div
+                                className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
+                                dangerouslySetInnerHTML={{ __html: renderMathInHtml(passageContent) }}
+                              />
+                            )}
+                          </div>
+                          {/* Right: Question Section */}
+                          <div className="lg:w-1/2 space-y-4">
+                            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Question</h3>
+                            <div
+                              className="text-base leading-relaxed"
+                              dangerouslySetInnerHTML={{ __html: renderMathInHtml(questionContent) }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Standard question — render as before
+                    return (
+                      <div className="text-base leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(questionText) }} />
+                    );
+                  })()}
 
                   {currentQuestion.options && Array.isArray(currentQuestion.options) && (
                     <div className="space-y-3">
@@ -1118,7 +1185,16 @@ export default function LiveExamStudent() {
                             }`}>
                               {String.fromCharCode(65 + i)}
                             </span>
-                            <span className="flex-1 text-sm" dangerouslySetInnerHTML={{ __html: renderMathInText(opt) }} />
+                            <div className="flex-1 text-sm min-w-0">
+                              <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(opt) }} />
+                              {Array.isArray(currentQuestion.option_image_urls) && currentQuestion.option_image_urls[i] && (
+                                <img
+                                  src={currentQuestion.option_image_urls[i]!}
+                                  alt={`Option ${String.fromCharCode(65 + i)}`}
+                                  className="max-h-32 max-w-full rounded-md border border-border/60 mt-1"
+                                />
+                              )}
+                            </div>
 
                             {/* Analytics distribution */}
                             {isLocked && currentAnalytics?.option_distribution && (
@@ -1211,126 +1287,187 @@ export default function LiveExamStudent() {
             {previousQuestions.length > 0 && (
               <div className="space-y-4">
                 <h3 className="font-semibold px-1">Past Questions</h3>
-                <div className="space-y-3">
-                  {previousQuestions.map((q, idx) => {
-                    const qAnalytics = analytics.get(idx);
-                    const myRes = responses.get(idx);
-                    const isExpanded = expandedPrevQuestion === q.id;
-                    const revealed = revealedAnswers.has(q.id);
-                    const correctness = getCorrectness(myRes, q);
-                    const mp = qAnalytics ? mostPickedOption(qAnalytics) : null;
+                <div className="space-y-6">
+                  {(sections.length > 0 ? sections : [{ id: 'none', name: 'Questions' } as any]).map(section => {
+                    const sectionPrevQs = sections.length > 0
+                      ? previousQuestions.filter(q => q.live_section_id === section.id)
+                      : previousQuestions;
+
+                    if (sectionPrevQs.length === 0) return null;
 
                     return (
-                      <div key={q.id} id={`live-prev-q-${q.id}`} className="border border-border/60 bg-card rounded-xl overflow-hidden">
-                        <button
-                          onClick={() => setExpandedPrevQuestion(isExpanded ? null : q.id)}
-                          className="w-full flex items-center justify-between p-4 hover:bg-muted/30 transition-colors text-left"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
-                              myRes
-                                ? correctness === true
-                                  ? "bg-emerald-500/10 text-emerald-600"
-                                  : correctness === false
-                                    ? "bg-red-500/10 text-red-600"
-                                    : "bg-emerald-500/10 text-emerald-600"
-                                : "bg-gray-500/10 text-gray-500"
-                            }`}>
-                              Q{idx + 1}
-                            </div>
-                            <span className="text-sm truncate max-w-[300px]">{q.text.replace(/<[^>]*>/g, '').substring(0, 50)}</span>
-                          </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            {!myRes ? (
-                              <Badge variant="outline" className="text-[10px]">
-                                {idx < joinIndexRef.current ? "Missed" : "Skipped"}
-                              </Badge>
-                            ) : correctness === true ? (
-                              <Badge className="bg-emerald-500/15 text-emerald-700 text-[10px] border-none hover:bg-emerald-500/15">+1</Badge>
-                            ) : correctness === false ? (
-                              <Badge className="bg-red-500/15 text-red-700 text-[10px] border-none hover:bg-red-500/15">0</Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-[10px]">Pending</Badge>
-                            )}
-                            {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-                          </div>
-                        </button>
-
-                        {isExpanded && (
-                          <div className="px-4 pb-4 pt-2 border-t border-border/40">
-                            <div className="text-sm mb-4" dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.text) }} />
-
-                            {q.options && Array.isArray(q.options) && (
-                              <div className="space-y-2 mb-4">
-                                {q.options.map((opt: string, i: number) => {
-                                  // No correctness styling until the answer is revealed
-                                  const optCorrect = revealed && isAnswerCorrect(i, revealedAnswers.get(q.id));
-                                  const wasSelected = myRes ? isOptionPicked(myRes.selected_answer, i) : false;
-
-                                  return (
-                                    <div key={i} className={`flex items-center gap-3 p-2 rounded-lg text-sm border ${
-                                      !revealed
-                                        ? wasSelected
-                                          ? "border-emerald-500 bg-emerald-500/5"
-                                          : "border-transparent bg-muted/30 opacity-60"
-                                        : optCorrect && wasSelected ? "border-emerald-500 bg-emerald-500/10 text-emerald-700" :
-                                          optCorrect && !wasSelected ? "border-emerald-500 border-dashed bg-emerald-500/5 text-emerald-700" :
-                                          !optCorrect && wasSelected ? "border-red-500 bg-red-500/10 text-red-700" :
-                                          "border-transparent bg-muted/30 opacity-60"
-                                    }`}>
-                                      <span className="font-mono font-bold text-xs opacity-70 w-4">{String.fromCharCode(65 + i)}</span>
-                                      <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(opt) }} />
-                                      {optCorrect && <Check className="h-4 w-4" />}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            {/* Numeric / text answers (no options to render) */}
-                            {!q.options && (q.answer_type === "numeric" || q.answer_type === "text") && (
-                              <div className="space-y-2 mb-4 text-sm">
-                                {myRes && (
-                                  <div className="p-2 rounded-lg border border-border/60 bg-muted/30">
-                                    <span className="text-muted-foreground">Your answer: </span>
-                                    <span className="font-semibold">{String(myRes.selected_answer ?? "—")}</span>
-                                  </div>
-                                )}
-                                {revealed && (
-                                  <div className="p-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-700">
-                                    <span className="opacity-80">Correct answer: </span>
-                                    <span className="font-semibold">{String(revealedAnswers.get(q.id) ?? "—")}</span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Analytics Mini-View */}
-                            {(qAnalytics || myRes) && (
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground bg-muted/30 p-2 rounded-lg">
-                                {qAnalytics && (
-                                  <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {qAnalytics.total_responses} responses</span>
-                                )}
-                                {qAnalytics && (
-                                  <span className="flex items-center gap-1 text-emerald-600"><Check className="h-3 w-3" /> {Math.round((qAnalytics.correct_count / (qAnalytics.total_responses || 1)) * 100)}% correct</span>
-                                )}
-                                {myRes && (
-                                  <span className="flex items-center gap-1">
-                                    <Clock className="h-3 w-3" />
-                                    You: {(myRes.time_taken_ms / 1000).toFixed(1)}s
-                                    {qAnalytics?.avg_time_correct_ms != null && (
-                                      <> · Avg correct: {(qAnalytics.avg_time_correct_ms / 1000).toFixed(1)}s</>
-                                    )}
-                                  </span>
-                                )}
-                                {mp && <span>Most picked: {mp.label} ({mp.pct}%)</span>}
-                                {qAnalytics?.fastest_user_name && (
-                                  <span className="flex items-center gap-1 text-amber-600"><Zap className="h-3 w-3" /> Fastest: {qAnalytics.fastest_user_name}</span>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                      <div key={section.id} className="space-y-3">
+                        {sections.length > 0 && (
+                          <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground px-1">{section.name}</h4>
                         )}
+                        <div className="space-y-3">
+                          {sectionPrevQs.map((q) => {
+                            const idx = questions.findIndex((allQ) => allQ.id === q.id);
+                            const qAnalytics = analytics.get(idx);
+                            const myRes = responses.get(idx);
+                            const isExpanded = expandedPrevQuestion === q.id;
+                            const revealed = revealedAnswers.has(q.id);
+                            const correctness = getCorrectness(myRes, q);
+                            const mp = qAnalytics ? mostPickedOption(qAnalytics) : null;
+
+                            return (
+                              <div key={q.id} id={`live-prev-q-${q.id}`} className="border border-border/60 bg-card rounded-xl overflow-hidden">
+                                <button
+                                  onClick={() => setExpandedPrevQuestion(isExpanded ? null : q.id)}
+                                  className="w-full flex items-center justify-between p-4 hover:bg-muted/30 transition-colors text-left"
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                                      myRes
+                                        ? correctness === true
+                                          ? "bg-emerald-500/10 text-emerald-600"
+                                          : correctness === false
+                                            ? "bg-red-500/10 text-red-600"
+                                            : "bg-emerald-500/10 text-emerald-600"
+                                        : "bg-gray-500/10 text-gray-500"
+                                    }`}>
+                                      Q{idx + 1}
+                                    </div>
+                                    <span className="text-sm truncate max-w-[300px]">{q.text.replace(/<[^>]*>/g, '').substring(0, 50)}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3 shrink-0">
+                                    {!myRes ? (
+                                      <Badge variant="outline" className="text-[10px]">
+                                        {idx < joinIndexRef.current ? "Missed" : "Skipped"}
+                                      </Badge>
+                                    ) : correctness === true ? (
+                                      <Badge className="bg-emerald-500/15 text-emerald-700 text-[10px] border-none hover:bg-emerald-500/15">+1</Badge>
+                                    ) : correctness === false ? (
+                                      <Badge className="bg-red-500/15 text-red-700 text-[10px] border-none hover:bg-red-500/15">0</Badge>
+                                    ) : (
+                                      <Badge variant="secondary" className="text-[10px]">Pending</Badge>
+                                    )}
+                                    {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                                  </div>
+                                </button>
+
+                                {isExpanded && (
+                                  <div className="px-4 pb-4 pt-2 border-t border-border/40">
+                                    {(() => {
+                                      const qText = q.text || "";
+                                      const hasPassage = qText.includes('class="passage-section"');
+                                      if (hasPassage) {
+                                        const pMatch = qText.match(/<div class="passage-section"[^>]*>([\s\S]*?)<\/div><div class="question-section"/);
+                                        let pContent = pMatch ? pMatch[1] : "";
+                                        const pImgMatch = pContent.match(/<img[^>]*src="([^"]*)"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/) ||
+                                          pContent.match(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*src="([^"]*)"[^>]*>/);
+                                        pContent = pContent.replace(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "")
+                                          .replace(/<img[^>]*src="[^"]*"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "").trim();
+                                        const pImgUrl = pImgMatch ? pImgMatch[1] : null;
+                                        const qMatch = qText.match(/<div class="question-section"[^>]*>([\s\S]*?)<\/div>$/);
+                                        const qContent = qMatch ? qMatch[1].trim() : "";
+                                        return (
+                                          <div className="flex flex-col lg:flex-row gap-4 mb-4">
+                                            <div className="lg:w-1/2 space-y-2 border-r-0 lg:border-r lg:pr-4">
+                                              <h4 className="text-xs font-semibold text-muted-foreground uppercase">Passage</h4>
+                                              {pImgUrl && (
+                                                <div className="border rounded-lg p-2 bg-slate-50 dark:bg-slate-900/50 flex justify-center">
+                                                  <img src={pImgUrl} alt="Passage" className="max-w-full max-h-[200px] h-auto rounded-md object-contain" />
+                                                </div>
+                                              )}
+                                              {pContent && (
+                                                <div className="text-sm prose prose-sm max-w-none dark:prose-invert" dangerouslySetInnerHTML={{ __html: renderMathInHtml(pContent) }} />
+                                              )}
+                                            </div>
+                                            <div className="lg:w-1/2 space-y-2">
+                                              <h4 className="text-xs font-semibold text-muted-foreground uppercase">Question</h4>
+                                              <div className="text-sm" dangerouslySetInnerHTML={{ __html: renderMathInHtml(qContent) }} />
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                      return <div className="text-sm mb-4" dangerouslySetInnerHTML={{ __html: renderMathInHtml(qText) }} />;
+                                    })()}
+
+                                    {q.options && Array.isArray(q.options) && (
+                                      <div className="space-y-2 mb-4">
+                                        {q.options.map((opt: string, i: number) => {
+                                          // No correctness styling until the answer is revealed
+                                          const optCorrect = revealed && isAnswerCorrect(i, revealedAnswers.get(q.id));
+                                          const wasSelected = myRes ? isOptionPicked(myRes.selected_answer, i) : false;
+
+                                          return (
+                                            <div key={i} className={`flex items-center gap-3 p-2 rounded-lg text-sm border ${
+                                              !revealed
+                                                ? wasSelected
+                                                  ? "border-emerald-500 bg-emerald-500/5"
+                                                  : "border-transparent bg-muted/30 opacity-60"
+                                                : optCorrect && wasSelected ? "border-emerald-500 bg-emerald-500/10 text-emerald-700" :
+                                                  optCorrect && !wasSelected ? "border-emerald-500 border-dashed bg-emerald-500/5 text-emerald-700" :
+                                                  !optCorrect && wasSelected ? "border-red-500 bg-red-500/10 text-red-700" :
+                                                  "border-transparent bg-muted/30 opacity-60"
+                                            }`}>
+                                              <span className="font-mono font-bold text-xs opacity-70 w-4">{String.fromCharCode(65 + i)}</span>
+                                              <div className="flex-1 min-w-0">
+                                                <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(opt) }} />
+                                                {Array.isArray(q.option_image_urls) && q.option_image_urls[i] && (
+                                                  <img
+                                                    src={q.option_image_urls[i]!}
+                                                    alt={`Option ${String.fromCharCode(65 + i)}`}
+                                                    className="max-h-24 max-w-full rounded-md border border-border/60 mt-1"
+                                                  />
+                                                )}
+                                              </div>
+                                              {optCorrect && <Check className="h-4 w-4" />}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {/* Numeric / text answers (no options to render) */}
+                                    {!q.options && (q.answer_type === "numeric" || q.answer_type === "text") && (
+                                      <div className="space-y-2 mb-4 text-sm">
+                                        {myRes && (
+                                          <div className="p-2 rounded-lg border border-border/60 bg-muted/30">
+                                            <span className="text-muted-foreground">Your answer: </span>
+                                            <span className="font-semibold">{String(myRes.selected_answer ?? "—")}</span>
+                                          </div>
+                                        )}
+                                        {revealed && (
+                                          <div className="p-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-700">
+                                            <span className="opacity-80">Correct answer: </span>
+                                            <span className="font-semibold">{String(revealedAnswers.get(q.id) ?? "—")}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Analytics Mini-View */}
+                                    {(qAnalytics || myRes) && (
+                                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-muted-foreground bg-muted/30 p-2 rounded-lg">
+                                        {qAnalytics && (
+                                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {qAnalytics.total_responses} responses</span>
+                                        )}
+                                        {qAnalytics && (
+                                          <span className="flex items-center gap-1 text-emerald-600"><Check className="h-3 w-3" /> {Math.round((qAnalytics.correct_count / (qAnalytics.total_responses || 1)) * 100)}% correct</span>
+                                        )}
+                                        {myRes && (
+                                          <span className="flex items-center gap-1">
+                                            <Clock className="h-3 w-3" />
+                                            You: {(myRes.time_taken_ms / 1000).toFixed(1)}s
+                                            {qAnalytics?.avg_time_correct_ms != null && (
+                                              <> · Avg correct: {(qAnalytics.avg_time_correct_ms / 1000).toFixed(1)}s</>
+                                            )}
+                                          </span>
+                                        )}
+                                        {mp && <span>Most picked: {mp.label} ({mp.pct}%)</span>}
+                                        {qAnalytics?.fastest_user_name && (
+                                          <span className="flex items-center gap-1 text-amber-600"><Zap className="h-3 w-3" /> Fastest: {qAnalytics.fastest_user_name}</span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })}

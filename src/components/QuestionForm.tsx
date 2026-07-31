@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TransliterateInput } from "@/components/TransliterateInput";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import { htmlToPlainText, isRichTextEmpty } from "@/lib/richText";
 import { getTransliterationSuggestions } from "@/lib/transliteration";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,7 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, Search } from "lucide-react";
+import { Copy, Search, ImagePlus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface QuestionFormProps {
@@ -47,6 +49,16 @@ interface QuestionFormProps {
     onImageRemove?: (index: number) => void;
     lang?: string;
     lockStructure?: boolean;
+    /** Per-option images aligned with `options` (null = no image). All three
+     *  props optional — parents that don't pass them get the old text-only UI. */
+    optionImages?: (string | null)[];
+    onOptionImageUpload?: (index: number, file: File) => void;
+    onOptionImageRemove?: (index: number) => void;
+    /** Row removal handler so the parent can keep optionImages aligned. */
+    onRemoveOption?: (index: number) => void;
+    /** True while an option image upload is in flight — disables row
+     *  removal / image controls so indices can't shift mid-upload. */
+    optionImageBusy?: boolean;
 }
 
 const ToolbarIcon = ({ icon: Icon, label, onClick, isActive }: { icon: any, label: string, onClick?: () => void, isActive?: boolean }) => (
@@ -100,8 +112,18 @@ export function QuestionForm({
     onImageRemove,
     lang = "en",
     lockStructure = false,
+    optionImages,
+    onOptionImageUpload,
+    onOptionImageRemove,
+    onRemoveOption,
+    optionImageBusy = false,
 }: QuestionFormProps) {
     const { toast } = useToast();
+
+    // One hidden file input serves every option row; this remembers which
+    // row's image button was clicked.
+    const optionImageInputRef = useRef<HTMLInputElement | null>(null);
+    const optionImageTargetRef = useRef<number>(0);
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -1347,8 +1369,9 @@ export function QuestionForm({
         setOpenInNewTab(false);
     };
 
-    const handleMultiCorrectToggle = (option: string) => {
-        const idx = options.indexOf(option);
+    // Toggle by INDEX, not by text — image-only options share the empty
+    // string, so indexOf(text) would always hit the first one.
+    const handleMultiCorrectToggle = (idx: number) => {
         const idxStr = String(idx);
         const currentCorrect = Array.isArray(correct) ? correct.map(String) : [];
         if (currentCorrect.includes(idxStr)) {
@@ -2685,29 +2708,90 @@ export function QuestionForm({
             {(type === "single" || type === "multi") && (
                 <div className="space-y-3">
                     <Label>Options</Label>
+                    {/* Shared hidden picker for per-option images. */}
+                    {onOptionImageUpload && !lockStructure && (
+                        <input
+                            ref={optionImageInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) onOptionImageUpload(optionImageTargetRef.current, file);
+                                e.target.value = ""; // allow re-picking the same file
+                            }}
+                        />
+                    )}
                     {options.map((opt, idx) => (
-                        <div key={idx} className="flex gap-2">
-                            <TransliterateInput
-                                lang={lang}
-                                placeholder={`Option ${idx + 1}`}
-                                value={opt}
-                                onValueChange={(text) => {
-                                    const newOpts = [...options];
-                                    newOpts[idx] = text;
-                                    setOptions(newOpts);
-                                }}
-                            />
-                            {idx > 1 && !lockStructure && (
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => {
-                                        const newOpts = options.filter((_, i) => i !== idx);
+                        <div key={idx} className="space-y-1.5">
+                            <div className="flex gap-2 items-start">
+                                {/* Same editor as Question Text (math, bold/italic, colour,
+                                    transliteration…), compact: the toolbar only appears while
+                                    the option is focused. */}
+                                <RichTextEditor
+                                    value={opt}
+                                    onChange={(html) => {
+                                        const newOpts = [...options];
+                                        newOpts[idx] = html;
                                         setOptions(newOpts);
                                     }}
-                                >
-                                    <X className="h-4 w-4" />
-                                </Button>
+                                    placeholder={`Option ${idx + 1}`}
+                                    lang={lang}
+                                    minHeight={38}
+                                    singleLine
+                                    size="sm"
+                                    className="flex-1 min-w-0 bg-background"
+                                />
+                                {onOptionImageUpload && !lockStructure && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        title="Add an image to this option"
+                                        disabled={optionImageBusy}
+                                        onClick={() => {
+                                            optionImageTargetRef.current = idx;
+                                            optionImageInputRef.current?.click();
+                                        }}
+                                    >
+                                        <ImagePlus className="h-4 w-4" />
+                                    </Button>
+                                )}
+                                {idx > 1 && !lockStructure && (
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        disabled={optionImageBusy}
+                                        onClick={() => {
+                                            if (onRemoveOption) {
+                                                onRemoveOption(idx);
+                                            } else {
+                                                const newOpts = options.filter((_, i) => i !== idx);
+                                                setOptions(newOpts);
+                                            }
+                                        }}
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </Button>
+                                )}
+                            </div>
+                            {optionImages?.[idx] && (
+                                <div className="relative inline-block group ml-1">
+                                    <img
+                                        src={optionImages[idx]!}
+                                        alt={`Option ${idx + 1}`}
+                                        className="max-h-24 rounded-md border border-border/70"
+                                    />
+                                    {!lockStructure && (
+                                        <button
+                                            type="button"
+                                            title="Remove this option's image"
+                                            className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow"
+                                            onClick={() => onOptionImageRemove?.(idx)}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    )}
+                                </div>
                             )}
                         </div>
                     ))}
@@ -2746,13 +2830,13 @@ export function QuestionForm({
                         </p>
                         {type === "single" && correct !== "" && correct !== null && correct !== undefined ? (
                             <p className="text-sm font-medium text-amber-800 mt-1">
-                                Current: {String.fromCharCode(65 + Number(correct))}. {options[Number(correct)] || ""}
+                                Current: {String.fromCharCode(65 + Number(correct))}. {htmlToPlainText(options[Number(correct)])}
                             </p>
                         ) : type === "multi" && Array.isArray(correct) && correct.length > 0 ? (
                             <div className="mt-1 space-y-0.5">
                                 {correct.map((c: any, i: number) => (
                                     <p key={i} className="text-sm font-medium text-amber-800">
-                                        • {String.fromCharCode(65 + Number(c))}. {options[Number(c)] || ""}
+                                        • {String.fromCharCode(65 + Number(c))}. {htmlToPlainText(options[Number(c)])}
                                     </p>
                                 ))}
                             </div>
@@ -2765,13 +2849,18 @@ export function QuestionForm({
                         <SelectTrigger>
                             <SelectValue placeholder="Select correct option">
                                 {correct !== "" && correct !== null && correct !== undefined
-                                    ? `${String.fromCharCode(65 + Number(correct))}. ${options[Number(correct)] || ""}`
+                                    ? `${String.fromCharCode(65 + Number(correct))}. ${htmlToPlainText(options[Number(correct)])}`
                                     : "Select correct option"}
                             </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                             {options.map((opt, idx) => (
-                                opt && <SelectItem key={idx} value={String(idx)}>{String.fromCharCode(65 + idx)}. {opt}</SelectItem>
+                                (!isRichTextEmpty(opt) || optionImages?.[idx]) && (
+                                    <SelectItem key={idx} value={String(idx)}>
+                                        {/* Plain text: a <select> row can't render markup */}
+                                        {String.fromCharCode(65 + idx)}. {isRichTextEmpty(opt) ? "(image option)" : htmlToPlainText(opt)}
+                                    </SelectItem>
+                                )
                             ))}
                         </SelectContent>
                     </Select>
@@ -2779,26 +2868,28 @@ export function QuestionForm({
                     <div className="space-y-2 border rounded-md p-3">
                         {options.map((opt, idx) => {
                             const idxStr = String(idx);
-                            const isEmpty = opt.trim() === "";
+                            const hasImage = !!optionImages?.[idx];
+                            const isBlank = isRichTextEmpty(opt);
+                            const isEmpty = isBlank && !hasImage;
                             const currentCorrect = Array.isArray(correct) ? correct.map(String) : [];
                             return (
                                 <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
                                     <Checkbox
                                         id={`option-${idx}`}
                                         checked={currentCorrect.includes(idxStr)}
-                                        onCheckedChange={() => handleMultiCorrectToggle(opt)}
+                                        onCheckedChange={() => handleMultiCorrectToggle(idx)}
                                         disabled={isEmpty}
                                     />
                                     <label
                                         htmlFor={`option-${idx}`}
                                         className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                                     >
-                                        {String.fromCharCode(65 + idx)}. {opt || "(empty)"}
+                                        {String.fromCharCode(65 + idx)}. {!isBlank ? htmlToPlainText(opt) : hasImage ? "(image option)" : "(empty)"}
                                     </label>
                                 </div>
                             );
                         })}
-                        {options.every(opt => opt.trim() === "") && (
+                        {options.every(opt => isRichTextEmpty(opt)) && (
                             <p className="text-sm text-muted-foreground">Add options above to select correct answers</p>
                         )}
                     </div>

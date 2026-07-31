@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
+import { optionMatchKey } from "@/lib/richText";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -1482,14 +1483,14 @@ const AdminDashboard = () => {
                                                                 {q.options && Array.isArray(q.options) && q.options.map((opt: string, idx: number) => (
                                                                     <div
                                                                         key={idx}
-                                                                        className={`p-2 rounded border text-sm ${q.correct_answer === String.fromCharCode(65 + idx) || q.correct_answer === opt
+                                                                        className={`p-2 rounded border text-sm ${q.correct_answer === String.fromCharCode(65 + idx) || optionMatchKey(q.correct_answer) === optionMatchKey(opt)
                                                                             ? "bg-green-50 border-green-200 text-green-800"
                                                                             : "bg-gray-50 border-gray-100"
                                                                             }`}
                                                                     >
                                                                         <span className="font-semibold mr-2">{String.fromCharCode(65 + idx)}.</span>
-                                                                        <span dangerouslySetInnerHTML={{ __html: renderMathInText(opt) }} />
-                                                                        {(q.correct_answer === String.fromCharCode(65 + idx) || q.correct_answer === opt) && (
+                                                                        <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(opt) }} />
+                                                                        {(q.correct_answer === String.fromCharCode(65 + idx) || optionMatchKey(q.correct_answer) === optionMatchKey(opt)) && (
                                                                             <span className="ml-2 text-xs font-bold text-green-600">(Correct)</span>
                                                                         )}
                                                                     </div>

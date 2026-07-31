@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu, Info } from "lucide-react";
@@ -36,6 +36,8 @@ type Question = {
   section_label: string | null;
   image_url: string | null;
   image_urls: string[] | null;
+  /** Per-option images aligned with options (null = none). */
+  option_image_urls?: (string | null)[] | null;
 };
 
 type Section = {
@@ -656,7 +658,18 @@ const ExamSimulator = () => {
                       }
                     }}
                   />
-                  <span className="flex-1 font-normal" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
+                  <div className="flex-1 font-normal min-w-0">
+                    {String(option ?? "").trim() !== "" && (
+                      <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(option) }} />
+                    )}
+                    {currentQuestion.option_image_urls?.[idx] && (
+                      <img
+                        src={currentQuestion.option_image_urls[idx]!}
+                        alt={`Option ${String.fromCharCode(65 + idx)}`}
+                        className="max-h-32 max-w-full rounded-md border border-border/60 mt-1"
+                      />
+                    )}
+                  </div>
                 </label>
               );
             })}
@@ -673,7 +686,18 @@ const ExamSimulator = () => {
           {currentQuestion.options?.map((option: any, idx: number) => (
             <label key={idx} htmlFor={`option-${idx}`} className="flex items-center space-x-2 border p-3 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
               <RadioGroupItem value={String(idx)} id={`option-${idx}`} />
-              <span className="flex-1 font-normal" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
+              <div className="flex-1 font-normal min-w-0">
+                {String(option ?? "").trim() !== "" && (
+                  <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(option) }} />
+                )}
+                {currentQuestion.option_image_urls?.[idx] && (
+                  <img
+                    src={currentQuestion.option_image_urls[idx]!}
+                    alt={`Option ${String.fromCharCode(65 + idx)}`}
+                    className="max-h-32 max-w-full rounded-md border border-border/60 mt-1"
+                  />
+                )}
+              </div>
             </label>
           ))}
         </RadioGroup>

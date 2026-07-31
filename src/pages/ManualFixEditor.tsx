@@ -1,6 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -148,16 +149,7 @@ export default function ManualFixEditor() {
       if (!user) return;
 
       const fileName = `${user.id}/${examId}/${sectionId}/${questionId}-${Date.now()}.png`;
-      const { error: uploadError } = await supabase.storage
-        .from("exam-pdfs")
-        .upload(fileName, imageFile, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("exam-pdfs")
-        .getPublicUrl(fileName);
-
+      const publicUrl = await uploadQuestionImage(fileName, imageFile);
 
       // Get current images
       const question = questions.find(q => q.id === questionId);
@@ -198,15 +190,7 @@ export default function ManualFixEditor() {
 
     try {
       const fileName = `${user.id}/${sectionId}/${questionId}/${file.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("question-images")
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("question-images")
-        .getPublicUrl(fileName);
+      const publicUrl = await uploadQuestionImage(fileName, file, file.type || "image/png");
 
 
       const question = questions.find(q => q.id === questionId);
@@ -321,16 +305,7 @@ export default function ManualFixEditor() {
 
       const fileName = `${user.id}/${examId}/${sectionId}/${activeQuestionId}-${Date.now()}.png`;
       const file = new File([blob], "snip.png", { type: "image/png" });
-
-      const { error: uploadError } = await supabase.storage
-        .from("exam-pdfs")
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("exam-pdfs")
-        .getPublicUrl(fileName);
+      const publicUrl = await uploadQuestionImage(fileName, file);
 
 
       const question = questions.find(q => q.id === activeQuestionId);

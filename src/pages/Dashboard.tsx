@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,7 +57,10 @@ const Dashboard = () => {
   const [user, setUser] = useState<any>(null);
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"mock" | "live">("mock");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<"mock" | "live">(
+    searchParams.get("tab") === "live" ? "live" : "mock"
+  );
   const [liveExams, setLiveExams] = useState<LiveExam[]>([]);
   const [liveParticipantCounts, setLiveParticipantCounts] = useState<Record<string, number>>({});
   const [liveLoading, setLiveLoading] = useState(false);
@@ -115,6 +118,15 @@ const Dashboard = () => {
     checkAuth();
     return () => subscription.unsubscribe();
   }, [navigate]);
+
+  // Landing directly on the live tab (e.g. back from a live exam editor)
+  // skips handleTabChange, so kick off the fetch here.
+  useEffect(() => {
+    if (activeTab === "live" && liveExams.length === 0) {
+      fetchLiveExamsData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchExams = async (userId?: string) => {
     const targetUserId = userId || user?.id;
@@ -240,6 +252,7 @@ const Dashboard = () => {
   // Fetch live exams when tab switches
   const handleTabChange = (tab: "mock" | "live") => {
     setActiveTab(tab);
+    setSearchParams(tab === "live" ? { tab: "live" } : {}, { replace: true });
     if (tab === "live" && liveExams.length === 0) {
       fetchLiveExamsData();
     }
@@ -337,6 +350,11 @@ const Dashboard = () => {
             options: q.options,
             answer_type: q.answer_type,
             image_url: q.image_url,
+            // Carry every image-bearing field — dropping them silently made
+            // duplicated figure questions lose their pictures and re-snip data.
+            image_urls: q.image_urls ?? null,
+            ...(q.option_image_urls !== undefined ? { option_image_urls: q.option_image_urls } : {}),
+            ...(q.image_region !== undefined ? { image_region: q.image_region } : {}),
             correct_answer: q.correct_answer,
             requires_review: q.requires_review || false,
             is_excluded: q.is_excluded || false,

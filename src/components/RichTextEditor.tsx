@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import katex from "katex";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -25,6 +25,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formulaLibrary, quickInsertTemplates } from "@/lib/formulaLibrary";
+import { getTransliterationSuggestions } from "@/lib/transliteration";
+import { isRichTextEmpty } from "@/lib/richText";
 import { cn } from "@/lib/utils";
 
 interface RichTextEditorProps {
@@ -32,6 +34,16 @@ interface RichTextEditorProps {
     onChange: (value: string) => void;
     placeholder?: string;
     className?: string;
+    /** Language code for Indic transliteration ("hi" → type "kya" get "क्या").
+     *  "en" or omitted disables it. */
+    lang?: string;
+    /** Editor body height in px. Options use a one-line box; passages keep 100. */
+    minHeight?: number;
+    /** Answer options are single-line: swallow Enter instead of starting a new
+     *  block (transliteration still gets first refusal on the key). */
+    singleLine?: boolean;
+    /** Toolbar text size / padding. `sm` suits the compact option rows. */
+    size?: "default" | "sm";
 }
 
 const ToolbarIcon = ({ icon: Icon, label, onClick, isActive }: { icon: any, label: string, onClick?: () => void, isActive?: boolean }) => (
@@ -72,7 +84,16 @@ const TextDirectionIcon = ({ className }: { className?: string }) => (
     </svg>
 );
 
-export function RichTextEditor({ value, onChange, placeholder = "Enter text...", className }: RichTextEditorProps) {
+export function RichTextEditor({
+    value,
+    onChange,
+    placeholder = "Enter text...",
+    className,
+    lang = "en",
+    minHeight = 100,
+    singleLine = false,
+    size = "default",
+}: RichTextEditorProps) {
     const textareaRef = useRef<HTMLDivElement>(null);
     const resizingRef = useRef<{ isResizing: boolean; type: 'col' | 'row' | null; target: HTMLTableCellElement | null; startPos: number; startSize: number }>({
         isResizing: false,
@@ -139,13 +160,160 @@ export function RichTextEditor({ value, onChange, placeholder = "Enter text...",
 
     // Handle updates when formatting changes or typing
     const updateContent = () => {
-        if (textareaRef.current) {
-            const html = textareaRef.current.innerHTML;
-            if (html !== value) {
-                onChange(html);
-            }
+        if (!textareaRef.current) return;
+        let html = textareaRef.current.innerHTML;
+        // A cleared contentEditable keeps scaffolding ("<br>", "<div><br></div>",
+        // "<p>&nbsp;</p>"). Left alone it defeats :empty — so the placeholder never
+        // comes back — and would be stored as a non-blank answer option. Length
+        // guard keeps the parse off the hot path for real content.
+        if (html.length <= 64 && isRichTextEmpty(html)) {
+            html = "";
+            textareaRef.current.innerHTML = "";
+        }
+        if (html !== value) {
+            onChange(html);
         }
     };
+
+    // ============================================
+    // TRANSLITERATION (same behaviour as the question-text editor, so option
+    // fields keep Hindi typing after moving off the plain <input>)
+    // ============================================
+    const [translitSuggestions, setTranslitSuggestions] = useState<string[]>([]);
+    const [showTranslitSuggestions, setShowTranslitSuggestions] = useState(false);
+    const [translitActiveIndex, setTranslitActiveIndex] = useState(0);
+    const translitDebounceRef = useRef<ReturnType<typeof setTimeout>>();
+    const [translitPopupPos, setTranslitPopupPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+    const isIndicLang = !!lang && lang !== "en";
+
+    const getCaretCoordinates = useCallback(() => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+        const range = selection.getRangeAt(0).cloneRange();
+        range.collapse(false);
+        const rect = range.getBoundingClientRect();
+        // Empty rect (caret at start of an empty line) — fall back to the editor box
+        if (rect.width === 0 && rect.height === 0) {
+            if (textareaRef.current) {
+                const editorRect = textareaRef.current.getBoundingClientRect();
+                return { top: editorRect.top + 24, left: editorRect.left + 12 };
+            }
+        }
+        return { top: rect.bottom, left: rect.left };
+    }, []);
+
+    const extractWordAtCaret = useCallback((): { word: string; range: Range | null } => {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return { word: "", range: null };
+
+        const range = selection.getRangeAt(0);
+        if (!range.collapsed) return { word: "", range: null };
+
+        const node = range.startContainer;
+        if (node.nodeType !== Node.TEXT_NODE) return { word: "", range: null };
+
+        const text = node.textContent || "";
+        const offset = range.startOffset;
+
+        let start = offset;
+        while (start > 0 && /[a-zA-Z]/.test(text[start - 1])) start--;
+
+        const word = text.substring(start, offset);
+        if (!word) return { word: "", range: null };
+
+        const wordRange = document.createRange();
+        wordRange.setStart(node, start);
+        wordRange.setEnd(node, offset);
+        return { word, range: wordRange };
+    }, []);
+
+    const applyTranslitSuggestion = useCallback((suggestion: string, addSpace: boolean = false) => {
+        const { range } = extractWordAtCaret();
+        if (!range) return;
+
+        range.deleteContents();
+        const textNode = document.createTextNode(suggestion + (addSpace ? " " : ""));
+        range.insertNode(textNode);
+
+        const newRange = document.createRange();
+        newRange.setStartAfter(textNode);
+        newRange.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(newRange);
+
+        if (textareaRef.current) onChange(textareaRef.current.innerHTML);
+
+        setTranslitSuggestions([]);
+        setShowTranslitSuggestions(false);
+    }, [extractWordAtCaret, onChange]);
+
+    const handleTranslitInput = useCallback(() => {
+        if (!isIndicLang) return;
+
+        const { word } = extractWordAtCaret();
+        if (!word) {
+            setTranslitSuggestions([]);
+            setShowTranslitSuggestions(false);
+            return;
+        }
+
+        const coords = getCaretCoordinates();
+        if (coords) setTranslitPopupPos({ top: coords.top + 4, left: coords.left });
+
+        if (translitDebounceRef.current) clearTimeout(translitDebounceRef.current);
+        translitDebounceRef.current = setTimeout(async () => {
+            try {
+                const results = await getTransliterationSuggestions(word, lang, 5);
+                if (results.length > 0) {
+                    setTranslitSuggestions(results);
+                    setShowTranslitSuggestions(true);
+                    setTranslitActiveIndex(0);
+                } else {
+                    setTranslitSuggestions([]);
+                    setShowTranslitSuggestions(false);
+                }
+            } catch {
+                setTranslitSuggestions([]);
+                setShowTranslitSuggestions(false);
+            }
+        }, 150);
+    }, [isIndicLang, extractWordAtCaret, getCaretCoordinates, lang]);
+
+    /** Returns true when the key was consumed by the suggestion popup. */
+    const handleTranslitKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!showTranslitSuggestions || translitSuggestions.length === 0) return false;
+
+        switch (e.key) {
+            case "ArrowDown":
+                e.preventDefault();
+                setTranslitActiveIndex((prev) => (prev + 1) % translitSuggestions.length);
+                return true;
+            case "ArrowUp":
+                e.preventDefault();
+                setTranslitActiveIndex((prev) => (prev - 1 + translitSuggestions.length) % translitSuggestions.length);
+                return true;
+            case "Enter":
+            case "Tab":
+                e.preventDefault();
+                applyTranslitSuggestion(translitSuggestions[translitActiveIndex]);
+                return true;
+            case " ":
+                e.preventDefault();
+                applyTranslitSuggestion(translitSuggestions[translitActiveIndex], true);
+                return true;
+            case "Escape":
+                setTranslitSuggestions([]);
+                setShowTranslitSuggestions(false);
+                return true;
+        }
+        return false;
+    }, [showTranslitSuggestions, translitSuggestions, translitActiveIndex, applyTranslitSuggestion]);
+
+    useEffect(() => () => {
+        if (translitDebounceRef.current) clearTimeout(translitDebounceRef.current);
+    }, []);
 
     // Render LaTeX formula preview
     const formulaPreview = useMemo(() => {
@@ -833,21 +1001,89 @@ export function RichTextEditor({ value, onChange, placeholder = "Enter text...",
             <div
                 ref={textareaRef}
                 contentEditable
-                className="min-h-[100px] w-full px-3 py-2 text-sm border-none placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 whitespace-pre-wrap cursor-text overflow-auto empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-2 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-2 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:my-1 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:my-1 [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-gray-600 [&_ul]:list-disc [&_ul]:ml-6 [&_ol]:list-decimal [&_ol]:ml-6 [&_a]:text-blue-600 [&_a]:underline"
+                className={cn(
+                    "w-full px-3 text-sm border-none placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 whitespace-pre-wrap cursor-text overflow-auto empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-2 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-2 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:my-1 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:my-1 [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-gray-600 [&_ul]:list-disc [&_ul]:ml-6 [&_ol]:list-decimal [&_ol]:ml-6 [&_a]:text-blue-600 [&_a]:underline",
+                    size === "sm" ? "py-1.5" : "py-2"
+                )}
                 data-placeholder={placeholder}
-                onInput={updateContent}
+                onInput={() => {
+                    updateContent();
+                    handleTranslitInput();
+                }}
                 onBlur={(e) => {
                     if (!e.currentTarget.contains(e.relatedTarget)) {
                         setIsEditorFocused(false);
                     }
+                    // Delay so a click on a suggestion still registers
+                    setTimeout(() => setShowTranslitSuggestions(false), 200);
                 }}
                 onFocus={() => setIsEditorFocused(true)}
+                onKeyDown={(e) => {
+                    if (handleTranslitKeyDown(e)) return;
+                    if (singleLine && e.key === "Enter") e.preventDefault();
+                }}
                 onKeyUp={checkFormats}
                 onMouseUp={() => { checkFormats(); handleEditorMouseUp(); }}
                 onMouseMove={handleEditorMouseMove}
                 onMouseDown={handleEditorMouseDown}
-                style={{ height: 'auto', minHeight: '100px' }}
+                style={{ height: 'auto', minHeight: `${minHeight}px` }}
             />
+
+            {/* Transliteration suggestions — fixed-positioned at the caret */}
+            {showTranslitSuggestions && translitSuggestions.length > 0 && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: `${translitPopupPos.top}px`,
+                        left: `${translitPopupPos.left}px`,
+                        zIndex: 99999,
+                        minWidth: '160px',
+                        maxWidth: '300px',
+                        background: 'white',
+                        border: '1px solid hsl(230 18% 91%)',
+                        borderRadius: '0.5rem',
+                        boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                        overflow: 'hidden',
+                        padding: '4px',
+                    }}
+                >
+                    {translitSuggestions.map((suggestion, idx) => (
+                        <div
+                            key={idx}
+                            style={{
+                                padding: '8px 12px',
+                                fontSize: '0.9rem',
+                                cursor: 'pointer',
+                                borderRadius: '0.375rem',
+                                transition: 'background 0.15s ease',
+                                background: idx === translitActiveIndex ? 'hsl(252 87% 57% / 0.08)' : 'transparent',
+                                color: idx === translitActiveIndex ? 'hsl(252 87% 57%)' : 'inherit',
+                                fontWeight: idx === translitActiveIndex ? 600 : 400,
+                                fontFamily: "'Noto Sans Devanagari', 'Inter', sans-serif",
+                            }}
+                            onMouseEnter={() => setTranslitActiveIndex(idx)}
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                applyTranslitSuggestion(suggestion);
+                            }}
+                        >
+                            {suggestion}
+                        </div>
+                    ))}
+                    <div
+                        style={{
+                            padding: '4px 12px',
+                            fontSize: '0.65rem',
+                            color: '#999',
+                            borderTop: '1px solid hsl(230 18% 93%)',
+                            marginTop: '4px',
+                            textAlign: 'right',
+                        }}
+                    >
+                        ↑↓ navigate · Enter/Tab to select · Space to confirm
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

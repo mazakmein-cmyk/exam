@@ -19,6 +19,11 @@ import { pdfjs } from "react-pdf";
 // Must come before any pdfjs.getDocument call. See src/lib/pdfWorker.ts for why
 // this uses Vite's `?worker` (bundles internal imports) rather than `?url`.
 import "@/lib/pdfWorker";
+import {
+  detectEmbeddedImageRects,
+  snapCropToImages,
+  type ImageRect,
+} from "./pdfImageDetector";
 
 export type SnipRequest = {
   /** Caller-defined identifier (e.g. `${sectionName}::${questionIndex}`). */
@@ -148,8 +153,15 @@ export async function autoSnip(
     onProgress(`Rendering page ${pageNum}…`, done, requests.length);
 
     let pageCanvas: HTMLCanvasElement;
+    let imageRects: ImageRect[] = [];
     try {
-      pageCanvas = await renderPdfPageToCanvas(pdfDoc, pageNum, renderScale);
+      const page = await pdfDoc.getPage(pageNum);
+      pageCanvas = await renderPdfPageToCanvas(page, renderScale);
+      // Exact device-space rects of every embedded raster on this page.
+      // Used to correct loose / slightly-off AI bboxes by snapping the crop
+      // to the real figure bounds. Detection failure → [] → AI bbox wins.
+      const viewport = page.getViewport({ scale: renderScale });
+      imageRects = await detectEmbeddedImageRects(page, viewport, (pdfjs as any).OPS);
     } catch (err: any) {
       const msg = `Page ${pageNum} failed to render: ${err?.message ?? String(err)}`;
       for (const req of pageRequests) {
@@ -177,7 +189,7 @@ export async function autoSnip(
         autoTrimMargins,
         trimWhiteThreshold,
         trimSafetyPad,
-      });
+      }, imageRects, renderScale);
       resultsByKey.set(req.key, result);
       done++;
     }
@@ -201,11 +213,9 @@ export async function autoSnip(
 // ─── Internals ──────────────────────────────────────────────────────────
 
 async function renderPdfPageToCanvas(
-  pdfDoc: any,
-  pageNum: number,
+  page: any,
   scale: number
 ): Promise<HTMLCanvasElement> {
-  const page = await pdfDoc.getPage(pageNum);
   const viewport = page.getViewport({ scale });
 
   const canvas = document.createElement("canvas");
@@ -235,7 +245,9 @@ async function cropFromCanvas(
     autoTrimMargins: boolean;
     trimWhiteThreshold: number;
     trimSafetyPad: number;
-  }
+  },
+  imageRects: ImageRect[] = [],
+  renderScale = 2.0
 ): Promise<SnipResult> {
   const cw = pageCanvas.width;
   const ch = pageCanvas.height;
@@ -245,6 +257,7 @@ async function cropFromCanvas(
   let w = cw;
   let h = ch;
   let warning: string | undefined;
+  let appliedBbox = false;
 
   // Detect the "whole page sentinel" (xMin/yMin=0, xMax/yMax=1000). The AI
   // emits this when it knows the figure is on this page but can't localise
@@ -295,11 +308,42 @@ async function cropFromCanvas(
       }
       if (x + w > cw) w = cw - x;
       if (y + h > ch) h = ch - y;
+      appliedBbox = true;
     } else {
       warning = "Invalid bbox at render time — fell back to whole page.";
     }
   } else if (isWholePageSentinel) {
     warning = "AI emitted whole-page bbox — auto-trimming margins instead.";
+  }
+
+  // ─── Snap to real embedded-image bounds ───
+  // The AI bbox is an estimate; the PDF knows exactly where its rasters are.
+  // When the bbox clearly points at raster figure(s), snap the crop to their
+  // union (prompt figure + option strips). Conservative: any doubt → keep
+  // the AI crop. See pdfImageDetector.snapCropToImages for the guards that
+  // exclude watermarks, header logos, and ✓/✗ icons.
+  //
+  // The snap pad must be generous enough to keep VECTOR text that belongs to
+  // the figure (option-number labels sit ~13 device px beside the raster
+  // strips in Adda-style PDFs; 8 px clipped them to half-glyphs). 10 PDF pt
+  // scaled by the render scale = 20 device px at the default 2.0. The
+  // white-margin auto-trim below shrinks any excess padding back to real
+  // content, so over-padding costs nothing.
+  const snapPadPx = Math.round(10 * renderScale);
+  if (appliedBbox && imageRects.length > 0) {
+    const snapped = snapCropToImages(
+      { x, y, w, h },
+      imageRects,
+      cw,
+      ch,
+      snapPadPx
+    );
+    if (snapped) {
+      x = snapped.x;
+      y = snapped.y;
+      w = snapped.w;
+      h = snapped.h;
+    }
   }
 
   // Round to integer pixels.

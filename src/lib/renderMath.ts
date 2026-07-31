@@ -26,6 +26,7 @@
  *    by the fast path and can never be double-rendered.
  */
 import katex from "katex";
+import { looksLikeHtml } from "./richText";
 
 // ─── Bounded cache (exam pages re-render on every timer tick) ─────────────
 const CACHE_MAX = 500;
@@ -282,4 +283,20 @@ export function renderMathInText(text: unknown): string {
   }
   cacheSet(key, result);
   return result;
+}
+
+/**
+ * Render a field that may hold EITHER plain text or editor-produced HTML —
+ * answer options, and any short value resolved from them.
+ *
+ * Options were plain text before the option fields got a rich-text toolbar, so
+ * both shapes live in the same array and neither may regress: markup is
+ * rendered as markup, while anything without a real tag keeps the escaping
+ * path (so a stored "a < b" still shows literally instead of being eaten as an
+ * unclosed tag).
+ */
+export function renderMathInRichText(value: unknown): string {
+  const s = value == null ? "" : String(value);
+  if (!s) return "";
+  return looksLikeHtml(s) ? renderMathInHtml(s) : renderMathInText(s);
 }

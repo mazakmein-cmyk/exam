@@ -62,7 +62,15 @@ export const mockExamJsonSource: JsonUploadDataSource = {
     return byLang;
   },
 
-  loadLangStatus: async (_examId, supportedLanguages, sectionsByLang) => {
+  loadLangStatus: async (examId, supportedLanguages, sectionsByLang) => {
+    // Fetch exam creator so we can exclude their own attempts from the count
+    const { data: examRow } = await supabase
+      .from("exams")
+      .select("user_id")
+      .eq("id", examId)
+      .single();
+    const creatorId = examRow?.user_id;
+
     const nextStatus: Record<string, LangStatus> = {};
     for (const lang of supportedLanguages) {
       const sectionIds = sectionsByLang[lang]?.map((s) => s.id) ?? [];
@@ -70,16 +78,23 @@ export const mockExamJsonSource: JsonUploadDataSource = {
         nextStatus[lang] = { questionCount: 0, sectionCount: 0, submittedAttemptCount: 0 };
         continue;
       }
+      let attemptsQuery = supabase
+        .from("attempts")
+        .select("id", { count: "exact", head: true })
+        .in("section_id", sectionIds)
+        .not("submitted_at", "is", null);
+
+      // Exclude the creator's own attempts — they shouldn't block Replace
+      if (creatorId) {
+        attemptsQuery = attemptsQuery.neq("user_id", creatorId);
+      }
+
       const [qRes, aRes] = await Promise.all([
         supabase
           .from("parsed_questions")
           .select("id", { count: "exact", head: true })
           .in("section_id", sectionIds),
-        supabase
-          .from("attempts")
-          .select("id", { count: "exact", head: true })
-          .in("section_id", sectionIds)
-          .not("submitted_at", "is", null),
+        attemptsQuery,
       ]);
       // Must fail closed: a swallowed error here would report 0 submissions and
       // enable the destructive Replace mode.
@@ -127,15 +142,30 @@ export const liveExamJsonSource: JsonUploadDataSource = {
   },
 
   loadLangStatus: async (examId, supportedLanguages, sectionsByLang) => {
+    // Fetch exam creator so we can exclude their own responses from the count
+    const { data: examRow } = await supabase
+      .from("live_exams")
+      .select("user_id")
+      .eq("id", examId)
+      .single();
+    const creatorId = examRow?.user_id;
+
     // Responses aren't per-language (live_responses keys on the exam), so one
     // count covers every language: any recorded answer blocks Replace, since
     // deleting questions would orphan responses and their analytics.
     // Fails closed on purpose: if this count errored and defaulted to 0,
     // Replace would unblock and cascade-delete every recorded answer.
-    const { count: responseCount, error: respErr } = await supabase
+    let responsesQuery = supabase
       .from("live_responses")
       .select("id", { count: "exact", head: true })
       .eq("live_exam_id", examId);
+
+    // Exclude the creator's own responses — they shouldn't block Replace
+    if (creatorId) {
+      responsesQuery = responsesQuery.neq("user_id", creatorId);
+    }
+
+    const { count: responseCount, error: respErr } = await responsesQuery;
     if (respErr) throw respErr;
 
     const nextStatus: Record<string, LangStatus> = {};

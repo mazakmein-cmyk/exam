@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
+import { optionMatchKey } from "@/lib/richText";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ interface Response {
 
     image_url: string | null;
     image_urls: string[] | null;
+    option_image_urls?: (string | null)[] | null;
   };
 }
 
@@ -204,7 +206,7 @@ export default function ExamReview() {
         .from("responses")
         .select(`
           *,
-          question:parsed_questions(text, options, answer_type, correct_answer, q_no, section_id, image_url, image_urls)
+          question:parsed_questions(*)
         `)
         .in("attempt_id", selectedAttemptIds);
 
@@ -570,9 +572,7 @@ export default function ExamReview() {
     const upper = String(val).trim().toUpperCase();
     if (upper.length === 1 && upper >= "A" && upper <= "Z") return upper;
     if (options) {
-      const idx = options.findIndex(
-        o => String(o).trim().toLowerCase() === String(val).trim().toLowerCase()
-      );
+      const idx = options.findIndex(o => optionMatchKey(o) === optionMatchKey(val));
       if (idx >= 0) return String.fromCharCode(65 + idx);
     }
     return String(val);
@@ -590,9 +590,7 @@ export default function ExamReview() {
       if (options[idx] !== undefined) return String(options[idx]);
     }
     if (options) {
-      const idx = options.findIndex(
-        o => String(o).trim().toLowerCase() === String(val).trim().toLowerCase()
-      );
+      const idx = options.findIndex(o => optionMatchKey(o) === optionMatchKey(val));
       if (idx >= 0) return String(options[idx]);
     }
     return null;
@@ -611,8 +609,8 @@ export default function ExamReview() {
       if (!options || options[idx] !== undefined) return idx;
     }
     if (options) {
-      const norm = String(val).trim().toLowerCase();
-      const i = options.findIndex(o => String(o).trim().toLowerCase() === norm);
+      const norm = optionMatchKey(val);
+      const i = options.findIndex(o => optionMatchKey(o) === norm);
       if (i >= 0) return i;
     }
     return null;
@@ -654,7 +652,7 @@ export default function ExamReview() {
         {text !== null && text !== "" && (
           <span
             className="opacity-80 truncate max-w-[180px]"
-            dangerouslySetInnerHTML={{ __html: renderMathInText(text) }}
+            dangerouslySetInnerHTML={{ __html: renderMathInRichText(text) }}
           />
         )}
       </span>
@@ -807,7 +805,18 @@ export default function ExamReview() {
               className={`flex items-center gap-3 p-3 rounded-md border ${bgClass} ${borderClass}`}
             >
               <span className="font-medium text-sm">{String.fromCharCode(65 + idx)})</span>
-              <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
+              <div className="flex-1 min-w-0">
+                {String(option ?? "").trim() !== "" && (
+                  <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(option) }} />
+                )}
+                {response.question.option_image_urls?.[idx] && (
+                  <img
+                    src={response.question.option_image_urls[idx]!}
+                    alt={`Option ${String.fromCharCode(65 + idx)}`}
+                    className="max-h-32 max-w-full rounded-md border border-border/60 mt-1"
+                  />
+                )}
+              </div>
               {icon}
               {isSelected && <span className="text-xs text-muted-foreground">(Your choice)</span>}
             </div>

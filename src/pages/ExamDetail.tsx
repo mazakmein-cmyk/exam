@@ -1,13 +1,16 @@
 import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInText, renderMathInRichText } from "@/lib/renderMath";
+import { htmlToPlainText, isRichTextEmpty } from "@/lib/richText";
+import { uploadQuestionImage } from "@/lib/questionImageUpload";
+import { autoSnip } from "@/services/autoSnipper";
+import { tableHasColumn } from "@/lib/dbFeatures";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { TransliterateInput } from "@/components/TransliterateInput";
 import { TransliterateTextarea } from "@/components/TransliterateTextarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,6 +58,7 @@ import {
 } from "@dnd-kit/sortable";
 import { SortableQuestionItem } from "@/components/SortableQuestionItem";
 import { SortableSectionItem } from "@/components/SortableSectionItem";
+import { SectionNameEditor } from "@/components/SectionNameEditor";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -111,6 +115,10 @@ type Question = {
   correct_answer: any;
   question_group_id?: string | null;
   is_excluded?: boolean | null;
+  /** Persisted AI image_region ({page, x_min..y_max?, padding_pct}) — lets auto-snip re-run after import. */
+  image_region?: any;
+  /** Per-option images aligned with options (null = none). */
+  option_image_urls?: any;
 };
 
 export default function ExamDetail() {
@@ -151,6 +159,8 @@ export default function ExamDetail() {
   const [newQuestionText, setNewQuestionText] = useState("");
   const [newQuestionType, setNewQuestionType] = useState("single");
   const [newQuestionOptions, setNewQuestionOptions] = useState<string[]>(["", "", "", ""]);
+  // Per-option images, aligned by index with newQuestionOptions (null = none).
+  const [newQuestionOptionImages, setNewQuestionOptionImages] = useState<(string | null)[]>([null, null, null, null]);
   const [newQuestionImages, setNewQuestionImages] = useState<string[]>([]);
   const [newQuestionCorrect, setNewQuestionCorrect] = useState<string | string[]>("");
   const [questionFormat, setQuestionFormat] = useState("standard");
@@ -215,7 +225,7 @@ export default function ExamDetail() {
     // Check if new question is being typed but not empty (ignoring initial empty state)
     const isQuestionFormDirty =
       newQuestionText.trim() !== "" ||
-      newQuestionOptions.some(opt => opt.trim() !== "") ||
+      newQuestionOptions.some(opt => !isRichTextEmpty(opt)) ||
       newQuestionImages.length > 0 ||
       newQuestionCorrect !== ""; // Simplified check
 
@@ -259,7 +269,7 @@ export default function ExamDetail() {
 
     if (q.answer_type === 'single' || q.answer_type === 'multi') {
       const opts = Array.isArray(q.options) ? q.options : [];
-      const nonEmptyOpts = opts.filter((o: string) => typeof o === 'string' && o.trim() !== '');
+      const nonEmptyOpts = opts.filter((o: string) => typeof o === 'string' && !isRichTextEmpty(o));
       if (nonEmptyOpts.length < 2) {
         errors.push(`Only ${nonEmptyOpts.length} option${nonEmptyOpts.length === 1 ? '' : 's'} filled — add at least 2 answer choices.`);
       }
@@ -281,7 +291,7 @@ export default function ExamDetail() {
     return (
       editingQuestionId !== null ||
       newQuestionText.trim() !== "" ||
-      newQuestionOptions.some((opt) => opt.trim() !== "") ||
+      newQuestionOptions.some((opt) => !isRichTextEmpty(opt)) ||
       newQuestionImages.length > 0 ||
       newQuestionCorrect !== ""
     );
@@ -783,7 +793,7 @@ export default function ExamDetail() {
         description: "Exam deleted successfully",
       });
 
-      navigate("/dashboard");
+      navigate("/dashboard?tab=mock");
     } catch (error: any) {
       console.error("Delete error:", error);
       toast({
@@ -819,7 +829,7 @@ export default function ExamDetail() {
     // Reset form state
     setEditingQuestionId(null);
     setNewQuestionText("");
-    setNewQuestionOptions(["", "", "", ""]);
+    setNewQuestionOptions(["", "", "", ""]); setNewQuestionOptionImages([null, null, null, null]);
     setNewQuestionCorrect("");
     setPassageText("");
     setNewQuestionImages([]);
@@ -1064,23 +1074,30 @@ export default function ExamDetail() {
       return false;
     }
 
-    // Validate options for single/multi choice questions
+    // Validate options for single/multi choice questions.
+    // An option counts as "filled" when it has text OR an attached image —
+    // image-only options are the whole point of figure questions.
+    let keptOptionIdx: number[] = [];
     if (newQuestionType === "single" || newQuestionType === "multi") {
-      const filledOptions = newQuestionOptions.filter(opt => opt.trim() !== "");
-      if (filledOptions.length < 2) {
+      keptOptionIdx = newQuestionOptions
+        .map((_, i) => i)
+        .filter((i) => !isRichTextEmpty(newQuestionOptions[i]) || !!newQuestionOptionImages[i]);
+      if (keptOptionIdx.length < 2) {
         toast({
           title: "Missing Options",
-          description: "Please add at least 2 options for a choice-type question.",
+          description: "Please add at least 2 options (text or image) for a choice-type question.",
           variant: "destructive",
         });
         return false;
       }
-      // Check if any option is empty (user added but left blank)
-      const hasEmptyOption = newQuestionOptions.some((opt, idx) => idx < filledOptions.length && opt.trim() === "");
-      if (hasEmptyOption) {
+      // Dropping blank rows shifts indices — the correct answer must survive.
+      const correctVals = Array.isArray(newQuestionCorrect) ? newQuestionCorrect : [newQuestionCorrect];
+      const kept = new Set(keptOptionIdx.map(String));
+      const dangling = correctVals.some((v) => /^\d+$/.test(String(v)) && !kept.has(String(v)));
+      if (dangling) {
         toast({
-          title: "Empty Options",
-          description: "Please fill in all options or remove empty ones.",
+          title: "Correct Answer Points to an Empty Option",
+          description: "The selected correct option has no text or image. Fill it in or pick another.",
           variant: "destructive",
         });
         return false;
@@ -1088,6 +1105,16 @@ export default function ExamDetail() {
     }
 
     try {
+      // Remap index-based correct answers onto the filtered option order.
+      const idxMap = new Map(keptOptionIdx.map((oldI, newI) => [String(oldI), String(newI)]));
+      const remapCorrect = (v: any) => (idxMap.has(String(v)) ? idxMap.get(String(v)) : v);
+      const remappedCorrect =
+        (newQuestionType === "single" || newQuestionType === "multi")
+          ? (Array.isArray(newQuestionCorrect)
+              ? newQuestionCorrect.map(remapCorrect)
+              : remapCorrect(newQuestionCorrect))
+          : newQuestionCorrect;
+
       // Prepare question data with proper defaults
       const newQuestion: any = {
         section_id: section.id,
@@ -1097,7 +1124,7 @@ export default function ExamDetail() {
           : (newQuestionText || ""),
         answer_type: newQuestionType,
         image_urls: newQuestionImages, // Updated
-        correct_answer: newQuestionCorrect,
+        correct_answer: remappedCorrect,
         requires_review: false,
         is_excluded: false,
         is_finalized: true
@@ -1105,7 +1132,23 @@ export default function ExamDetail() {
 
       // Only include options for choice-type questions
       if (newQuestionType === "single" || newQuestionType === "multi") {
-        newQuestion.options = newQuestionOptions.filter(opt => opt.trim() !== "");
+        newQuestion.options = keptOptionIdx.map((i) => newQuestionOptions[i]);
+        const keptImages = keptOptionIdx.map((i) => newQuestionOptionImages[i] ?? null);
+        if (keptImages.some(Boolean)) {
+          // BLOCK the save rather than silently dropping pictures — an
+          // image-only option stored as blank text would show students an
+          // empty answer button.
+          if (!(await tableHasColumn("parsed_questions", "option_image_urls"))) {
+            toast({
+              title: "Database update needed for option images",
+              description:
+                "Run migration 20260731000000_option_image_urls.sql in the Supabase SQL editor, reload, and save again.",
+              variant: "destructive",
+            });
+            return false;
+          }
+          newQuestion.option_image_urls = keptImages;
+        }
       }
 
       const { data, error } = await supabase
@@ -1147,12 +1190,21 @@ export default function ExamDetail() {
               options: (newQuestionType === "single" || newQuestionType === "multi")
                 ? newQuestion.options?.map(() => "") || ["", ""]  // Same count of options, empty text
                 : null,
-              correct_answer: newQuestionCorrect,  // Same correct answer (index-based works across languages)
+              // MUST be the REMAPPED answer: the sibling's options mirror the
+              // FILTERED primary list, so the raw pre-filter index would point
+              // at the wrong (or a nonexistent) option for every translated
+              // student.
+              correct_answer: newQuestion.correct_answer,
+              // Figures are language-independent — carry option images so
+              // translated students see the same pictures.
+              ...(newQuestion.option_image_urls
+                ? { option_image_urls: newQuestion.option_image_urls }
+                : {}),
               requires_review: true,
               is_excluded: false,
               is_finalized: false,
               question_group_id: data.question_group_id,  // Link to primary question
-            });
+            } as any);
         }
       }
 
@@ -1163,7 +1215,7 @@ export default function ExamDetail() {
 
       setPassageText("");
       setPassageImage(null);
-      setNewQuestionOptions(["", "", "", ""]);
+      setNewQuestionOptions(["", "", "", ""]); setNewQuestionOptionImages([null, null, null, null]);
 
       toast({
         title: "Success",
@@ -1482,7 +1534,16 @@ export default function ExamDetail() {
     setNewQuestionCorrect(question.correct_answer);
 
     if (question.answer_type === "single" || question.answer_type === "multi") {
-      setNewQuestionOptions(Array.isArray(question.options) ? question.options : ["", "", "", ""]);
+      const opts = Array.isArray(question.options) ? question.options : ["", "", "", ""];
+      setNewQuestionOptions(opts);
+      // Populate aligned per-option images (pad/truncate to the option count).
+      const imgs = Array.isArray(question.option_image_urls) ? question.option_image_urls : [];
+      setNewQuestionOptionImages(opts.map((_: string, i: number) => imgs[i] ?? null));
+    } else {
+      // Numeric/text question: clear any leftovers from the previously edited
+      // question, or a later type switch to single/multi would inherit them.
+      setNewQuestionOptions(["", "", "", ""]);
+      setNewQuestionOptionImages([null, null, null, null]);
     }
 
     // Scroll to form
@@ -1539,20 +1600,40 @@ export default function ExamDetail() {
       return false;
     }
 
-    // Validate options for single/multi choice questions
+    // Validate options for single/multi choice questions.
+    // Text OR an attached image counts as "filled" (figure questions).
+    let keptOptionIdx: number[] = [];
     if (newQuestionType === "single" || newQuestionType === "multi") {
-      const filledOptions = newQuestionOptions.filter(opt => opt.trim() !== "");
-      if (filledOptions.length < 2) {
+      keptOptionIdx = newQuestionOptions
+        .map((_, i) => i)
+        .filter((i) => !isRichTextEmpty(newQuestionOptions[i]) || !!newQuestionOptionImages[i]);
+      if (keptOptionIdx.length < 2) {
         toast({
           title: "Missing Options",
-          description: "Please add at least 2 options for a choice-type question.",
+          description: "Please add at least 2 options (text or image) for a choice-type question.",
           variant: "destructive",
         });
         return false;
       }
+      if (!isMultiLang || isPrimaryLanguage) {
+        const correctVals = Array.isArray(newQuestionCorrect) ? newQuestionCorrect : [newQuestionCorrect];
+        const kept = new Set(keptOptionIdx.map(String));
+        const dangling = correctVals.some((v) => /^\d+$/.test(String(v)) && !kept.has(String(v)));
+        if (dangling) {
+          toast({
+            title: "Correct Answer Points to an Empty Option",
+            description: "The selected correct option has no text or image. Fill it in or pick another.",
+            variant: "destructive",
+          });
+          return false;
+        }
+      }
     }
 
     try {
+      const idxMap = new Map(keptOptionIdx.map((oldI, newI) => [String(oldI), String(newI)]));
+      const remapCorrect = (v: any) => (idxMap.has(String(v)) ? idxMap.get(String(v)) : v);
+
       const updateData: any = {
         text: (questionFormat === "passage" && (passageText || passageImage))
           ? `<div class="passage-section">${passageImage ? `<img src="${passageImage}" class="passage-image mb-4 w-full h-auto rounded-lg" />` : ""}${passageText}</div><div class="question-section">${newQuestionText || ""}</div>`
@@ -1563,13 +1644,33 @@ export default function ExamDetail() {
       // Only save structural fields when editing in primary language
       if (!isMultiLang || isPrimaryLanguage) {
         updateData.answer_type = newQuestionType;
-        updateData.correct_answer = newQuestionCorrect;
+        updateData.correct_answer =
+          (newQuestionType === "single" || newQuestionType === "multi")
+            ? (Array.isArray(newQuestionCorrect)
+                ? newQuestionCorrect.map(remapCorrect)
+                : remapCorrect(newQuestionCorrect))
+            : newQuestionCorrect;
       }
 
       if (newQuestionType === "single" || newQuestionType === "multi") {
         if (!isMultiLang || isPrimaryLanguage) {
-          // Primary: save full options (structural change)
-          updateData.options = newQuestionOptions.filter(opt => opt.trim() !== "");
+          // Primary: save full options (structural change) + aligned images.
+          updateData.options = keptOptionIdx.map((i) => newQuestionOptions[i]);
+          const keptImages = keptOptionIdx.map((i) => newQuestionOptionImages[i] ?? null);
+          const supportsOptImgs = await tableHasColumn("parsed_questions", "option_image_urls");
+          if (keptImages.some(Boolean) && !supportsOptImgs) {
+            toast({
+              title: "Database update needed for option images",
+              description:
+                "Run migration 20260731000000_option_image_urls.sql in the Supabase SQL editor, reload, and save again.",
+              variant: "destructive",
+            });
+            return false;
+          }
+          if (supportsOptImgs) {
+            // Written even when all-null so removing a picture actually clears it.
+            updateData.option_image_urls = keptImages.some(Boolean) ? keptImages : null;
+          }
         } else {
           // Secondary: save option TEXT only (same count, translated content)
           updateData.options = newQuestionOptions;
@@ -1588,13 +1689,28 @@ export default function ExamDetail() {
         throw error;
       }
 
+      // Figures are language-independent: mirror option images onto the
+      // sibling-language rows so translated students see the same pictures.
+      if (
+        (!isMultiLang || isPrimaryLanguage) &&
+        (newQuestionType === "single" || newQuestionType === "multi") &&
+        (data as any)?.question_group_id &&
+        Object.prototype.hasOwnProperty.call(updateData, "option_image_urls")
+      ) {
+        await supabase
+          .from("parsed_questions")
+          .update({ option_image_urls: updateData.option_image_urls } as any)
+          .eq("question_group_id", (data as any).question_group_id)
+          .neq("id", editingQuestionId);
+      }
+
       setQuestions(questions.map(q => q.id === editingQuestionId ? data : q));
 
       // Reset form
       setEditingQuestionId(null);
       setNewQuestionText("");
       setNewQuestionType("single");
-      setNewQuestionOptions(["", "", "", ""]);
+      setNewQuestionOptions(["", "", "", ""]); setNewQuestionOptionImages([null, null, null, null]);
       setNewQuestionImages([]); // Updated
       setNewQuestionCorrect("");
 
@@ -1621,7 +1737,7 @@ export default function ExamDetail() {
     setEditingQuestionId(null);
     setNewQuestionText("");
     setNewQuestionType("single");
-    setNewQuestionOptions(["", "", "", ""]);
+    setNewQuestionOptions(["", "", "", ""]); setNewQuestionOptionImages([null, null, null, null]);
     setNewQuestionImages([]);
     setNewQuestionCorrect("");
     setNewQuestionCorrect("");
@@ -1901,6 +2017,37 @@ export default function ExamDetail() {
       let totalCreated = 0;
       let totalSections = 0;
 
+      // Persist the AI's image_region so auto-snip can be RE-RUN after import
+      // (bad crop / skipped images are otherwise unrecoverable — the bbox used
+      // to live only in browser memory during this session). Probe once: on a
+      // DB without the migration the column is absent and we silently skip,
+      // which is exactly the old behavior.
+      let supportsImageRegion = false;
+      try {
+        const { error: colErr } = await supabase
+          .from("parsed_questions")
+          .select("image_region" as any)
+          .limit(1);
+        supportsImageRegion = !colErr;
+      } catch {
+        supportsImageRegion = false;
+      }
+      const regionJsonFor = (aq: any): any => {
+        if (!aq?.imageRegion?.page) return null;
+        const bbox = aq.imageRegion.bbox;
+        return {
+          page: aq.imageRegion.page,
+          ...(bbox
+            ? { x_min: bbox.xMin, y_min: bbox.yMin, x_max: bbox.xMax, y_max: bbox.yMax }
+            : {}),
+          padding_pct: report.imagePaddingPct ?? 5,
+          // Identity of the PDF these coordinates were measured against — if
+          // the section PDF is later replaced, re-snip can warn that the page
+          // numbers may no longer line up.
+          source_pdf_url: extras?.uploadedPdfUrl ?? null,
+        };
+      };
+
       for (const sec of matched) {
         const matchedSectionId = sec.matchedSectionId!;
         const accepted = sec.accepted;
@@ -1951,6 +2098,7 @@ export default function ExamDetail() {
                 is_excluded: false,
                 is_finalized: true,
                 image_urls: snipUrl ? [snipUrl] : null,
+                ...(supportsImageRegion ? { image_region: regionJsonFor(aq) } : {}),
               } as any)
               .select()
               .single();
@@ -2064,6 +2212,11 @@ export default function ExamDetail() {
             if (snipUrl) {
               payload.image_urls = [snipUrl];
             }
+            // Same rule for image_region: attach only when this language's JSON
+            // carried one, so an update never nulls a previously stored region.
+            if (supportsImageRegion && aq.imageRegion?.page) {
+              payload.image_region = regionJsonFor(aq);
+            }
 
             if (existingRow) {
               await supabase
@@ -2167,6 +2320,99 @@ export default function ExamDetail() {
     }
   };
 
+  // ─── Auto-snip retry from the persisted image_region ───
+  // The import stores the AI's page+bbox on the question row, so a bad or
+  // skipped crop is recoverable: re-download the section PDF and re-run the
+  // snipper (which now also snaps to the real embedded-image bounds).
+  const [resnippingId, setResnippingId] = useState<string | null>(null);
+  const resnipPdfCacheRef = useRef<{ url: string; file: File } | null>(null);
+
+  const fetchSectionPdfFile = async (pdfUrl: string): Promise<File> => {
+    if (resnipPdfCacheRef.current?.url === pdfUrl) return resnipPdfCacheRef.current.file;
+    let blob: Blob | null = null;
+    // Prefer an authenticated download — works even when the bucket is private.
+    const marker = "/exam-pdfs/";
+    const idx = pdfUrl.indexOf(marker);
+    if (idx !== -1) {
+      const path = decodeURIComponent(pdfUrl.slice(idx + marker.length).split("?")[0]);
+      const { data, error } = await supabase.storage.from("exam-pdfs").download(path);
+      if (!error && data) blob = data;
+    }
+    if (!blob) {
+      const res = await fetch(pdfUrl);
+      if (!res.ok) throw new Error(`Couldn't download the section PDF (HTTP ${res.status}).`);
+      blob = await res.blob();
+    }
+    const file = new File([blob], "source.pdf", { type: "application/pdf" });
+    resnipPdfCacheRef.current = { url: pdfUrl, file };
+    return file;
+  };
+
+  const handleAutoResnip = async (q: Question) => {
+    const region = q.image_region;
+    if (!section?.pdf_url || !region?.page) return;
+    setResnippingId(q.id);
+    try {
+      const file = await fetchSectionPdfFile(section.pdf_url);
+      const hasBbox = [region.x_min, region.y_min, region.x_max, region.y_max].every(
+        (v: any) => Number.isFinite(v)
+      );
+      const storedPad = Number(region.padding_pct);
+      const results = await autoSnip(
+        file,
+        [{
+          key: q.id,
+          page: Number(region.page),
+          bbox: hasBbox
+            ? { xMin: region.x_min, yMin: region.y_min, xMax: region.x_max, yMax: region.y_max }
+            : undefined,
+        }],
+        // Number.isFinite (not ||) so a stored padding of 0 stays 0.
+        { paddingPct: Number.isFinite(storedPad) ? storedPad : 5 }
+      );
+      const r = results[0];
+      if (!r || r.blob.size === 0) {
+        throw new Error(r?.warning || "Auto-snip produced no image.");
+      }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not signed in.");
+      const url = await uploadQuestionImage(
+        `${user.id}/${examId}/resnip-${q.id}-${Date.now()}.png`,
+        r.blob
+      );
+      // Replace only previous AUTO-snips; keep images the creator attached by
+      // hand (PdfSnipper crops, uploads, pasted screenshots).
+      const isAutoSnipUrl = (u: string) => /\/(auto-snip-|resnip-)/.test(u);
+      const existing = (q.image_urls ?? (q.image_url ? [q.image_url] : [])).filter(
+        (u) => !isAutoSnipUrl(u)
+      );
+      const nextUrls = [url, ...existing];
+      const { error: updErr } = await supabase
+        .from("parsed_questions")
+        .update({ image_urls: nextUrls, image_url: url } as any)
+        .eq("id", q.id);
+      if (updErr) throw updErr;
+      setQuestions((prev) =>
+        prev.map((x) => (x.id === q.id ? { ...x, image_urls: nextUrls, image_url: url } : x))
+      );
+      // Warn when the section PDF changed since the region was recorded —
+      // the page/bbox may point at the wrong content in the new document.
+      const pdfChanged = region.source_pdf_url && region.source_pdf_url !== section.pdf_url;
+      const notes = [
+        pdfChanged ? "the section PDF has changed since this region was recorded — double-check the crop" : null,
+        r.warning || null,
+      ].filter(Boolean).join("; ");
+      toast({
+        title: "Image snipped",
+        description: notes ? `Attached with a note: ${notes}` : "Cropped from the PDF and attached.",
+      });
+    } catch (error: any) {
+      toast({ title: "Auto-snip failed", description: error.message, variant: "destructive" });
+    } finally {
+      setResnippingId(null);
+    }
+  };
+
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0 || !section) return;
     const file = e.target.files[0];
@@ -2207,16 +2453,7 @@ export default function ExamDetail() {
 
       const fileName = `${user.id}/${examId}/${section.id}/snip-${Date.now()}.png`;
       const file = new File([blob], "snip.png", { type: "image/png" });
-
-      const { error: uploadError } = await supabase.storage
-        .from("exam-pdfs")
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("exam-pdfs")
-        .getPublicUrl(fileName);
+      const publicUrl = await uploadQuestionImage(fileName, file);
 
       setNewQuestionImages([...newQuestionImages, publicUrl]);
       toast({ title: "Snip Attached", description: "Image added to new question." });
@@ -2234,16 +2471,7 @@ export default function ExamDetail() {
 
       const fileName = `${user.id}/${examId}/${section.id}/passage-snip-${Date.now()}.png`;
       const file = new File([blob], "passage-snip.png", { type: "image/png" });
-
-      const { error: uploadError } = await supabase.storage
-        .from("exam-pdfs")
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("exam-pdfs")
-        .getPublicUrl(fileName);
+      const publicUrl = await uploadQuestionImage(fileName, file);
 
       setPassageImage(publicUrl);
       toast({ title: "Passage Snip Attached", description: "Image added to passage." });
@@ -2262,15 +2490,7 @@ export default function ExamDetail() {
       if (!user) return;
 
       const fileName = `${user.id}/${examId}/${section.id}/upload-${Date.now()}.png`;
-      const { error: uploadError } = await supabase.storage
-        .from("exam-pdfs")
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("exam-pdfs")
-        .getPublicUrl(fileName);
+      const publicUrl = await uploadQuestionImage(fileName, file, file.type || "image/png");
 
       setNewQuestionImages([...newQuestionImages, publicUrl]);
       toast({ title: "Image Uploaded" });
@@ -2289,21 +2509,53 @@ export default function ExamDetail() {
       if (!user) return;
 
       const fileName = `${user.id}/${examId}/${section.id}/passage-${Date.now()}.png`;
-      const { error: uploadError } = await supabase.storage
-        .from("exam-pdfs")
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("exam-pdfs")
-        .getPublicUrl(fileName);
+      const publicUrl = await uploadQuestionImage(fileName, file, file.type || "image/png");
 
       setPassageImage(publicUrl);
       toast({ title: "Passage Image Uploaded" });
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
+  };
+
+  // ─── Per-option images (figure answer choices) ───
+  // Busy flag prevents an in-flight upload landing on the wrong row after a
+  // concurrent row removal shifted the indices.
+  const [optionImageBusy, setOptionImageBusy] = useState(false);
+
+  const handleOptionImageUpload = async (idx: number, file: File) => {
+    if (!section || optionImageBusy) return;
+    setOptionImageBusy(true);
+    try {
+      toast({ title: "Uploading option image..." });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const fileName = `${user.id}/${examId}/${section.id}/option-${Date.now()}-${idx}.png`;
+      const publicUrl = await uploadQuestionImage(fileName, file, file.type || "image/png");
+      setNewQuestionOptionImages((prev) => {
+        const next = [...prev];
+        while (next.length <= idx) next.push(null);
+        next[idx] = publicUrl;
+        return next;
+      });
+      toast({ title: "Option image attached" });
+    } catch (error: any) {
+      toast({ title: "Upload failed", description: error.message, variant: "destructive" });
+    } finally {
+      setOptionImageBusy(false);
+    }
+  };
+
+  const handleOptionImageRemove = (idx: number) => {
+    if (optionImageBusy) return;
+    setNewQuestionOptionImages((prev) => prev.map((u, i) => (i === idx ? null : u)));
+  };
+
+  // Row removal must drop BOTH arrays at the same index to keep them aligned.
+  const handleRemoveOptionRow = (idx: number) => {
+    if (optionImageBusy) return;
+    setNewQuestionOptions((prev) => prev.filter((_, i) => i !== idx));
+    setNewQuestionOptionImages((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const handlePassageImageRemove = () => {
@@ -2349,7 +2601,7 @@ export default function ExamDetail() {
     setNewQuestionCorrect("");
     setPassageText("");
     setPassageImage(null);
-    setNewQuestionOptions(["", "", "", ""]);
+    setNewQuestionOptions(["", "", "", ""]); setNewQuestionOptionImages([null, null, null, null]);
     setExpandedQuestionId(null);
   };
 
@@ -2367,7 +2619,7 @@ export default function ExamDetail() {
       {/* Header */}
       <header className="sticky top-0 z-10 h-16 border-b border-border/70 bg-card/85 backdrop-blur-xl px-3 sm:px-6 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl shrink-0 text-muted-foreground hover:text-foreground" onClick={() => navigate("/dashboard")}>
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl shrink-0 text-muted-foreground hover:text-foreground" onClick={() => navigate("/dashboard?tab=mock")}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div className="hidden sm:block h-8 w-px bg-border shrink-0" />
@@ -2750,16 +3002,11 @@ export default function ExamDetail() {
                           <div className="flex flex-col gap-1 mb-2">
                             <span className={`text-[10px] font-bold uppercase tracking-widest ${section?.id === s.id ? "text-primary" : "text-muted-foreground"}`}>Section {index + 1}</span>
                             <div className="flex justify-between items-start gap-2 w-full">
-                            <TransliterateInput
+                            <SectionNameEditor
                               lang={activeLanguage}
-                              className="flex-1 h-7 text-sm font-semibold bg-transparent border-transparent hover:border-input focus:border-input rounded-md px-1 -ml-1"
                               value={s.name}
-                              onClick={(e) => e.stopPropagation()}
                               onValueChange={(text) => handleLocalUpdateSection(s.id, { name: text })}
-                              onBlur={(e) => handleUpdateSection(s.id, { name: (e.target as HTMLInputElement).value })}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                              }}
+                              onCommit={(name) => handleUpdateSection(s.id, { name })}
                             />
                             <Button
                               type="button"
@@ -3005,6 +3252,24 @@ export default function ExamDetail() {
                                     </div>
                                   )}
 
+                                  {/* Auto-snip retry: possible whenever the import stored the AI's
+                                      image_region and this section still has its source PDF. */}
+                                  {q.image_region?.page && section?.pdf_url && (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={resnippingId === q.id}
+                                      onClick={() => handleAutoResnip(q)}
+                                    >
+                                      {resnippingId === q.id
+                                        ? "Snipping from PDF…"
+                                        : q.image_url || (q.image_urls && q.image_urls.length > 0)
+                                          ? "Re-snip image from PDF"
+                                          : "Auto-snip image from PDF"}
+                                    </Button>
+                                  )}
+
                                   {q.text && (() => {
                                     // Extract passage section if present
                                     const passageSectionMatch = q.text.match(/<div class="passage-section">([\s\S]*?)<\/div>\s*<div class="question-section">/);
@@ -3045,9 +3310,18 @@ export default function ExamDetail() {
                                       <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Options</Label>
                                       <div className="space-y-1.5">
                                         {(Array.isArray(q.options) ? q.options : []).map((opt: string, optIdx: number) => (
-                                          <div key={optIdx} className="flex items-center gap-2.5 p-2 pl-2.5 bg-muted/40 border border-border/50 rounded-lg">
+                                          <div key={optIdx} className="flex items-start gap-2.5 p-2 pl-2.5 bg-muted/40 border border-border/50 rounded-lg">
                                             <span className="flex items-center justify-center h-6 w-6 rounded-md bg-card border border-border/70 font-bold text-[11px] text-muted-foreground shrink-0">{String.fromCharCode(65 + optIdx)}</span>
-                                            <span className="text-sm" dangerouslySetInnerHTML={{ __html: renderMathInText(opt) }} />
+                                            <div className="min-w-0">
+                                              {!isRichTextEmpty(opt) && <span className="text-sm" dangerouslySetInnerHTML={{ __html: renderMathInRichText(opt) }} />}
+                                              {Array.isArray(q.option_image_urls) && q.option_image_urls[optIdx] && (
+                                                <img
+                                                  src={q.option_image_urls[optIdx]!}
+                                                  alt={`Option ${String.fromCharCode(65 + optIdx)}`}
+                                                  className="max-h-24 rounded-md border border-border/60 mt-1"
+                                                />
+                                              )}
+                                            </div>
                                           </div>
                                         ))}
                                       </div>
@@ -3081,20 +3355,22 @@ export default function ExamDetail() {
                                               <SelectValue placeholder="Select correct option" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                              {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => (
-                                                opt && opt.trim() !== "" ? (
+                                              {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => {
+                                                const hasImage = Array.isArray(q.option_image_urls) && !!q.option_image_urls[idx];
+                                                return !isRichTextEmpty(opt) || hasImage ? (
                                                   <SelectItem key={idx} value={String(idx)}>
-                                                    {String.fromCharCode(65 + idx)}. {opt}
+                                                    {String.fromCharCode(65 + idx)}. {!isRichTextEmpty(opt) ? htmlToPlainText(opt) : "(image option)"}
                                                   </SelectItem>
-                                                ) : null
-                                              ))}
+                                                ) : null;
+                                              })}
                                             </SelectContent>
                                           </Select>
                                         ) : q.answer_type === "multi" ? (
                                           <div className="space-y-2 border border-border/70 rounded-xl p-3 bg-muted/30">
                                             {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => {
                                               const idxStr = String(idx);
-                                              const isEmpty = !opt || opt.trim() === "";
+                                              const hasImage = Array.isArray(q.option_image_urls) && !!q.option_image_urls[idx];
+                                              const isEmpty = isRichTextEmpty(opt) && !hasImage;
                                               const draftArr = Array.isArray(inlineAnswerDraft) ? inlineAnswerDraft : [];
                                               return (
                                                 <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
@@ -3108,12 +3384,12 @@ export default function ExamDetail() {
                                                     htmlFor={`inline-opt-${q.id}-${idx}`}
                                                     className="text-sm font-medium leading-none cursor-pointer"
                                                   >
-                                                    {String.fromCharCode(65 + idx)}. {opt || "(empty)"}
+                                                    {String.fromCharCode(65 + idx)}. {!isRichTextEmpty(opt) ? htmlToPlainText(opt) : hasImage ? "(image option)" : "(empty)"}
                                                   </label>
                                                 </div>
                                               );
                                             })}
-                                            {(Array.isArray(q.options) ? q.options : []).every((opt: string) => !opt || opt.trim() === "") && (
+                                            {(Array.isArray(q.options) ? q.options : []).every((opt: string) => isRichTextEmpty(opt)) && (
                                               <p className="text-sm text-muted-foreground">No options available.</p>
                                             )}
                                           </div>
@@ -3143,8 +3419,8 @@ export default function ExamDetail() {
                                             {q.correct_answer.map((ans: string, ansIdx: number) => {
                                               const idx = Number(ans);
                                               const resolved = !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
-                                                ? `${String.fromCharCode(65 + idx)}. ${renderMathInText(q.options[idx] || "")}`
-                                                : renderMathInText(ans);
+                                                ? `${String.fromCharCode(65 + idx)}. ${renderMathInRichText(q.options[idx] || "")}`
+                                                : renderMathInRichText(ans);
                                               return (
                                                 <div key={ansIdx} className="text-sm font-semibold text-success" dangerouslySetInnerHTML={{ __html: resolved }} />
                                               );
@@ -3156,8 +3432,8 @@ export default function ExamDetail() {
                                             dangerouslySetInnerHTML={{
                                               __html: q.correct_answer !== null && q.correct_answer !== undefined && q.correct_answer !== ""
                                                 ? (() => { const idx = Number(q.correct_answer); return !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
-                                                  ? `${String.fromCharCode(65 + idx)}. ${renderMathInText(q.options[idx] || "")}`
-                                                  : renderMathInText(q.correct_answer); })()
+                                                  ? `${String.fromCharCode(65 + idx)}. ${renderMathInRichText(q.options[idx] || "")}`
+                                                  : renderMathInRichText(q.correct_answer); })()
                                                 : "Not specified"
                                             }}
                                           />
@@ -3444,7 +3720,7 @@ export default function ExamDetail() {
                       options={newQuestionOptions}
                       setOptions={setNewQuestionOptions}
                       correct={newQuestionCorrect}
-                      setCorrect={setNewQuestionCorrect}
+                      setCorrect={(v) => setNewQuestionCorrect(Array.isArray(v) ? v.map(String) : String(v))}
                       images={newQuestionImages}
                       onImageRemove={(idx) => {
                         const newImages = [...newQuestionImages];
@@ -3457,6 +3733,11 @@ export default function ExamDetail() {
                       isEditing={!!editingQuestionId}
                       lang={activeLanguage}
                       lockStructure={isMultiLang && !isPrimaryLanguage && !!editingQuestionId}
+                      optionImages={newQuestionOptionImages}
+                      onOptionImageUpload={handleOptionImageUpload}
+                      onOptionImageRemove={handleOptionImageRemove}
+                      onRemoveOption={handleRemoveOptionRow}
+                      optionImageBusy={optionImageBusy}
                     />
                   </div>
                 </TabsContent>

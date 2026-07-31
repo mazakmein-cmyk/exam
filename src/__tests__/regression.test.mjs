@@ -360,6 +360,99 @@ test("examServiceTs: is_correct is still set on every response row", () => {
   assertContains(src, "is_correct: isCorrect", "examService no longer saves is_correct to responses!");
 });
 
+// ─── Rich-text answer options ─────────────────────────────────────────────────
+// Options can now hold editor HTML (bold/math/colour) as well as the plain text
+// every older row still contains. Both shapes must keep working: markup renders
+// as markup, plain text keeps the HTML-ESCAPING path so "a < b" isn't eaten.
+console.log("\n[8] Rich-text answer options");
+
+test("richText: helpers exist and the tag test is allowlist-based", () => {
+  const src = readSrc("lib/richText.ts");
+  assertContains(src, "export function looksLikeHtml");
+  assertContains(src, "export function htmlToPlainText");
+  assertContains(src, "export function isRichTextEmpty");
+  assertContains(src, "export function optionMatchKey");
+  assertContains(src, "EDITOR_TAGS", "tag detection must use the editor-tag allowlist");
+});
+
+test("renderMath: renderMathInRichText routes HTML vs plain text", () => {
+  const src = readSrc("lib/renderMath.ts");
+  assertContains(src, "export function renderMathInRichText");
+  assertContains(
+    src,
+    "looksLikeHtml(s) ? renderMathInHtml(s) : renderMathInText(s)",
+    "rich-text renderer must fall back to the escaping path for plain options"
+  );
+});
+
+test("QuestionForm: option fields use the rich editor, not a plain input", () => {
+  const src = readSrc("components/QuestionForm.tsx");
+  assertContains(src, "<RichTextEditor", "options no longer render a rich editor");
+  assertContains(src, "singleLine", "option editor should swallow Enter");
+  assertNotContains(
+    src,
+    "placeholder={`Option ${idx + 1}`}\n                                    value={opt}",
+    "options fell back to the plain TransliterateInput"
+  );
+});
+
+test("RichTextEditor: keeps Indic transliteration for option typing", () => {
+  const src = readSrc("components/RichTextEditor.tsx");
+  assertContains(src, "getTransliterationSuggestions", "transliteration was dropped");
+  assertContains(src, "handleTranslitKeyDown", "suggestion keyboard nav missing");
+});
+
+test("every option renderer handles markup (no renderMathInText on options)", () => {
+  for (const file of [
+    "pages/ExamSimulator.tsx",
+    "pages/ExamReview.tsx",
+    "pages/LiveExamStudent.tsx",
+    "pages/LiveExamControl.tsx",
+    "pages/Analytics.tsx",
+    "pages/AdminDashboard.tsx",
+    "pages/LiveExamDetail.tsx",
+  ]) {
+    const src = readSrc(file);
+    assertNotContains(
+      src,
+      "renderMathInText(opt",
+      `${file} still escapes option markup — bold/math options would show raw tags`
+    );
+    assertNotContains(
+      src,
+      "renderMathInText(option",
+      `${file} still escapes option markup — bold/math options would show raw tags`
+    );
+  }
+});
+
+test("blank rich-text options can't be saved as real choices", () => {
+  const examDetail = readSrc("pages/ExamDetail.tsx");
+  const liveDetail = readSrc("pages/LiveExamDetail.tsx");
+  assertContains(
+    examDetail,
+    "!isRichTextEmpty(newQuestionOptions[i])",
+    "ExamDetail still uses .trim() — a cleared editor's <br> would be saved as an option"
+  );
+  // Same shape as ExamDetail now: joint text-or-image filtering keeps
+  // image-only options while still treating a cleared editor as blank.
+  assertContains(
+    liveDetail,
+    "!isRichTextEmpty(newQuestionOptions[i])",
+    "LiveExamDetail still uses .trim() — a cleared editor's <br> would be saved as an option"
+  );
+});
+
+test("text-based answers still match options the creator has formatted", () => {
+  const src = readSrc("pages/ExamReview.tsx");
+  assertContains(src, "optionMatchKey(o) === optionMatchKey(val)");
+  assertNotContains(
+    src,
+    "String(o).trim().toLowerCase() === String(val).trim().toLowerCase()",
+    "option-text matching compares raw HTML — a bolded option stops matching its stored answer"
+  );
+});
+
 // ─── Summary ─────────────────────────────────────────────────────────────────
 console.log("\n" + "─".repeat(60));
 console.log(`Results: ${passed} passed, ${failed} failed`);

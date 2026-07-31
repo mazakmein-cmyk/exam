@@ -54,6 +54,9 @@ export type LiveQuestion = {
   time_seconds: number;
   image_url: string | null;
   image_urls: string[] | null;
+  /** Per-option images aligned with options (null = none). May be absent
+   *  until the live option-image migration is applied. */
+  option_image_urls?: (string | null)[] | null;
   question_group_id: string | null;
   global_index: number;
   section_label: string | null;
@@ -362,6 +365,9 @@ export async function duplicateLiveExam(examId: string): Promise<LiveExam> {
           time_seconds: q.time_seconds,
           image_url: q.image_url,
           image_urls: q.image_urls,
+          // Self-gating: select("*") only yields this key when the column
+          // exists, so unmigrated DBs omit it from the insert automatically.
+          ...(q.option_image_urls !== undefined ? { option_image_urls: q.option_image_urls } : {}),
           question_group_id: newGroupId,
           global_index: q.global_index,
           section_label: q.section_label,
@@ -451,6 +457,68 @@ export async function deleteLiveSection(sectionId: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Keep the denormalized section_label on questions in step with a section rename. */
+export async function syncLiveQuestionSectionLabels(sectionId: string, label: string): Promise<void> {
+  const { error } = await supabase
+    .from("live_questions")
+    .update({ section_label: label })
+    .eq("live_section_id", sectionId);
+
+  if (error) throw error;
+}
+
+/**
+ * Re-derive play order from section order after a section reorder.
+ *
+ * Play order is global_index, not section sort_order — the ordinal RPCs sort
+ * by (global_index, q_no, id) — so moving a section only takes effect once
+ * every question is renumbered by walking sections in their new sort_order.
+ * Each language is walked with the same section-group order and q_no ordering,
+ * so sibling questions keep matching global_index values across languages.
+ */
+export async function renumberLiveGlobalIndexes(examId: string): Promise<void> {
+  const sections = await fetchLiveSections(examId); // ordered by sort_order
+  if (sections.length === 0) return;
+
+  const { data, error } = await supabase
+    .from("live_questions")
+    .select("id, live_section_id, q_no, global_index")
+    .in("live_section_id", sections.map(s => s.id));
+
+  if (error) throw error;
+
+  const bySection = new Map<string, { id: string; q_no: number; global_index: number }[]>();
+  for (const q of (data || []) as { id: string; live_section_id: string; q_no: number; global_index: number }[]) {
+    const list = bySection.get(q.live_section_id) || [];
+    list.push(q);
+    bySection.set(q.live_section_id, list);
+  }
+
+  const languages = Array.from(new Set(sections.map(s => s.language)));
+  for (const lang of languages) {
+    const langSections = sections
+      .filter(s => s.language === lang)
+      .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id));
+
+    let idx = 0;
+    for (const sec of langSections) {
+      const qs = (bySection.get(sec.id) || []).sort(
+        (a, b) => a.q_no - b.q_no || a.id.localeCompare(b.id)
+      );
+      for (const q of qs) {
+        if (q.global_index !== idx) {
+          const { error: updError } = await supabase
+            .from("live_questions")
+            .update({ global_index: idx })
+            .eq("id", q.id);
+          if (updError) throw updError;
+        }
+        idx++;
+      }
+    }
+  }
+}
+
 // ─── Questions CRUD ──────────────────────────────────────────
 
 export async function fetchLiveQuestions(sectionId: string): Promise<LiveQuestion[]> {
@@ -535,6 +603,8 @@ export async function createLiveQuestion(question: {
   time_seconds: number;
   image_url?: string;
   image_urls?: string[];
+  /** Callers must include this ONLY when the column exists (probe-gated). */
+  option_image_urls?: (string | null)[] | null;
   question_group_id?: string;
   global_index: number;
   section_label?: string;
@@ -741,6 +811,29 @@ export async function joinLiveExam(examId: string): Promise<LiveParticipant> {
     .single();
 
   const displayName = profile?.full_name || profile?.username || user.email?.split("@")[0] || "Anonymous";
+
+  // Check if the user is the creator of the exam
+  const { data: examData } = await supabase
+    .from("live_exams")
+    .select("user_id")
+    .eq("id", examId)
+    .single();
+
+  if (examData?.user_id === user.id) {
+    // Creator is just viewing, do not insert them into live_participants
+    return {
+      id: "creator-preview",
+      live_exam_id: examId,
+      user_id: user.id,
+      display_name: displayName + " (Preview)",
+      total_correct: 0,
+      total_answered: 0,
+      total_time_ms: 0,
+      rank: 0,
+      is_active: true,
+      joined_at: new Date().toISOString()
+    } as unknown as LiveParticipant;
+  }
 
   const { data, error } = await supabase
     .from("live_participants")

@@ -14,7 +14,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -455,7 +455,7 @@ export default function LiveExamControl() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4">
         <p className="text-muted-foreground">Live exam not found</p>
-        <Button onClick={() => navigate("/dashboard")}>Back to Dashboard</Button>
+        <Button onClick={() => navigate("/dashboard?tab=live")}>Back to Dashboard</Button>
       </div>
     );
   }
@@ -662,10 +662,46 @@ export default function LiveExamControl() {
                 {/* Show current question */}
                 {currentQuestion ? (
                   <div className="space-y-4">
-                    <div
-                      className="text-base leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: renderMathInHtml(currentQuestion.text) }}
-                    />
+                    {(() => {
+                      const questionText = currentQuestion?.text || "";
+                      const hasPassageSection = questionText.includes('class="passage-section"');
+
+                      if (hasPassageSection) {
+                        const passageImageMatch = questionText.match(/<img[^>]*src="([^"]*)"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/) ||
+                          questionText.match(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*src="([^"]*)"[^>]*>/);
+                        const passageSectionMatch = questionText.match(/<div class="passage-section"[^>]*>([\s\S]*?)<\/div><div class="question-section"/);
+                        let passageContent = passageSectionMatch ? passageSectionMatch[1] : "";
+                        passageContent = passageContent.replace(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "")
+                          .replace(/<img[^>]*src="[^"]*"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "").trim();
+                        const passageImageUrl = passageImageMatch ? passageImageMatch[1] : null;
+                        const questionSectionMatch = questionText.match(/<div class="question-section"[^>]*>([\s\S]*?)<\/div>$/);
+                        const questionContent = questionSectionMatch ? questionSectionMatch[1].trim() : "";
+
+                        return (
+                          <div className="flex flex-col lg:flex-row gap-6">
+                            <div className="lg:w-1/2 space-y-3 border-r-0 lg:border-r lg:pr-6">
+                              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Passage</h3>
+                              {passageImageUrl && (
+                                <div className="border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50 flex justify-center">
+                                  <img src={passageImageUrl} alt="Passage" className="max-w-full max-h-[300px] h-auto rounded-md object-contain" />
+                                </div>
+                              )}
+                              {passageContent && (
+                                <div className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert" dangerouslySetInnerHTML={{ __html: renderMathInHtml(passageContent) }} />
+                              )}
+                            </div>
+                            <div className="lg:w-1/2 space-y-3">
+                              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Question</h3>
+                              <div className="text-base leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(questionContent) }} />
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="text-base leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(questionText) }} />
+                      );
+                    })()}
                     {/* Options display */}
                     {currentQuestion.options && Array.isArray(currentQuestion.options) && (
                       <div className="space-y-2">
@@ -693,7 +729,16 @@ export default function LiveExamControl() {
                                 <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center font-mono text-xs font-bold shrink-0">
                                   {String.fromCharCode(65 + i)}
                                 </span>
-                                <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(opt) }} />
+                                <div className="flex-1 min-w-0">
+                                  <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(opt) }} />
+                                  {Array.isArray(currentQuestion.option_image_urls) && currentQuestion.option_image_urls[i] && (
+                                    <img
+                                      src={currentQuestion.option_image_urls[i]!}
+                                      alt={`Option ${String.fromCharCode(65 + i)}`}
+                                      className="max-h-28 max-w-full rounded-md border border-border/60 mt-1"
+                                    />
+                                  )}
+                                </div>
                                 {showCorrect && isCorrect && <Check className="h-5 w-5 text-emerald-600 shrink-0" />}
                               </div>
                               {/* Response distribution bar */}
@@ -956,36 +1001,79 @@ export default function LiveExamControl() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold text-muted-foreground">Question Progress</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-1.5">
-                  {questions.map((q, idx) => {
-                    const qAnalytics = analytics.get(q.id);
-                    const isCurrent = idx === currentQuestionIndex;
-                    const isPast = idx < currentQuestionIndex;
-                    const isFuture = idx > currentQuestionIndex;
+              <CardContent className="space-y-4">
+                {sections.length > 0 ? (
+                  sections.map((section) => {
+                    const sectionQuestions = questions.filter((q) => q.live_section_id === section.id);
+                    if (sectionQuestions.length === 0) return null;
+
                     return (
-                      <div
-                        key={q.id}
-                        className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
-                          isCurrent && isTimerActive
-                            ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2 animate-pulse"
-                            : isCurrent && isTimerExpired
-                            ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2"
-                            : isPast && qAnalytics
-                            ? "bg-emerald-500/15 text-emerald-700 border border-emerald-500/30"
-                            : isFuture
-                            ? "bg-muted/50 text-muted-foreground"
-                            : isCurrent
-                            ? "bg-emerald-500 text-white"
-                            : "bg-muted/50 text-muted-foreground"
-                        }`}
-                        title={`Q${idx + 1}: ${q.text.replace(/<[^>]*>/g, '').substring(0, 50)}`}
-                      >
-                        {idx + 1}
+                      <div key={section.id} className="space-y-2">
+                        <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{section.name}</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {sectionQuestions.map((q) => {
+                            const idx = questions.findIndex((allQ) => allQ.id === q.id);
+                            const qAnalytics = analytics.get(q.id);
+                            const isCurrent = idx === currentQuestionIndex;
+                            const isPast = idx < currentQuestionIndex;
+                            const isFuture = idx > currentQuestionIndex;
+                            return (
+                              <div
+                                key={q.id}
+                                className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
+                                  isCurrent && isTimerActive
+                                    ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2 animate-pulse"
+                                    : isCurrent && isTimerExpired
+                                    ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2"
+                                    : isPast && qAnalytics
+                                    ? "bg-emerald-500/15 text-emerald-700 border border-emerald-500/30"
+                                    : isFuture
+                                    ? "bg-muted/50 text-muted-foreground"
+                                    : isCurrent
+                                    ? "bg-emerald-500 text-white"
+                                    : "bg-muted/50 text-muted-foreground"
+                                }`}
+                                title={`Q${idx + 1}: ${q.text.replace(/<[^>]*>/g, '').substring(0, 50)}`}
+                              >
+                                {idx + 1}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
-                  })}
-                </div>
+                  })
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {questions.map((q, idx) => {
+                      const qAnalytics = analytics.get(q.id);
+                      const isCurrent = idx === currentQuestionIndex;
+                      const isPast = idx < currentQuestionIndex;
+                      const isFuture = idx > currentQuestionIndex;
+                      return (
+                        <div
+                          key={q.id}
+                          className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
+                            isCurrent && isTimerActive
+                              ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2 animate-pulse"
+                              : isCurrent && isTimerExpired
+                              ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2"
+                              : isPast && qAnalytics
+                              ? "bg-emerald-500/15 text-emerald-700 border border-emerald-500/30"
+                              : isFuture
+                              ? "bg-muted/50 text-muted-foreground"
+                              : isCurrent
+                              ? "bg-emerald-500 text-white"
+                              : "bg-muted/50 text-muted-foreground"
+                          }`}
+                          title={`Q${idx + 1}: ${q.text.replace(/<[^>]*>/g, '').substring(0, 50)}`}
+                        >
+                          {idx + 1}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

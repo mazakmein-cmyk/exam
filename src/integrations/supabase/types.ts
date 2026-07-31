@@ -295,6 +295,7 @@ export type Database = {
           image_url: string | null
           image_urls: string[] | null
           live_section_id: string
+          option_image_urls: Json | null
           options: Json | null
           q_no: number
           question_group_id: string | null
@@ -311,6 +312,7 @@ export type Database = {
           image_url?: string | null
           image_urls?: string[] | null
           live_section_id: string
+          option_image_urls?: Json | null
           options?: Json | null
           q_no: number
           question_group_id?: string | null
@@ -327,6 +329,7 @@ export type Database = {
           image_url?: string | null
           image_urls?: string[] | null
           live_section_id?: string
+          option_image_urls?: Json | null
           options?: Json | null
           q_no?: number
           question_group_id?: string | null
@@ -445,10 +448,12 @@ export type Database = {
           created_at: string
           final_order: number | null
           id: string
+          image_region: Json | null
           image_url: string | null
           image_urls: string[] | null
           is_excluded: boolean | null
           is_finalized: boolean | null
+          option_image_urls: Json | null
           options: Json | null
           q_no: number
           question_group_id: string | null
@@ -465,10 +470,12 @@ export type Database = {
           created_at?: string
           final_order?: number | null
           id?: string
+          image_region?: Json | null
           image_url?: string | null
           image_urls?: string[] | null
           is_excluded?: boolean | null
           is_finalized?: boolean | null
+          option_image_urls?: Json | null
           options?: Json | null
           q_no: number
           question_group_id?: string | null
@@ -485,10 +492,12 @@ export type Database = {
           created_at?: string
           final_order?: number | null
           id?: string
+          image_region?: Json | null
           image_url?: string | null
           image_urls?: string[] | null
           is_excluded?: boolean | null
           is_finalized?: boolean | null
+          option_image_urls?: Json | null
           options?: Json | null
           q_no?: number
           question_group_id?: string | null

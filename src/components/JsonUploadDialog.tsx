@@ -11,6 +11,7 @@
  */
 import { useEffect, useRef, useState, useMemo, useCallback, lazy, Suspense } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import {
@@ -515,12 +516,13 @@ export default function JsonUploadDialog({
         }
       }
 
-      // Step 2: Upload all snip blobs to the same bucket the rest of the app
-      // uses for PDFs and manual passage images. Path starts with user.id so
-      // the bucket's `auth.uid()::text = foldername(name)[1]` RLS policy is
-      // satisfied — same pattern as
-      // [ExamDetail.tsx:2226](src/pages/ExamDetail.tsx#L2226) and
-      // [ManualFixEditor.tsx:150](src/pages/ManualFixEditor.tsx#L150).
+      // Step 2: Upload all snip blobs. Student-visible images go to the PUBLIC
+      // question-images bucket via uploadQuestionImage (the private exam-pdfs
+      // bucket 403s public URLs for non-owners); the helper falls back to
+      // exam-pdfs if the bucket migration hasn't been applied. Path starts
+      // with user.id to satisfy the `auth.uid()::text = foldername(name)[1]`
+      // INSERT policy — same pattern as ExamDetail's and ManualFixEditor's
+      // image uploads.
       const snipUrls = new Map<string, string>();
       if (!skipImages && snipResults.size > 0) {
         try {
@@ -533,14 +535,10 @@ export default function JsonUploadDialog({
             if (val.blob.size === 0) continue; // failed snip — skip upload
             const safeKey = key.replace(/[^A-Za-z0-9_-]/g, "_");
             const snipPath = `${user.id}/${examId}/auto-snip-${safeKey}-${Date.now()}.png`;
-            const { error: snipErr } = await supabase.storage
-              .from(dataSource.storageBucket)
-              .upload(snipPath, val.blob, { upsert: true, contentType: "image/png" });
-            if (snipErr) throw snipErr;
-            const { data: pub } = supabase.storage
-              .from(dataSource.storageBucket)
-              .getPublicUrl(snipPath);
-            snipUrls.set(key, pub.publicUrl);
+            // Student-visible image → public question-images bucket (with
+            // automatic exam-pdfs fallback if that bucket doesn't exist yet).
+            const publicUrl = await uploadQuestionImage(snipPath, val.blob);
+            snipUrls.set(key, publicUrl);
           }
         } catch (err: any) {
           toast({

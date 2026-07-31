@@ -1,7 +1,7 @@
 import { useEffect, useState, Fragment, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { renderMathInHtml, renderMathInText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +53,7 @@ interface QuestionStats {
   options: any;
   imageUrl: string | null;
   imageUrls: string[] | null;
+  optionImageUrls?: (string | null)[] | null;
   reviewedCount: number;
   commonWrongAnswers: Record<string, number>;
   mostCommonWrong?: string | null;
@@ -169,7 +170,7 @@ export default function Analytics() {
           supabase
             .from("parsed_questions")
             .select(`
-              id, text, q_no, correct_answer, answer_type, options, image_url, image_urls,
+              *,
               section:sections!inner(id, name, exam_id, sort_order)
             `)
             .eq("section.exam_id", examId),
@@ -465,6 +466,7 @@ export default function Analytics() {
 
               imageUrl: q.image_url,
               imageUrls: q.image_urls,
+              optionImageUrls: Array.isArray(q.option_image_urls) ? q.option_image_urls : null,
               reviewedCount: 0,
               commonWrongAnswers: {}
             });
@@ -1590,7 +1592,18 @@ export default function Analytics() {
                               className={`flex items-center gap-3 p-3 rounded-md border ${isCorrect ? "bg-green-50 border-green-500 dark:bg-green-950" : "bg-background border-border"}`}
                             >
                               <span className="font-medium text-sm">{String.fromCharCode(65 + oIdx)})</span>
-                              <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
+                              <div className="flex-1 min-w-0">
+                                {String(option ?? "").trim() !== "" && (
+                                  <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(option) }} />
+                                )}
+                                {question.optionImageUrls?.[oIdx] && (
+                                  <img
+                                    src={question.optionImageUrls[oIdx]!}
+                                    alt={`Option ${String.fromCharCode(65 + oIdx)}`}
+                                    className="max-h-28 max-w-full rounded-md border border-border/60 mt-1"
+                                  />
+                                )}
+                              </div>
                               {isCorrect && <CheckCircle2 className="w-4 h-4 text-green-500" />}
                             </div>
                           );
@@ -1603,7 +1616,7 @@ export default function Analytics() {
                       <span
                         className="text-green-600 font-medium"
                         dangerouslySetInnerHTML={{
-                          __html: renderMathInText(Array.isArray(question.correctAnswer)
+                          __html: renderMathInRichText(Array.isArray(question.correctAnswer)
                             ? question.correctAnswer.join(", ")
                             : (typeof question.correctAnswer === 'object'
                               ? (question.correctAnswer.answer || JSON.stringify(question.correctAnswer))
@@ -1684,7 +1697,18 @@ export default function Analytics() {
                             }`}
                         >
                           <span className="font-medium text-sm">{String.fromCharCode(65 + idx)})</span>
-                          <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInText(option) }} />
+                          <div className="flex-1 min-w-0">
+                            {String(option ?? "").trim() !== "" && (
+                              <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(option) }} />
+                            )}
+                            {selectedQuestion.optionImageUrls?.[idx] && (
+                              <img
+                                src={selectedQuestion.optionImageUrls[idx]!}
+                                alt={`Option ${String.fromCharCode(65 + idx)}`}
+                                className="max-h-28 max-w-full rounded-md border border-border/60 mt-1"
+                              />
+                            )}
+                          </div>
                           {isCorrect && <CheckCircle2 className="w-4 h-4 text-green-500" />}
                           {!isCorrect && selectedQuestion.mostCommonWrong && normalize(selectedQuestion.mostCommonWrong) === normalize(option) && (
                             <Badge variant="destructive" className="text-[10px] h-5 px-1.5 ml-2 whitespace-nowrap">
