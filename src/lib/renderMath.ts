@@ -26,7 +26,7 @@
  *    by the fast path and can never be double-rendered.
  */
 import katex from "katex";
-import { looksLikeHtml } from "./richText";
+import { looksLikeHtml, renderClozeBlanks } from "./richText";
 
 // ─── Bounded cache (exam pages re-render on every timer tick) ─────────────
 const CACHE_MAX = 500;
@@ -249,7 +249,8 @@ function mayContainMath(s: string): boolean {
  * through untouched; on any failure the original string is returned.
  */
 export function renderMathInHtml(html: string | null | undefined): string {
-  const s = html ?? "";
+  // Cloze markers first: they must render as blanks even in math-free text.
+  const s = renderClozeBlanks(html ?? "");
   if (!s || !mayContainMath(s)) return s;
   const key = "h:" + s;
   const hit = cache.get(key);
@@ -270,7 +271,8 @@ export function renderMathInHtml(html: string | null | undefined): string {
  * JSX did. Always returns an HTML string for dangerouslySetInnerHTML.
  */
 export function renderMathInText(text: unknown): string {
-  const s = text == null ? "" : String(text);
+  // Cloze markers first — the plain-text form survives escaping unchanged.
+  const s = renderClozeBlanks(text == null ? "" : String(text));
   if (!s) return "";
   const key = "t:" + s;
   const hit = cache.get(key);

@@ -2,9 +2,10 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
+import { renderClozeBlanks } from "@/lib/richText";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu, Info } from "lucide-react";
+import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu, Info, Eye } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -26,6 +27,8 @@ import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/co
 import OptimizedImage from "@/components/OptimizedImage";
 import { MarksQuestionBadge } from "@/components/marks/MarksQuestionBadge";
 import type { ScoringConfig } from "@/services/scoringEngine";
+import { toExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/examAccess";
+import CreatorExamBlocked from "@/components/CreatorExamBlocked";
 
 type Question = {
   id: string;
@@ -85,6 +88,11 @@ const ExamSimulator = () => {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [scoringConfigs, setScoringConfigs] = useState<Map<string, ScoringConfig>>(new Map());
   const [showMarksInSim, setShowMarksInSim] = useState(true);
+  // Derived from the signed-in account, never from the URL: "take" for
+  // students/guests, "preview" for the exam's own creator (nothing is
+  // persisted), "blocked" for a creator on someone else's exam.
+  const [access, setAccess] = useState<ExamAccessMode>("take");
+  const isPreview = access === "preview";
 
   // Spin up the Web Worker once on mount and tear it down on unmount
   useEffect(() => {
@@ -191,7 +199,7 @@ const ExamSimulator = () => {
         { data: questionsData },
       ] = await Promise.all([
         supabase.auth.getUser(),
-        supabase.from("exams").select("is_published, primary_language").eq("id", examId).single(),
+        supabase.from("exams").select("is_published, primary_language, user_id").eq("id", examId).single(),
         supabase
           .from("sections")
           .select("*")
@@ -218,6 +226,12 @@ const ExamSimulator = () => {
         });
         return;
       }
+
+      // Creator accounts never sit an exam. Their own exam runs in preview
+      // (browsable, but nothing recorded); anyone else's is blocked outright.
+      const mode = resolveExamAccess(toExamViewer(user), (examData as any)?.user_id);
+      setAccess(mode);
+      if (mode === "blocked") return;
 
       // Filter to only sections matching the language, or all if single-lang (legacy)
       const allSecs = allSectionsData || [];
@@ -339,8 +353,12 @@ const ExamSimulator = () => {
         }), {})
       );
 
-      // Create attempt record only now (not on page load)
-      if (user) {
+      // Create attempt record only now (not on page load).
+      // A creator preview deliberately skips this: with no attempt row there is
+      // nothing to grade, nothing to submit, and nothing in the creator's own
+      // analytics. (The DB blocks creator attempts too — this keeps the UI from
+      // ever asking for one.)
+      if (user && !isPreview) {
         const { data, error } = await supabase
           .from("attempts")
           .insert({
@@ -480,6 +498,16 @@ const ExamSimulator = () => {
   });
 
   const submitExam = async () => {
+    // Creator preview: nothing is graded, stored, or queued for a later sign-in.
+    if (isPreview) {
+      toast({
+        title: "Preview finished",
+        description: "Previews aren't scored or saved.",
+      });
+      setShowSectionCompleteDialog(true);
+      return;
+    }
+
     // Calculate time for current question synchronously (state updates are async)
     const currentQuestion = questions[currentQuestionIndex];
     const currentQuestionTimeSpent = currentQuestion
@@ -563,7 +591,10 @@ const ExamSimulator = () => {
   };
 
   const handleFinishExam = () => {
-    if (attemptId) {
+    if (isPreview) {
+      // No attempt to review — send the creator back to their exam editor.
+      navigate(`/exam/${examId}`);
+    } else if (attemptId) {
       navigate(`/exam/review/${attemptId}`);
     } else {
       // Anonymous users - redirect to auth to save progress
@@ -760,13 +791,17 @@ const ExamSimulator = () => {
     );
   }
 
+  if (access === "blocked") {
+    return <CreatorExamBlocked />;
+  }
+
   if (!hasStarted) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="absolute top-6 left-6">
-          <Button variant="ghost" onClick={() => navigate("/analytics")}>
+          <Button variant="ghost" onClick={() => navigate(isPreview ? `/exam/${examId}` : "/analytics")}>
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
+            {isPreview ? "Back to Editor" : "Back to Dashboard"}
           </Button>
         </div>
         <Card className="max-w-md w-full">
@@ -780,8 +815,17 @@ const ExamSimulator = () => {
                 Total Questions: {questions.length}
               </p>
             </div>
+            {isPreview && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2">
+                <Eye className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  <span className="font-semibold text-foreground">Preview mode.</span>{" "}
+                  This is your own exam — answers aren't scored or saved, and no attempt is recorded.
+                </p>
+              </div>
+            )}
             <Button onClick={handleStartSection} className="w-full" size="lg">
-              Start Section
+              {isPreview ? "Start Preview" : "Start Section"}
             </Button>
           </CardContent>
         </Card>
@@ -798,6 +842,12 @@ const ExamSimulator = () => {
         <div className="container mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-semibold text-foreground truncate max-w-[150px] sm:max-w-md">{section?.name}</h1>
+            {isPreview && (
+              <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                <Eye className="h-3 w-3" />
+                Preview
+              </span>
+            )}
           </div>
           <div className="flex items-center space-x-4 text-foreground">
             <div className="flex items-center space-x-2">
@@ -990,7 +1040,7 @@ const ExamSimulator = () => {
                             <div
                               className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                               dangerouslySetInnerHTML={{
-                                __html: renderMathInHtml(questionContent
+                                __html: renderMathInHtml(renderClozeBlanks(questionContent)
                                   .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                                   .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                                   .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -1036,7 +1086,7 @@ const ExamSimulator = () => {
                         <div
                           className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                           dangerouslySetInnerHTML={{
-                            __html: renderMathInHtml(currentQuestion.text
+                            __html: renderMathInHtml(renderClozeBlanks(currentQuestion.text)
                               .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                               .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                               .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -1146,9 +1196,11 @@ const ExamSimulator = () => {
       <AlertDialog open={showSubmitDialog} onOpenChange={setShowSubmitDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Submit Section?</AlertDialogTitle>
+            <AlertDialogTitle>{isPreview ? "End Preview?" : "Submit Section?"}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to submit this section? You cannot change your answers after submission.
+              {isPreview
+                ? "This ends the preview. Nothing is scored or saved."
+                : "Are you sure you want to submit this section? You cannot change your answers after submission."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1162,16 +1214,22 @@ const ExamSimulator = () => {
       <AlertDialog open={showSectionCompleteDialog} onOpenChange={setShowSectionCompleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Section Completed!</AlertDialogTitle>
+            <AlertDialogTitle>{isPreview ? "Preview Finished" : "Section Completed!"}</AlertDialogTitle>
             <AlertDialogDescription>
-              You have successfully completed <strong>{section?.name}</strong>.
+              {isPreview ? (
+                <>You've reached the end of <strong>{section?.name}</strong>. Nothing was scored or saved.</>
+              ) : (
+                <>You have successfully completed <strong>{section?.name}</strong>.</>
+              )}
               {allSections.find(s => s.id === sectionId)?.id !== allSections[allSections.length - 1].id ? (
                 <p className="mt-2">
                   Click below to proceed.
                 </p>
               ) : (
                 <p className="mt-2">
-                  You have completed all sections of the exam.
+                  {isPreview
+                    ? "That's every section of this exam."
+                    : "You have completed all sections of the exam."}
                 </p>
               )}
             </AlertDialogDescription>
@@ -1183,7 +1241,7 @@ const ExamSimulator = () => {
               </AlertDialogAction>
             ) : (
               <AlertDialogAction onClick={handleFinishExam}>
-                Finish Exam
+                {isPreview ? "Back to Editor" : "Finish Exam"}
               </AlertDialogAction>
             )}
           </AlertDialogFooter>

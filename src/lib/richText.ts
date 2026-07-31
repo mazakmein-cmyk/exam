@@ -117,3 +117,22 @@ export function isRichTextEmpty(value: unknown): boolean {
 export function optionMatchKey(value: unknown): string {
   return htmlToPlainText(value).trim().toLowerCase();
 }
+
+/**
+ * Render AI cloze-blank markers as readable fill-in-the-blank gaps.
+ *
+ * Gemini transcribes a PDF's "____1____" blanks as `***1***` in imported
+ * passages and question text ("seem to feel ***1*** if they do not engage
+ * ***2*** small talk"). Left alone they display as literal asterisks — and
+ * on surfaces that run the markdown-lite bold/italic pass, `***1***` gets
+ * half-consumed into broken <strong>/<em> nesting. This rewrites them into
+ * the plain-text form students expect: `___(1)___`.
+ *
+ * Digits-only (1-2), so genuine ***bold-italic*** prose is never touched.
+ * Plain-text output survives HTML escaping, markdown passes, and KaTeX
+ * scanning unchanged, so it is safe as the FIRST step of any render chain.
+ */
+export function renderClozeBlanks(value: string): string {
+  if (!value || value.indexOf("***") === -1) return value;
+  return value.replace(/\*\*\*\s*\(?(\d{1,2})\)?\s*\*\*\*/g, "___($1)___");
+}

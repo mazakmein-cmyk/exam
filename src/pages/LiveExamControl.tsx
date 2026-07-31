@@ -1,22 +1,27 @@
 /**
  * LiveExamControl.tsx — Creator Live Dashboard (The Control Room)
  *
- * This page is the heart of the live exam experience for the creator.
- * From here, the creator can:
- *   - See the live student count
- *   - Unlock the next question (timer starts on unlock)
- *   - See real-time submission count per question
- *   - View per-question analytics after the timer ends
- *   - See the Top 20 leaderboard
- *   - End the exam
+ * Design intent
+ * -------------
+ * A creator running a live exam is presenting: they cannot hunt for a control
+ * while 120 students wait. So this screen is a cockpit, not a document — on a
+ * laptop it fills the viewport exactly and never scrolls as a page. Only two
+ * inner panes scroll (question preview, leaderboard); everything a creator acts
+ * on stays pinned:
+ *
+ *   ┌ header ─ status · students online · share · end ────────────────┐
+ *   ├ control deck ─ timer ring · answered meter · UNLOCK ───┬ ranks ─┤
+ *   │ question preview (scrolls)                             │(scroll)│
+ *   ├ question rail ─ whole exam at a glance, click to review ─────────┤
+ *
+ * The rail doubles as navigation: clicking a past question swaps the preview
+ * pane to it, which is why the old stacked "Previous Questions" accordion is
+ * gone — it pushed the live controls off screen.
  */
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -43,18 +48,27 @@ import {
   Users,
   Clock,
   Trophy,
-  BarChart3,
   Check,
-  X,
-  ChevronDown,
-  ChevronUp,
   Zap,
   Radio,
   Copy,
   QrCode as QrCodeIcon,
+  Eye,
+  EyeOff,
+  Target,
+  Hourglass,
+  CornerUpLeft,
+  CheckCircle2,
+  ListChecks,
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import SEO from "@/components/SEO";
+import LiveQuestionBody, { questionPreviewText } from "@/components/live/LiveQuestionBody";
+import LiveOption, { type OptionVisual } from "@/components/live/LiveOption";
+import LiveLeaderboard from "@/components/live/LiveLeaderboard";
+import QuestionRail, { RailLegend, type ChipStatus, type RailItem } from "@/components/live/QuestionRail";
+import { TimerBar, TimerRing } from "@/components/live/LiveTimer";
+import { OutcomeBar, MeterRow } from "@/components/live/LiveStats";
 import {
   fetchLiveExam,
   fetchAllLiveQuestions,
@@ -67,7 +81,6 @@ import {
   fetchLeaderboard,
   fetchAllAnalytics,
   fetchResponseCount,
-  getParticipantCount,
   type LiveExam,
   type LiveQuestion,
   type LiveSection,
@@ -112,12 +125,44 @@ function useCountdown(targetEndTime: number | null, onExpire: () => void) {
   return remaining;
 }
 
-// ─── Format seconds to mm:ss ─────────────────────────────────
+/** Is this option (index) part of the stored correct answer? */
+function isCorrectOption(correctAnswer: any, i: number): boolean {
+  if (Array.isArray(correctAnswer)) {
+    return correctAnswer.some((c) => String(c) === String(i));
+  }
+  return String(correctAnswer) === String(i);
+}
 
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+/** Compact metric for the strip under the control deck. */
+function DeckStat({
+  label,
+  value,
+  tone = "default",
+  icon: Icon,
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: "default" | "correct" | "brand" | "amber";
+  icon?: typeof Users;
+}) {
+  const toneClass =
+    tone === "correct"
+      ? "text-emerald-600"
+      : tone === "brand"
+        ? "text-primary"
+        : tone === "amber"
+          ? "text-amber-600"
+          : "text-foreground";
+
+  return (
+    <div className="min-w-0 px-3 py-2">
+      <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        {Icon && <Icon className="h-3 w-3" />}
+        <span className="truncate">{label}</span>
+      </p>
+      <p className={`mt-0.5 truncate text-[15px] font-bold leading-tight tabular-nums ${toneClass}`}>{value}</p>
+    </div>
+  );
 }
 
 // ─── Main Component ──────────────────────────────────────────
@@ -140,10 +185,23 @@ export default function LiveExamControl() {
   const [showEndDialog, setShowEndDialog] = useState(false);
   const [showStartDialog, setShowStartDialog] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
-  const [expandedPrevQuestion, setExpandedPrevQuestion] = useState<string | null>(null);
+
+  /** Past question being inspected in the preview pane; null = the live one. */
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  /**
+   * Creators often screen-share this page, so the answer key stays hidden
+   * while a question is open unless they deliberately reveal it.
+   */
+  const [showKey, setShowKey] = useState(false);
 
   // Live participant count via realtime
   const participantCount = useLiveParticipantCount(liveExamId);
+
+  // Realtime callbacks are registered once, so they read state through refs.
+  const examRef = useRef<LiveExam | null>(null);
+  const questionsRef = useRef<LiveQuestion[]>([]);
+  examRef.current = exam;
+  questionsRef.current = questions;
 
   // Timer state
   const [timerEndTime, setTimerEndTime] = useState<number | null>(null);
@@ -241,11 +299,49 @@ export default function LiveExamControl() {
     }
   };
 
+  /**
+   * Re-derive the countdown from the exam row itself.
+   *
+   * handleUnlockNext arms the timer only in the tab that clicked it. Any other
+   * control-room tab — a second window, a projector, or this one when the
+   * realtime UPDATE beats the RPC promise — learns about the new question purely
+   * through onExamUpdate. Without this it would keep the previous question's
+   * expired-timer state forever: no Unlock control, and `canUnlockNext` stuck
+   * false. Derives from the server's unlocked_at, never from client time.
+   */
+  const applyTimerFromExam = (examData: LiveExam, qs: LiveQuestion[]) => {
+    if (
+      examData.status === "live" &&
+      examData.current_question_index >= 0 &&
+      examData.current_question_unlocked_at
+    ) {
+      const currentQ = qs[examData.current_question_index];
+      if (!currentQ) return;
+      const endTime =
+        new Date(examData.current_question_unlocked_at).getTime() + currentQ.time_seconds * 1000;
+      if (Date.now() < endTime) {
+        setTimerEndTime(endTime);
+        setTimerExpiredForIndex(-1);
+      } else {
+        setTimerEndTime(null);
+        setTimerExpiredForIndex(examData.current_question_index);
+      }
+    } else {
+      setTimerEndTime(null);
+    }
+  };
+
   // ─── Realtime subscriptions ────────────────────────────────
 
   useLiveExamRealtime(liveExamId, {
     onExamUpdate: (updatedExam) => {
+      const prev = examRef.current;
       setExam(updatedExam);
+      const movedOn =
+        !prev ||
+        prev.current_question_index !== updatedExam.current_question_index ||
+        prev.current_question_unlocked_at !== updatedExam.current_question_unlocked_at;
+      if (movedOn) applyTimerFromExam(updatedExam, questionsRef.current);
     },
     onParticipantJoined: () => {
       // Count is handled by useLiveParticipantCount
@@ -344,17 +440,72 @@ export default function LiveExamControl() {
   const currentAnalytics = currentQuestion ? analytics.get(currentQuestion.id) : null;
   const currentResponseCount = currentQuestion ? (responseCountMap.get(currentQuestion.id) || 0) : 0;
 
-  // Find which section the current question belongs to
-  const currentSection = useMemo(() => {
-    if (!currentQuestion) return null;
-    return sections.find(s => s.id === currentQuestion.live_section_id);
-  }, [currentQuestion, sections]);
+  // A fresh unlock always pulls the preview back to the live question.
+  useEffect(() => {
+    setPreviewIndex(null);
+    setShowKey(false);
+  }, [currentQuestionIndex]);
 
-  // Previous questions (all before current)
-  const previousQuestions = useMemo(() => {
-    if (currentQuestionIndex <= 0) return [];
-    return questions.slice(0, currentQuestionIndex);
-  }, [questions, currentQuestionIndex]);
+  const isReviewing = previewIndex !== null && previewIndex !== currentQuestionIndex;
+  const previewQuestion = isReviewing ? questions[previewIndex!] : currentQuestion;
+  const previewAnalytics = previewQuestion ? analytics.get(previewQuestion.id) : null;
+  const previewIdx = isReviewing ? previewIndex! : currentQuestionIndex;
+
+  const sectionNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    sections.forEach((s) => m.set(s.id, s.name));
+    return m;
+  }, [sections]);
+
+  const sectionNameFor = (q: LiveQuestion | null | undefined) =>
+    q ? sectionNameById.get(q.live_section_id) || q.section_label || undefined : undefined;
+
+  /** Answer key visible when the question is over, being reviewed, or unhidden. */
+  const keyVisible = isReviewing || isTimerExpired || showKey || isEnded;
+
+  /**
+   * Fastest correct answer to show on the deck. While a question is open it has
+   * no analytics yet, so fall back to the most recent question that does —
+   * an empty tile mid-session reads as "nobody has answered".
+   */
+  const fastest = useMemo(() => {
+    for (let i = currentQuestionIndex; i >= 0; i--) {
+      const a = questions[i] ? analytics.get(questions[i].id) : undefined;
+      if (a?.fastest_user_name) return { index: i, name: a.fastest_user_name, ms: a.fastest_time_ms };
+    }
+    return null;
+  }, [analytics, questions, currentQuestionIndex]);
+
+  /** Running accuracy across every question whose analytics have landed. */
+  const sessionAccuracy = useMemo(() => {
+    let correct = 0;
+    let total = 0;
+    analytics.forEach((a) => {
+      correct += a.correct_count || 0;
+      total += a.total_responses || 0;
+    });
+    return total > 0 ? Math.round((correct / total) * 100) : null;
+  }, [analytics]);
+
+  const railItems: RailItem[] = useMemo(
+    () =>
+      questions.map((q, idx) => {
+        let status: ChipStatus;
+        if (isReviewing && idx === previewIndex) status = "reviewing";
+        else if (idx === currentQuestionIndex) status = "current";
+        else if (idx < currentQuestionIndex) status = "done";
+        else status = "upcoming";
+        return {
+          id: q.id,
+          index: idx,
+          status,
+          group: sectionNameFor(q),
+          title: questionPreviewText(q.text, 48),
+        };
+      }),
+    // sectionNameFor is re-created each render; depend on its input instead.
+    [questions, currentQuestionIndex, previewIndex, isReviewing, sectionNameById]
+  );
 
   // ─── Actions ───────────────────────────────────────────────
 
@@ -433,6 +584,29 @@ export default function LiveExamControl() {
     }
   };
 
+  // Space / → advances the exam without leaving the keyboard. The handler is
+  // read through a ref so the listener can never unlock against a stale
+  // question list.
+  const unlockRef = useRef(handleUnlockNext);
+  unlockRef.current = handleUnlockNext;
+
+  useEffect(() => {
+    if (!canUnlockNext) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (showEndDialog || showStartDialog || showShareDialog) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON" || el?.isContentEditable) return;
+      if (e.key === " " || e.key === "ArrowRight") {
+        e.preventDefault();
+        unlockRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [canUnlockNext, showEndDialog, showStartDialog, showShareDialog]);
+
   const shareUrl = exam ? `${window.location.origin}/live/${exam.share_code}` : "";
 
   const handleCopyLink = () => {
@@ -446,7 +620,10 @@ export default function LiveExamControl() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="h-8 w-8 rounded-full border-2 border-muted border-t-foreground animate-spin" />
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-9 w-9 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-sm text-muted-foreground">Opening the control room…</p>
+        </div>
       </div>
     );
   }
@@ -490,49 +667,88 @@ export default function LiveExamControl() {
 
   if (exam.status === "published") {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="relative min-h-screen bg-background">
         <SEO
           title={`${exam.name} | Control Room`}
           description="Creator control room for a live exam session."
           path={`/live-exam/${creatorId}/${liveExamId}/control`}
           noindex
         />
-        <div className="flex flex-col items-center justify-center min-h-screen gap-6 px-6">
-          <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-red-500/20 to-orange-500/10 border border-red-500/20 flex items-center justify-center">
-            <Radio className="h-10 w-10 text-red-500" />
-          </div>
-          <h1 className="text-3xl font-bold text-center">{exam.name}</h1>
-          <p className="text-muted-foreground text-center max-w-md">
-            Your exam is published and ready to go live. Share the link with your students, then click "Go Live" when you're ready.
-          </p>
-          <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-xl border">
-            <code className="text-sm font-mono text-foreground">{window.location.origin}/live/{exam.share_code}</code>
-            <Button variant="ghost" size="icon" onClick={handleCopyLink}>
-              <Copy className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => setShowShareDialog(true)}>
-              <QrCodeIcon className="h-4 w-4" />
+
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-gradient-to-b from-primary/[0.07] to-transparent" />
+
+        <div className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center gap-6 px-5 py-12">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}>
+              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              Back to editor
             </Button>
           </div>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <Users className="h-4 w-4" />
-            <span>{participantCount} student{participantCount !== 1 ? "s" : ""} waiting</span>
+
+          <div className="flex items-start gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-rose-500/25 bg-gradient-to-br from-rose-500/20 to-orange-500/10">
+              <Radio className="h-7 w-7 text-rose-500" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Ready to go live</p>
+              <h1 className="font-display text-3xl font-bold tracking-tight">{exam.name}</h1>
+            </div>
           </div>
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Editor
-            </Button>
+
+          <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+            {/* Pre-flight checklist — the questions creators ask before starting */}
+            <div className="space-y-3 rounded-2xl border border-border/60 bg-card p-5">
+              {[
+                { icon: ListChecks, label: `${questions.length} questions ready`, done: questions.length > 0 },
+                {
+                  icon: Users,
+                  label: `${participantCount} student${participantCount !== 1 ? "s" : ""} waiting in the room`,
+                  done: participantCount > 0,
+                },
+                { icon: Target, label: `${sections.length || 1} section${sections.length !== 1 ? "s" : ""}`, done: true },
+              ].map((row, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <span
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+                      row.done ? "bg-emerald-500/15 text-emerald-600" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {row.done ? <CheckCircle2 className="h-4 w-4" /> : <row.icon className="h-4 w-4" />}
+                  </span>
+                  <span className="text-sm font-medium">{row.label}</span>
+                </div>
+              ))}
+
+              <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/40 p-2">
+                <code className="min-w-0 flex-1 truncate px-2 font-mono text-xs">{shareUrl}</code>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={handleCopyLink}>
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/60 bg-card p-5">
+              <div className="rounded-xl border bg-white p-3">
+                <QRCode value={shareUrl} size={132} />
+              </div>
+              <p className="text-xs text-muted-foreground">Scan to join</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-primary/25 bg-primary/[0.05] p-5">
+            <p className="text-sm text-muted-foreground">
+              Going live opens the waiting room. Nothing is shown to students until you unlock the first question — you
+              control the pace throughout.
+            </p>
             <Button
               onClick={() => setShowStartDialog(true)}
-              className="bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/25 px-8"
               size="lg"
+              className="mt-4 h-12 w-full bg-rose-500 text-white shadow-lg shadow-rose-500/25 hover:bg-rose-600 sm:w-auto sm:px-10"
             >
-              <Play className="h-5 w-5 mr-2" />
+              <Play className="mr-2 h-5 w-5" />
               Go Live
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">{questions.length} questions ready</p>
 
           <AlertDialog open={showStartDialog} onOpenChange={setShowStartDialog}>
             <AlertDialogContent>
@@ -544,7 +760,7 @@ export default function LiveExamControl() {
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleStartLive} className="bg-red-500 hover:bg-red-600 text-white">
+                <AlertDialogAction onClick={handleStartLive} className="bg-rose-500 hover:bg-rose-600 text-white">
                   Go Live
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -558,8 +774,79 @@ export default function LiveExamControl() {
 
   // ─── Main Live / Ended View ────────────────────────────────
 
+  const responseRatePct = participantCount > 0 ? Math.round((currentResponseCount / participantCount) * 100) : 0;
+
+  /** The one thing the creator should do next, as a single primary control. */
+  const primaryAction = () => {
+    if (!isLive && !isEnded) return null;
+    if (isEnded) {
+      return (
+        <Button variant="outline" className="h-11 w-full" onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}>
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to exam editor
+        </Button>
+      );
+    }
+    if (collectingFinal) {
+      return (
+        <div className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 text-sm font-semibold text-amber-600">
+          <Hourglass className="h-4 w-4 animate-pulse" />
+          Collecting final answers…
+        </div>
+      );
+    }
+    if (isTimerActive) {
+      return (
+        <div className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border/60 bg-muted/40 text-sm font-medium text-muted-foreground">
+          <Clock className="h-4 w-4" />
+          Question open — the next unlock arms when the timer ends
+        </div>
+      );
+    }
+    if (canUnlockNext) {
+      return (
+        <Button onClick={handleUnlockNext} className="h-11 w-full text-base font-semibold shadow-lg shadow-primary/20">
+          <SkipForward className="mr-2 h-5 w-5" />
+          {!hasStarted ? "Unlock first question" : `Unlock Q${currentQuestionIndex + 2}`}
+          <kbd className="ml-2 hidden rounded border border-primary-foreground/30 px-1.5 py-0.5 font-mono text-[10px] font-semibold sm:inline">
+            space
+          </kbd>
+        </Button>
+      );
+    }
+    if (questions.length === 0) {
+      return (
+        <div className="flex h-11 w-full items-center justify-center rounded-xl border border-border/60 bg-muted/40 text-sm text-muted-foreground">
+          This exam has no questions yet.
+        </div>
+      );
+    }
+    // Genuinely finished: the last question has been played out. This must be
+    // an explicit check, not the fallback — offering a destructive "end exam"
+    // as the default for every unmatched state once cost the whole class its
+    // session when a second tab held a stale timer.
+    if (hasStarted && isTimerExpired && currentQuestionIndex >= questions.length - 1) {
+      return (
+        <Button variant="destructive" className="h-11 w-full" onClick={() => setShowEndDialog(true)}>
+          <Square className="mr-2 h-4 w-4" />
+          All questions done — end exam
+        </Button>
+      );
+    }
+
+    // Anything else: this tab is out of step with the session (e.g. it never
+    // armed a timer for the open question). Say so rather than guess — the
+    // header still has a deliberate End control.
+    return (
+      <div className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border/60 bg-muted/40 text-sm font-medium text-muted-foreground">
+        <Hourglass className="h-4 w-4" />
+        Syncing with the live session…
+      </div>
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex min-h-[100dvh] flex-col bg-background lg:h-[100dvh] lg:overflow-hidden">
       <SEO
         title={`${exam.name} | Control Room`}
         description="Creator control room for a live exam session."
@@ -567,518 +854,331 @@ export default function LiveExamControl() {
         noindex
       />
 
-      {/* ─── Top Bar ─── */}
-      <nav className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
-        <div className="container mx-auto max-w-7xl px-6">
-          <div className="flex h-14 items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}>
-                <ArrowLeft className="h-5 w-5" />
-              </Button>
-              <div className="flex items-center gap-2">
-                {isLive && (
-                  <Badge className="bg-red-500 text-white animate-pulse text-xs font-bold px-2">
-                    🔴 LIVE
-                  </Badge>
-                )}
-                {isEnded && (
-                  <Badge className="bg-gray-500/15 text-gray-600 text-xs font-medium">
-                    Ended
-                  </Badge>
-                )}
-                <span className="text-sm font-semibold text-foreground truncate max-w-[200px]">{exam.name}</span>
-              </div>
+      {/* ─── Header ─── */}
+      <header className="shrink-0 border-b border-border/50 bg-background/85 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}
+              aria-label="Back to exam editor"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            {isLive ? (
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-rose-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-rose-600">
+                <span className="live-dot h-1.5 w-1.5 rounded-full bg-rose-500" />
+                On air
+              </span>
+            ) : (
+              <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                Ended
+              </span>
+            )}
+            <span className="truncate text-sm font-semibold">{exam.name}</span>
+            {hasStarted && (
+              <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:inline-flex">
+                <span className="h-3 w-px bg-border" />
+                <span className="font-semibold tabular-nums text-foreground">Q{currentQuestionIndex + 1}</span>
+                of {questions.length}
+              </span>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="flex items-center gap-1.5 rounded-full bg-muted/70 px-3 py-1.5">
+              <Users className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-bold tabular-nums">{participantCount}</span>
+              <span className="hidden text-xs text-muted-foreground sm:inline">live</span>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                <Users className="h-4 w-4" />
-                <span className="font-semibold text-foreground">{participantCount}</span>
-                <span className="hidden sm:inline">students</span>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => setShowShareDialog(true)}>
-                <QrCodeIcon className="h-4 w-4 mr-1" />
-                <span className="hidden sm:inline">Share Link</span>
+            <Button variant="outline" size="sm" className="h-8" onClick={() => setShowShareDialog(true)}>
+              <QrCodeIcon className="h-4 w-4 sm:mr-1.5" />
+              <span className="hidden sm:inline">Share</span>
+            </Button>
+            {isLive && (
+              <Button variant="destructive" size="sm" className="h-8" onClick={() => setShowEndDialog(true)}>
+                <Square className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">End</span>
               </Button>
-              {isLive && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => setShowEndDialog(true)}
-                >
-                  <Square className="h-4 w-4 mr-1" />
-                  End Exam
-                </Button>
-              )}
-            </div>
+            )}
           </div>
         </div>
-      </nav>
+        <TimerBar remaining={remaining} total={currentQuestion?.time_seconds || 0} active={isTimerActive} />
+      </header>
 
-      {/* ─── Main Grid ─── */}
-      <main className="container mx-auto max-w-7xl px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* ─── Body: two columns, each pane scrolls independently ─── */}
+      <div className="mx-auto w-full min-h-0 max-w-[1600px] flex-1 px-4 py-4 sm:px-6">
+        <div className="grid h-full min-h-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+          {/* ── Left: control deck over question preview ── */}
+          <div className="flex min-h-0 flex-col gap-4">
+            {/* Control deck — never scrolls away */}
+            <section className="shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
+              <div className="flex flex-col gap-5 p-4 sm:flex-row sm:items-center">
+                <div className="flex justify-center sm:block">
+                  <TimerRing
+                    remaining={remaining}
+                    total={currentQuestion?.time_seconds || 0}
+                    active={isTimerActive}
+                    size={116}
+                    idleLabel={isEnded ? "—" : hasStarted ? "Time up" : "Ready"}
+                    caption={isTimerActive ? "remaining" : undefined}
+                  />
+                </div>
 
-          {/* ─── Left Column: Current Question + Controls ─── */}
-          <div className="lg:col-span-2 space-y-6">
-
-            {/* Current Question Card */}
-            <Card className="border-2 border-emerald-500/30 shadow-lg shadow-emerald-500/5">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <CardTitle className="text-lg font-bold">
+                <div className="min-w-0 flex-1 space-y-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="truncate text-sm font-semibold">
                       {!hasStarted
-                        ? "Ready to Start"
-                        : `Q${currentQuestionIndex + 1} / ${questions.length}`}
-                    </CardTitle>
-                    {currentSection && (
-                      <Badge variant="secondary" className="text-xs">{currentSection.name}</Badge>
+                        ? "No question unlocked yet"
+                        : `Q${currentQuestionIndex + 1} of ${questions.length}`}
+                      {sectionNameFor(currentQuestion) && (
+                        <span className="font-normal text-muted-foreground"> · {sectionNameFor(currentQuestion)}</span>
+                      )}
+                    </p>
+                    {currentQuestion && (
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                        {currentQuestion.time_seconds}s allotted
+                      </span>
                     )}
                   </div>
-                  {/* Timer */}
-                  {isTimerActive && (
-                    <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-lg font-bold ${
-                      remaining <= 10
-                        ? "bg-red-500/10 text-red-500 animate-pulse"
-                        : remaining <= 30
-                        ? "bg-amber-500/10 text-amber-600"
-                        : "bg-emerald-500/10 text-emerald-600"
-                    }`}>
-                      <Clock className="h-5 w-5" />
-                      {formatTime(remaining)}
-                    </div>
-                  )}
-                  {collectingFinal && (
-                    <Badge className="bg-amber-500/15 text-amber-600 text-xs animate-pulse">
-                      Collecting final answers…
-                    </Badge>
-                  )}
-                  {isTimerExpired && !collectingFinal && currentQuestion && (
-                    <Badge className="bg-gray-500/15 text-gray-500 text-xs">Timer Ended</Badge>
+
+                  <MeterRow
+                    label="Answered"
+                    value={currentResponseCount}
+                    max={participantCount || 1}
+                    tone={responseRatePct >= 80 ? "correct" : "brand"}
+                  />
+
+                  {primaryAction()}
+                </div>
+              </div>
+
+              {/* Pulse strip: the four numbers a creator narrates out loud */}
+              <div className="grid grid-cols-2 divide-x divide-border/60 border-t border-border/60 sm:grid-cols-4">
+                <DeckStat label="In the room" value={participantCount} icon={Users} tone="brand" />
+                <DeckStat
+                  label="Response rate"
+                  value={`${responseRatePct}%`}
+                  icon={Target}
+                  tone={responseRatePct >= 80 ? "correct" : "default"}
+                />
+                <DeckStat
+                  label="Class accuracy"
+                  value={sessionAccuracy !== null ? `${sessionAccuracy}%` : "—"}
+                  icon={Check}
+                  tone="correct"
+                />
+                <DeckStat
+                  label={fastest ? `Fastest · Q${fastest.index + 1}` : "Fastest"}
+                  value={
+                    fastest
+                      ? `${fastest.name}${fastest.ms ? ` · ${(fastest.ms / 1000).toFixed(1)}s` : ""}`
+                      : "—"
+                  }
+                  icon={Zap}
+                  tone="amber"
+                />
+              </div>
+            </section>
+
+            {/* Question preview — the only pane that scrolls on the left.
+                min-h keeps it usable when the page falls back to normal
+                scrolling below `lg`, where flex-1 has no definite height. */}
+            <section className="flex min-h-[340px] flex-1 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm lg:min-h-0">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  {isReviewing ? (
+                    <>
+                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-amber-600">
+                        Reviewing
+                      </span>
+                      <span className="truncate text-sm font-semibold tabular-nums">Q{previewIdx + 1}</span>
+                    </>
+                  ) : (
+                    <span className="truncate text-sm font-semibold">
+                      {previewQuestion ? `Question preview · what students see` : "Question preview"}
+                    </span>
                   )}
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Show current question */}
-                {currentQuestion ? (
+
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {isReviewing && (
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewIndex(null)}>
+                      <CornerUpLeft className="mr-1 h-3.5 w-3.5" />
+                      Back to live
+                    </Button>
+                  )}
+                  {!isReviewing && isTimerActive && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setShowKey((v) => !v)}
+                      title="The key stays hidden by default in case you are screen sharing"
+                    >
+                      {showKey ? <EyeOff className="mr-1 h-3.5 w-3.5" /> : <Eye className="mr-1 h-3.5 w-3.5" />}
+                      {showKey ? "Hide key" : "Show key"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {!previewQuestion ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 py-10 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">
+                      <Radio className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                    <p className="max-w-xs text-sm text-muted-foreground">
+                      {isLive
+                        ? "Students are in the waiting room. Unlock the first question when you're ready."
+                        : isEnded
+                          ? "This exam has ended. Pick any question from the rail below to review it."
+                          : "Exam is not live yet."}
+                    </p>
+                  </div>
+                ) : (
                   <div className="space-y-4">
-                    {(() => {
-                      const questionText = currentQuestion?.text || "";
-                      const hasPassageSection = questionText.includes('class="passage-section"');
+                    <LiveQuestionBody text={previewQuestion.text} />
 
-                      if (hasPassageSection) {
-                        const passageImageMatch = questionText.match(/<img[^>]*src="([^"]*)"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/) ||
-                          questionText.match(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*src="([^"]*)"[^>]*>/);
-                        const passageSectionMatch = questionText.match(/<div class="passage-section"[^>]*>([\s\S]*?)<\/div><div class="question-section"/);
-                        let passageContent = passageSectionMatch ? passageSectionMatch[1] : "";
-                        passageContent = passageContent.replace(/<img[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "")
-                          .replace(/<img[^>]*src="[^"]*"[^>]*class="[^"]*passage-image[^"]*"[^>]*>/g, "").trim();
-                        const passageImageUrl = passageImageMatch ? passageImageMatch[1] : null;
-                        const questionSectionMatch = questionText.match(/<div class="question-section"[^>]*>([\s\S]*?)<\/div>$/);
-                        const questionContent = questionSectionMatch ? questionSectionMatch[1].trim() : "";
-
-                        return (
-                          <div className="flex flex-col lg:flex-row gap-6">
-                            <div className="lg:w-1/2 space-y-3 border-r-0 lg:border-r lg:pr-6">
-                              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Passage</h3>
-                              {passageImageUrl && (
-                                <div className="border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50 flex justify-center">
-                                  <img src={passageImageUrl} alt="Passage" className="max-w-full max-h-[300px] h-auto rounded-md object-contain" />
-                                </div>
-                              )}
-                              {passageContent && (
-                                <div className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert" dangerouslySetInnerHTML={{ __html: renderMathInHtml(passageContent) }} />
-                              )}
-                            </div>
-                            <div className="lg:w-1/2 space-y-3">
-                              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Question</h3>
-                              <div className="text-base leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(questionContent) }} />
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div className="text-base leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(questionText) }} />
-                      );
-                    })()}
-                    {/* Options display */}
-                    {currentQuestion.options && Array.isArray(currentQuestion.options) && (
+                    {Array.isArray(previewQuestion.options) && (
                       <div className="space-y-2">
-                        {currentQuestion.options.map((opt: string, i: number) => {
-                          const isCorrect = Array.isArray(currentQuestion.correct_answer)
-                            ? currentQuestion.correct_answer.includes(i) || currentQuestion.correct_answer.includes(String(i))
-                            : String(currentQuestion.correct_answer) === String(i);
-                          const showCorrect = isTimerExpired;
-                          // Distribution keys are the JSON text of selected_answer
-                          const dist = currentAnalytics?.option_distribution;
-                          const optCount = dist ? Number(dist[String(i)] ?? dist[`"${i}"`] ?? 0) : 0;
-                          const optPct = currentAnalytics && currentAnalytics.total_responses > 0
-                            ? Math.round((optCount / currentAnalytics.total_responses) * 100)
-                            : 0;
+                        {previewQuestion.options.map((opt: string, i: number) => {
+                          const correct = isCorrectOption(previewQuestion.correct_answer, i);
+                          const dist = previewAnalytics?.option_distribution;
+                          const count = dist ? Number(dist[String(i)] ?? dist[`"${i}"`] ?? 0) : 0;
+                          const pct =
+                            previewAnalytics && previewAnalytics.total_responses > 0
+                              ? Math.round((count / previewAnalytics.total_responses) * 100)
+                              : undefined;
+
+                          const visual: OptionVisual = keyVisible && correct ? "correct-missed" : "idle";
+
                           return (
-                            <div
+                            <LiveOption
                               key={i}
-                              className={`px-4 py-3 rounded-xl text-sm border transition-all ${
-                                showCorrect && isCorrect
-                                  ? "border-emerald-500 bg-emerald-500/10 text-emerald-700 font-medium"
-                                  : "border-border/60 bg-muted/20"
-                              }`}
-                            >
-                              <div className="flex items-center gap-3">
-                                <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center font-mono text-xs font-bold shrink-0">
-                                  {String.fromCharCode(65 + i)}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <span dangerouslySetInnerHTML={{ __html: renderMathInRichText(opt) }} />
-                                  {Array.isArray(currentQuestion.option_image_urls) && currentQuestion.option_image_urls[i] && (
-                                    <img
-                                      src={currentQuestion.option_image_urls[i]!}
-                                      alt={`Option ${String.fromCharCode(65 + i)}`}
-                                      className="max-h-28 max-w-full rounded-md border border-border/60 mt-1"
-                                    />
-                                  )}
-                                </div>
-                                {showCorrect && isCorrect && <Check className="h-5 w-5 text-emerald-600 shrink-0" />}
-                              </div>
-                              {/* Response distribution bar */}
-                              {showCorrect && currentAnalytics && (
-                                <div className="flex items-center gap-3 mt-2 pl-10">
-                                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                                    <div
-                                      className={`h-full rounded-full transition-all duration-500 ${
-                                        isCorrect ? "bg-emerald-500" : "bg-muted-foreground/40"
-                                      }`}
-                                      style={{ width: `${optPct}%` }}
-                                    />
-                                  </div>
-                                  <span className="text-xs font-mono text-muted-foreground shrink-0 w-20 text-right">
-                                    {optCount} · {optPct}%
-                                  </span>
-                                </div>
-                              )}
-                            </div>
+                              index={i}
+                              html={opt}
+                              imageUrl={
+                                Array.isArray(previewQuestion.option_image_urls)
+                                  ? previewQuestion.option_image_urls[i]
+                                  : null
+                              }
+                              visual={visual}
+                              compact
+                              distributionPct={pct}
+                              distributionLabel={pct !== undefined ? `${count} · ${pct}%` : undefined}
+                            />
                           );
                         })}
                       </div>
                     )}
-                    {/* Integer / Text answer */}
-                    {(currentQuestion.answer_type === "numeric" || currentQuestion.answer_type === "integer" || currentQuestion.answer_type === "text") && isTimerExpired && (
-                      <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30">
-                        <span className="text-sm text-muted-foreground">Correct Answer: </span>
-                        <span className="font-semibold text-emerald-700">{JSON.stringify(currentQuestion.correct_answer)}</span>
-                      </div>
-                    )}
 
-                    {/* Submission counter */}
-                    <div className="flex items-center gap-4 pt-2 border-t border-border/40">
-                      <div className="flex items-center gap-2 text-sm">
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-semibold">{currentResponseCount}</span>
-                        <span className="text-muted-foreground">/ {participantCount} submitted</span>
-                      </div>
-                      {/* Progress bar */}
-                      <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
-                          style={{ width: `${participantCount > 0 ? (currentResponseCount / participantCount) * 100 : 0}%` }}
+                    {/* Numeric / text keys */}
+                    {(previewQuestion.answer_type === "numeric" ||
+                      previewQuestion.answer_type === "integer" ||
+                      previewQuestion.answer_type === "text") &&
+                      keyVisible && (
+                        <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/[0.08] px-4 py-3 text-sm">
+                          <span className="text-muted-foreground">Correct answer: </span>
+                          <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                            {typeof previewQuestion.correct_answer === "string"
+                              ? previewQuestion.correct_answer
+                              : JSON.stringify(previewQuestion.correct_answer)}
+                          </span>
+                        </div>
+                      )}
+
+                    {/* Outcome for whichever question is on screen */}
+                    {previewAnalytics && (
+                      <div className="rounded-xl border border-border/60 bg-muted/25 p-4">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                            How the class did
+                          </p>
+                          <p className="text-xs tabular-nums text-muted-foreground">
+                            avg{" "}
+                            {previewAnalytics.avg_time_correct_ms
+                              ? `${(previewAnalytics.avg_time_correct_ms / 1000).toFixed(1)}s`
+                              : "—"}{" "}
+                            per correct answer
+                          </p>
+                        </div>
+                        <OutcomeBar
+                          className="mt-3"
+                          correct={previewAnalytics.correct_count}
+                          wrong={previewAnalytics.wrong_count}
+                          skipped={previewAnalytics.skipped_count}
                         />
-                      </div>
-                    </div>
-
-                    {/* Analytics after timer */}
-                    {isTimerExpired && currentAnalytics && (
-                      <div className="p-4 bg-muted/30 rounded-xl border border-border/50 space-y-3">
-                        <h4 className="text-sm font-semibold flex items-center gap-2">
-                          <BarChart3 className="h-4 w-4 text-emerald-500" />
-                          Question Analytics
-                        </h4>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="text-center p-2 bg-background rounded-lg">
-                            <div className="text-lg font-bold text-emerald-600">{currentAnalytics.correct_count}</div>
-                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Correct</div>
-                          </div>
-                          <div className="text-center p-2 bg-background rounded-lg">
-                            <div className="text-lg font-bold text-red-500">{currentAnalytics.wrong_count}</div>
-                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Wrong</div>
-                          </div>
-                          <div className="text-center p-2 bg-background rounded-lg">
-                            <div className="text-lg font-bold text-gray-500">{currentAnalytics.skipped_count}</div>
-                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Skipped</div>
-                          </div>
-                          <div className="text-center p-2 bg-background rounded-lg">
-                            <div className="text-lg font-bold text-blue-500">
-                              {currentAnalytics.avg_time_correct_ms ? `${(currentAnalytics.avg_time_correct_ms / 1000).toFixed(1)}s` : "—"}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Time</div>
-                          </div>
-                        </div>
-                        {currentAnalytics.fastest_user_name && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <Zap className="h-4 w-4 text-amber-500" />
-                            <span className="text-muted-foreground">Fastest:</span>
-                            <span className="font-semibold">{currentAnalytics.fastest_user_name}</span>
-                            <span className="text-muted-foreground">
-                              ({currentAnalytics.fastest_time_ms ? `${(currentAnalytics.fastest_time_ms / 1000).toFixed(1)}s` : "—"})
-                            </span>
-                          </div>
+                        {previewAnalytics.fastest_user_name && (
+                          <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Zap className="h-3.5 w-3.5 text-amber-500" />
+                            Fastest correct:{" "}
+                            <span className="font-semibold text-foreground">{previewAnalytics.fastest_user_name}</span>
+                            {previewAnalytics.fastest_time_ms
+                              ? ` · ${(previewAnalytics.fastest_time_ms / 1000).toFixed(1)}s`
+                              : ""}
+                          </p>
                         )}
                       </div>
                     )}
                   </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    {isLive
-                      ? 'Click "Unlock First Question" to begin!'
-                      : isEnded
-                      ? "The exam has ended."
-                      : "Exam is not live yet."}
-                  </div>
                 )}
-
-                {/* Action buttons */}
-                {isLive && (
-                  <div className="flex gap-3 pt-4 border-t border-border/40">
-                    {canUnlockNext && (
-                      <Button
-                        onClick={handleUnlockNext}
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/25 h-12 text-base"
-                      >
-                        <SkipForward className="h-5 w-5 mr-2" />
-                        {!hasStarted ? "Unlock First Question" : `Unlock Q${currentQuestionIndex + 2}`}
-                      </Button>
-                    )}
-                    {isTimerActive && (
-                      <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground gap-2">
-                        <Clock className="h-4 w-4 animate-spin" />
-                        Waiting for timer to end...
-                      </div>
-                    )}
-                    {collectingFinal && (
-                      <div className="flex-1 flex items-center justify-center text-sm text-amber-600 gap-2">
-                        <Clock className="h-4 w-4 animate-spin" />
-                        Collecting final answers…
-                      </div>
-                    )}
-                    {isTimerExpired && !collectingFinal && currentQuestionIndex >= questions.length - 1 && (
-                      <div className="flex-1 text-center py-3 text-sm text-muted-foreground">
-                        All questions completed! You can end the exam now.
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Previous Questions (collapsible) */}
-            {previousQuestions.length > 0 && (
-              <Card className="border-border/60">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-semibold">Previous Questions ({previousQuestions.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {previousQuestions.map((q, idx) => {
-                    const qAnalytics = analytics.get(q.id);
-                    const isExpanded = expandedPrevQuestion === q.id;
-                    return (
-                      <div key={q.id} className="border border-border/50 rounded-lg overflow-hidden">
-                        <button
-                          onClick={() => setExpandedPrevQuestion(isExpanded ? null : q.id)}
-                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors text-left"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm font-bold text-muted-foreground">Q{idx + 1}</span>
-                            <span className="text-sm truncate max-w-[300px]">{q.text.replace(/<[^>]*>/g, '').substring(0, 60)}</span>
-                          </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            {qAnalytics && (
-                              <span className="text-xs text-muted-foreground">
-                                ✅ {qAnalytics.correct_count}/{qAnalytics.total_responses + qAnalytics.skipped_count}
-                                {qAnalytics.total_responses > 0 && (
-                                  <span className="ml-1">
-                                    ({Math.round((qAnalytics.correct_count / (qAnalytics.total_responses)) * 100)}%)
-                                  </span>
-                                )}
-                              </span>
-                            )}
-                            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                          </div>
-                        </button>
-                        {isExpanded && qAnalytics && (
-                          <div className="px-4 pb-3 pt-1 border-t border-border/40 space-y-2">
-                            <div className="grid grid-cols-4 gap-2 text-center">
-                              <div className="p-2 bg-emerald-500/5 rounded-lg">
-                                <div className="text-sm font-bold text-emerald-600">{qAnalytics.correct_count}</div>
-                                <div className="text-[9px] text-muted-foreground">Correct</div>
-                              </div>
-                              <div className="p-2 bg-red-500/5 rounded-lg">
-                                <div className="text-sm font-bold text-red-500">{qAnalytics.wrong_count}</div>
-                                <div className="text-[9px] text-muted-foreground">Wrong</div>
-                              </div>
-                              <div className="p-2 bg-gray-500/5 rounded-lg">
-                                <div className="text-sm font-bold text-gray-500">{qAnalytics.skipped_count}</div>
-                                <div className="text-[9px] text-muted-foreground">Skipped</div>
-                              </div>
-                              <div className="p-2 bg-blue-500/5 rounded-lg">
-                                <div className="text-sm font-bold text-blue-500">
-                                  {qAnalytics.avg_time_correct_ms ? `${(qAnalytics.avg_time_correct_ms / 1000).toFixed(1)}s` : "—"}
-                                </div>
-                                <div className="text-[9px] text-muted-foreground">Avg Time</div>
-                              </div>
-                            </div>
-                            {qAnalytics.fastest_user_name && (
-                              <div className="text-xs flex items-center gap-1.5 text-muted-foreground">
-                                <Zap className="h-3 w-3 text-amber-500" />
-                                Fastest: <span className="font-medium text-foreground">{qAnalytics.fastest_user_name}</span>
-                                ({qAnalytics.fastest_time_ms ? `${(qAnalytics.fastest_time_ms / 1000).toFixed(1)}s` : "—"})
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </CardContent>
-              </Card>
-            )}
+              </div>
+            </section>
           </div>
 
-          {/* ─── Right Column: Leaderboard ─── */}
-          <div className="space-y-6">
-            <Card className="border-border/60 sticky top-20">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base font-semibold flex items-center gap-2">
-                    <Trophy className="h-5 w-5 text-amber-500" />
-                    Top 20 Leaderboard
-                  </CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {leaderboard.length === 0 ? (
-                  <div className="text-center py-8 text-sm text-muted-foreground">
-                    {isLive ? "Rankings will appear after the first question timer ends." : "No participants yet."}
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {leaderboard.map((p, idx) => (
-                      <div
-                        key={p.user_id}
-                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                          idx === 0 ? "bg-amber-500/10" :
-                          idx === 1 ? "bg-gray-400/10" :
-                          idx === 2 ? "bg-amber-700/10" :
-                          "hover:bg-muted/30"
-                        }`}
-                      >
-                        {/* Rank */}
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                          idx === 0 ? "bg-amber-500 text-white" :
-                          idx === 1 ? "bg-gray-400 text-white" :
-                          idx === 2 ? "bg-amber-700 text-white" :
-                          "bg-muted text-muted-foreground"
-                        }`}>
-                          {p.rank || idx + 1}
-                        </div>
-                        {/* Name */}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{p.display_name}</p>
-                        </div>
-                        {/* Score */}
-                        <div className="text-right shrink-0">
-                          <span className="text-sm font-bold text-emerald-600">{p.total_correct}</span>
-                          <span className="text-xs text-muted-foreground">/{p.total_answered || currentQuestionIndex + 1}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Question Navigator */}
-            <Card className="border-border/60">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-semibold text-muted-foreground">Question Progress</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {sections.length > 0 ? (
-                  sections.map((section) => {
-                    const sectionQuestions = questions.filter((q) => q.live_section_id === section.id);
-                    if (sectionQuestions.length === 0) return null;
-
-                    return (
-                      <div key={section.id} className="space-y-2">
-                        <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{section.name}</h4>
-                        <div className="flex flex-wrap gap-1.5">
-                          {sectionQuestions.map((q) => {
-                            const idx = questions.findIndex((allQ) => allQ.id === q.id);
-                            const qAnalytics = analytics.get(q.id);
-                            const isCurrent = idx === currentQuestionIndex;
-                            const isPast = idx < currentQuestionIndex;
-                            const isFuture = idx > currentQuestionIndex;
-                            return (
-                              <div
-                                key={q.id}
-                                className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
-                                  isCurrent && isTimerActive
-                                    ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2 animate-pulse"
-                                    : isCurrent && isTimerExpired
-                                    ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2"
-                                    : isPast && qAnalytics
-                                    ? "bg-emerald-500/15 text-emerald-700 border border-emerald-500/30"
-                                    : isFuture
-                                    ? "bg-muted/50 text-muted-foreground"
-                                    : isCurrent
-                                    ? "bg-emerald-500 text-white"
-                                    : "bg-muted/50 text-muted-foreground"
-                                }`}
-                                title={`Q${idx + 1}: ${q.text.replace(/<[^>]*>/g, '').substring(0, 50)}`}
-                              >
-                                {idx + 1}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {questions.map((q, idx) => {
-                      const qAnalytics = analytics.get(q.id);
-                      const isCurrent = idx === currentQuestionIndex;
-                      const isPast = idx < currentQuestionIndex;
-                      const isFuture = idx > currentQuestionIndex;
-                      return (
-                        <div
-                          key={q.id}
-                          className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
-                            isCurrent && isTimerActive
-                              ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2 animate-pulse"
-                              : isCurrent && isTimerExpired
-                              ? "bg-emerald-500 text-white ring-2 ring-emerald-500/30 ring-offset-2"
-                              : isPast && qAnalytics
-                              ? "bg-emerald-500/15 text-emerald-700 border border-emerald-500/30"
-                              : isFuture
-                              ? "bg-muted/50 text-muted-foreground"
-                              : isCurrent
-                              ? "bg-emerald-500 text-white"
-                              : "bg-muted/50 text-muted-foreground"
-                          }`}
-                          title={`Q${idx + 1}: ${q.text.replace(/<[^>]*>/g, '').substring(0, 50)}`}
-                        >
-                          {idx + 1}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+          {/* ── Right: standings ── */}
+          <aside className="flex min-h-0 flex-col gap-4">
+            <section className="flex min-h-[280px] flex-1 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm lg:min-h-0">
+              <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
+                <Trophy className="h-4 w-4 text-amber-500" />
+                <h2 className="text-sm font-bold">Leaderboard</h2>
+                <span className="ml-auto text-[11px] font-medium text-muted-foreground">Top 20</span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <LiveLeaderboard
+                  entries={leaderboard}
+                  outOf={hasStarted ? currentQuestionIndex + 1 : undefined}
+                  emptyLabel={
+                    isLive
+                      ? "Rankings appear once the first question's timer ends."
+                      : "No participants took part in this session."
+                  }
+                />
+              </div>
+            </section>
+          </aside>
         </div>
-      </main>
+      </div>
+
+      {/* ─── Question rail: whole exam, one glance, click to review ─── */}
+      {questions.length > 0 && (
+        <footer className="shrink-0 border-t border-border/50 bg-background/85 backdrop-blur-xl">
+          <div className="mx-auto w-full max-w-[1600px] px-4 py-2.5 sm:px-6">
+            <div className="flex items-center gap-4">
+              <QuestionRail
+                items={railItems}
+                size="sm"
+                className="no-scrollbar min-w-0 flex-1 py-0.5"
+                onSelect={(item) => {
+                  // Clicking the live question returns the pane to it; a past
+                  // question opens read-only review without pausing anything.
+                  if (item.index === currentQuestionIndex) setPreviewIndex(null);
+                  else if (item.index < currentQuestionIndex) setPreviewIndex(item.index);
+                  else toast({ title: `Q${item.index + 1} hasn't been unlocked yet` });
+                }}
+              />
+              <RailLegend
+                statuses={["current", "done", "upcoming"]}
+                className="hidden shrink-0 border-l border-border/60 pl-4 xl:flex"
+              />
+            </div>
+          </div>
+        </footer>
+      )}
 
       {/* End Exam Dialog */}
       <AlertDialog open={showEndDialog} onOpenChange={setShowEndDialog}>

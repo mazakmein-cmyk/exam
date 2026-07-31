@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
-import { optionMatchKey } from "@/lib/richText";
+import { optionMatchKey, renderClozeBlanks } from "@/lib/richText";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1212,7 +1212,7 @@ export default function ExamReview() {
                                           <div
                                             className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                                             dangerouslySetInnerHTML={{
-                                              __html: renderMathInHtml(questionContent
+                                              __html: renderMathInHtml(renderClozeBlanks(questionContent)
                                                 .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                                                 .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                                                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -1261,7 +1261,7 @@ export default function ExamReview() {
                                     <div
                                       className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
                                       dangerouslySetInnerHTML={{
-                                        __html: renderMathInHtml(response.question.text
+                                        __html: renderMathInHtml(renderClozeBlanks(response.question.text)
                                           .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
                                           .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
                                           .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')

@@ -473,3 +473,101 @@ div[class*="Suggestions"] {
   background: hsl(230 30% 8%) !important;
   border-color: hsl(230 25% 13%) !important;
 }
+/* ============================================
+   LIVE EXAM
+   ============================================ */
+
+/*
+  Question and option bodies are author-supplied HTML. `.live-prose` gives that
+  HTML sane defaults without pulling in the typography plugin (which is
+  installed but not registered in tailwind.config.ts, so `prose` is a no-op).
+*/
+.live-prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.live-prose p {
+  margin: 0 0 0.6em;
+}
+
+.live-prose p:last-child {
+  margin-bottom: 0;
+}
+
+.live-prose ul,
+.live-prose ol {
+  margin: 0.4em 0 0.6em;
+  padding-left: 1.35em;
+}
+
+.live-prose ul { list-style: disc; }
+.live-prose ol { list-style: decimal; }
+.live-prose li { margin: 0.15em 0; }
+
+.live-prose strong { font-weight: 650; }
+.live-prose em { font-style: italic; }
+
+.live-prose sub,
+.live-prose sup {
+  font-size: 0.72em;
+  line-height: 0;
+}
+
+.live-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.925em;
+}
+
+.live-prose th,
+.live-prose td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+
+.live-prose th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+}
+
+/* Long formulas scroll inside the question instead of widening the layout. */
+.live-prose .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+
+/* Breathing "on air" dot for the LIVE badge. */
+@keyframes live-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 hsl(0 84% 60% / 0.55); }
+  70%  { box-shadow: 0 0 0 7px hsl(0 84% 60% / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(0 84% 60% / 0); }
+}
+
+.live-dot {
+  animation: live-pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .animate-pulse,
+  .animate-bounce {
+    animation: none !important;
+  }
+}
+
+/* Horizontal rails scroll but shouldn't show a bar over the chips. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  height: 0;
+  width: 0;
+}

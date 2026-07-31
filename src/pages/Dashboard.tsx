@@ -258,6 +258,8 @@ const Dashboard = () => {
     }
   };
 
+  // Creator accounts can't sit exams — the intro opens their own exam in
+  // preview (nothing scored, nothing saved). See src/lib/examAccess.ts.
   const handleTakeExam = async (examId: string) => {
     try {
       // Navigate to the exam intro
@@ -265,7 +267,7 @@ const Dashboard = () => {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to start exam",
+        description: error.message || "Failed to open exam preview",
         variant: "destructive",
       });
     }
@@ -702,7 +704,7 @@ const Dashboard = () => {
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
                               <BookOpen className="mr-2 h-4 w-4" />
-                              View Exam
+                              Preview Exam
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleDuplicateExam(exam)}>
                               <Copy className="mr-2 h-4 w-4" />

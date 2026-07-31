@@ -453,6 +453,44 @@ test("text-based answers still match options the creator has formatted", () => {
   );
 });
 
+// ─── Cloze blanks: ***N*** markers render as ___(N)___ ──────────────────────
+// Gemini transcribes a PDF's "____1____" fill-in-the-blank gaps as ***1***.
+// Raw they show as asterisks; through the markdown bold pass they become
+// broken <strong>/<em> nesting. renderClozeBlanks must run before both.
+
+test("renderClozeBlanks regex converts numbered markers and spares prose", () => {
+  const src = readSrc("lib/richText.ts");
+  // Test the SHIPPED regex, extracted from source, not a copy that can drift.
+  const m = src.match(/value\.replace\((\/[^/]+\/g),\s*"___\(\$1\)___"\)/);
+  assert(m, "renderClozeBlanks replace(...) not found in richText.ts");
+  const body = m[1].slice(1, -2); // strip enclosing /.../g
+  const re = new RegExp(body, "g");
+  const apply = (s) => s.replace(re, "___($1)___");
+
+  assert(apply("feel ***1*** if") === "feel ___(1)___ if", "***1*** not converted");
+  assert(apply("engage *** 2 *** small") === "engage ___(2)___ small", "spaced marker not converted");
+  assert(apply("certain ***(5)*** should") === "certain ___(5)___ should", "parenthesised marker not converted");
+  assert(apply("blank ***12*** here") === "blank ___(12)___ here", "two-digit marker not converted");
+  assert(apply("this is ***important*** text") === "this is ***important*** text",
+    "bold-italic prose was wrongly treated as a blank");
+});
+
+test("cloze markers are handled before math and markdown passes", () => {
+  const renderMath = readSrc("lib/renderMath.ts");
+  assertContains(renderMath, "renderClozeBlanks(html ?? \"\")",
+    "renderMathInHtml no longer normalizes cloze markers — passages show raw ***1***");
+  assertContains(renderMath, "renderClozeBlanks(text == null",
+    "renderMathInText no longer normalizes cloze markers — options show raw ***1***");
+  // The markdown-lite bold pass runs BEFORE renderMathInHtml on these two
+  // pages and would mangle ***1*** into broken <strong> nesting, so the raw
+  // text must go through renderClozeBlanks first.
+  for (const file of ["pages/ExamSimulator.tsx", "pages/ExamReview.tsx"]) {
+    const src = readSrc(file);
+    assertContains(src, "renderMathInHtml(renderClozeBlanks(",
+      `${file}: question text hits the bold/italic pass before cloze markers are normalized`);
+  }
+});
+
 // ─── Summary ─────────────────────────────────────────────────────────────────
 console.log("\n" + "─".repeat(60));
 console.log(`Results: ${passed} passed, ${failed} failed`);

@@ -3,9 +3,11 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, BookOpen, Globe } from "lucide-react";
+import { ArrowLeft, BookOpen, Globe, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatMarks, type ScoringConfig } from "@/services/scoringEngine";
+import { getExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/examAccess";
+import CreatorExamBlocked from "@/components/CreatorExamBlocked";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -53,6 +55,10 @@ const ExamIntro = () => {
     const [totalMaxMarks, setTotalMaxMarks] = useState<number>(0);
     const [totalQuestionCount, setTotalQuestionCount] = useState<number>(0);
     const [unscoredQuestionCount, setUnscoredQuestionCount] = useState<number>(0);
+    // "take" for students/guests, "preview" for the exam's own creator,
+    // "blocked" for a creator on someone else's exam.
+    const [access, setAccess] = useState<ExamAccessMode>("take");
+    const isPreview = access === "preview";
 
     const fromPage = searchParams.get("from");
 
@@ -65,18 +71,27 @@ const ExamIntro = () => {
     const fetchExamData = async () => {
         try {
             setLoading(true);
-            // Fetch Exam
-            const { data: examData, error: examError } = await supabase
-                .from("exams")
-                .select("*")
-                .eq("id", examId)
-                .single();
+            // Fetch Exam (and who's asking — independent, so run them together)
+            const [{ data: examData, error: examError }, viewer] = await Promise.all([
+                supabase.from("exams").select("*").eq("id", examId).single(),
+                getExamViewer(),
+            ]);
 
             if (examError) throw examError;
             const examRecord = examData as unknown as Exam;
+
+            // Creator accounts can only ever PREVIEW their own exam; anyone
+            // else's is blocked before any of it is loaded or rendered.
+            const mode = resolveExamAccess(viewer, (examData as any).user_id);
+            setAccess(mode);
+            if (mode === "blocked") return;
+
             setExam(examRecord);
 
-            const isEditPreview = searchParams.get("from") === "edit";
+            // A creator previewing their own exam should see every language they
+            // authored, not just the published ones — same as the editor's
+            // "Preview" button (?from=edit) has always done.
+            const isEditPreview = searchParams.get("from") === "edit" || mode === "preview";
             const requestedLang = searchParams.get("lang");
 
             const pubLangs = isEditPreview 
@@ -269,6 +284,9 @@ const ExamIntro = () => {
             : allSections[0];
 
         if (firstSection) {
+            // No "preview" flag travels in the URL: the simulator re-derives the
+            // access mode from the signed-in account, so there is nothing to
+            // hand-edit to turn a preview into a real attempt.
             navigate(`/exam/${examId}/section/${firstSection.id}/simulator?lang=${lang}`);
         } else {
             toast({
@@ -294,6 +312,8 @@ const ExamIntro = () => {
             </div>
         );
     }
+
+    if (access === "blocked") return <CreatorExamBlocked />;
 
     if (!exam) return null;
 
@@ -348,10 +368,26 @@ const ExamIntro = () => {
                     <div className="h-1 w-full bg-gradient-to-r from-[#6C3EF4] via-[#8B5CF6] to-[#A855F7]" />
 
                     <div className="p-7 space-y-6">
+                        {/* Creator preview notice — a preview is never scored or saved */}
+                        {isPreview && (
+                            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 flex items-start gap-3">
+                                <Eye className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                                <div className="space-y-0.5">
+                                    <h3 className="font-semibold text-foreground text-sm">Preview mode</h3>
+                                    <p className="text-xs text-muted-foreground leading-relaxed">
+                                        You're viewing your own exam as a creator. Nothing you answer here is
+                                        scored, saved, or counted in analytics.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Exam title & description */}
                         <div>
                             <div className="flex items-center gap-2 mb-2">
-                                <span className="text-[10px] font-bold text-[#A855F7] uppercase tracking-widest bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 px-2 py-0.5 rounded-full">Exam</span>
+                                <span className="text-[10px] font-bold text-[#A855F7] uppercase tracking-widest bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 px-2 py-0.5 rounded-full">
+                                    {isPreview ? "Preview" : "Exam"}
+                                </span>
                             </div>
                             <h1 className="text-2xl md:text-3xl font-bold text-foreground leading-tight">{exam.name}</h1>
                             {displayDescription && (
@@ -514,8 +550,10 @@ const ExamIntro = () => {
                                 disabled={allSections.length === 0 || (isMultiLang && !selectedLanguage)}
                                 className="w-full h-12 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-base shadow-lg shadow-[#6C3EF4]/30 hover:shadow-xl hover:shadow-[#6C3EF4]/40 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
                             >
-                                <BookOpen className="h-5 w-5" />
-                                {isMultiLang && !selectedLanguage ? "Select a Language to Start" : "Start Exam"}
+                                {isPreview ? <Eye className="h-5 w-5" /> : <BookOpen className="h-5 w-5" />}
+                                {isMultiLang && !selectedLanguage
+                                    ? (isPreview ? "Select a Language to Preview" : "Select a Language to Start")
+                                    : (isPreview ? "Preview Exam" : "Start Exam")}
                             </button>
                         </div>
                     </div>
