@@ -84,6 +84,12 @@ import { OutcomeBar, MeterRow } from "@/components/live/LiveStats";
 import PresenterHud from "@/components/live/PresenterHud";
 import SessionSettingsMenu from "@/components/live/SessionSettingsMenu";
 import {
+  AddTimeControls,
+  UndoPill,
+  UNDO_WINDOW_MS,
+} from "@/components/live/LiveTimeControls";
+import { parseLiveError } from "@/lib/live/liveErrors";
+import {
   fetchLiveExam,
   fetchAllLiveQuestions,
   fetchLiveSections,
@@ -96,6 +102,8 @@ import {
   fetchAllAnalytics,
   fetchParticipantNames,
   updateLiveExam,
+  addLiveQuestionTime,
+  undoLastLiveUnlock,
   type LeaderboardVisibility,
   type LiveExam,
   type LiveQuestion,
@@ -434,6 +442,120 @@ export default function LiveExamControl() {
   // Fires once per question, and never for a question that was already over
   // when this tab arrived — that case is handled by the missed-expiry sweep.
   useLiveTimerExpiry(handleTimerExpired);
+
+  /**
+   * A3 cancels a pending reveal.
+   *
+   * The blocker an adversarial review caught: granting time re-arms the countdown
+   * (the store's setTarget accepts a later deadline for the same key), but nothing
+   * cancelled the grace timeout that expiry had already scheduled. It fired 2.5s
+   * later and computed analytics — publishing the answer — for a question that was
+   * open again for another half minute.
+   *
+   * `collectingFinal` has to be cleared in the same breath, because the only other
+   * place that clears it is inside the very timeout being cancelled; otherwise the
+   * deck sits on "Collecting final answers…" for the whole extension.
+   */
+  const extraSecondsRef = useRef(session.extraSeconds);
+  useEffect(() => {
+    const grew = session.extraSeconds > extraSecondsRef.current;
+    extraSecondsRef.current = session.extraSeconds;
+    if (!grew) return;
+
+    if (graceTimeoutRef.current !== null) {
+      window.clearTimeout(graceTimeoutRef.current);
+      graceTimeoutRef.current = null;
+    }
+    setCollectingFinal(false);
+    // The question is answerable again, so a compute must be allowed to run once
+    // it genuinely closes.
+    if (currentQuestion) computeStartedRef.current.delete(currentQuestion.id);
+  }, [session.extraSeconds, currentQuestion]);
+
+  // ─── A3 / A10 handlers ─────────────────────────────────────
+
+  const [controlPending, setControlPending] = useState(false);
+
+  /** Both RPCs report through machine-parseable codes; never paste a raw one. */
+  const reportControlError = useCallback(
+    (err: unknown) => {
+      const parsed = parseLiveError(err);
+      toast({
+        title: parsed.title,
+        description: parsed.text,
+        // An expected outcome — missing the undo window, hitting the cap — is not
+        // a failure, and a destructive toast for one trains creators to ignore them.
+        variant: parsed.expected ? "default" : "destructive",
+      });
+    },
+    [toast]
+  );
+
+  const handleAddTime = useCallback(
+    async (seconds: 30 | 60) => {
+      if (!liveExamId || controlPending) return;
+      setControlPending(true);
+      try {
+        setExam(await addLiveQuestionTime(liveExamId, seconds));
+        session.refresh();
+        toast({ title: `+${seconds}s added`, description: "Everyone's timer just grew." });
+      } catch (err) {
+        reportControlError(err);
+      } finally {
+        setControlPending(false);
+      }
+    },
+    [liveExamId, controlPending, session, toast, reportControlError]
+  );
+
+  const handleUndoUnlock = useCallback(async () => {
+    if (!liveExamId || controlPending) return;
+    setControlPending(true);
+    try {
+      // Any pending reveal for the question being withdrawn must not fire.
+      if (graceTimeoutRef.current !== null) {
+        window.clearTimeout(graceTimeoutRef.current);
+        graceTimeoutRef.current = null;
+      }
+      setCollectingFinal(false);
+      if (currentQuestion) computeStartedRef.current.delete(currentQuestion.id);
+
+      setExam(await undoLastLiveUnlock(liveExamId));
+      session.refresh();
+      refreshTally();
+      toast({ title: "Unlock taken back", description: "Students are back to waiting." });
+    } catch (err) {
+      reportControlError(err);
+    } finally {
+      setControlPending(false);
+    }
+  }, [liveExamId, controlPending, currentQuestion, session, refreshTally, toast, reportControlError]);
+
+  /**
+   * When the undo window closes, in server-corrected time.
+   *
+   * Undo also disappears the moment anyone answers — read from the tally the deck
+   * is already polling rather than from a new subscription. At 750ms while a
+   * question is running, the guard is well inside the 5s window.
+   */
+  const undoClosesAtMs = useMemo(() => {
+    if (!session.unlockedAt || currentQuestionIndex < 0) return 0;
+    return new Date(session.unlockedAt).getTime() + UNDO_WINDOW_MS;
+  }, [session.unlockedAt, currentQuestionIndex]);
+
+  /**
+   * `serverNow()` is not reactive, and deliberately so: no new interval is added
+   * for this. The tally poll already re-renders this page every 750ms while a
+   * question is running, which is the only window undo is offered in — so the pill
+   * disappears within 750ms of the window closing, and the server refuses anything
+   * later regardless. The visible bar is CSS and finishes exactly on time.
+   */
+  const canUndo =
+    isLive &&
+    hasOpenQuestion &&
+    currentResponseCount === 0 &&
+    !currentAnalytics &&
+    session.serverNow() < undoClosesAtMs;
 
   /**
    * Missed expiry: this tab was closed or asleep when a question ended, so
@@ -1111,6 +1233,25 @@ export default function LiveExamControl() {
                     max={responseDenominator}
                     tone={responseRatePct >= 80 ? "correct" : "brand"}
                   />
+
+                  {/* A3 — beside the meter, because the decision to grant time is
+                      made by looking at how many have answered. */}
+                  <AddTimeControls
+                    canAddTime={isTimerActive}
+                    extraSeconds={session.extraSeconds}
+                    onAddTime={handleAddTime}
+                    pending={controlPending}
+                  />
+
+                  {/* A10 — above the primary action, so "wait, no" sits where the
+                      creator's eye already is after pressing space. */}
+                  {canUndo && (
+                    <UndoPill
+                      closesAtMs={undoClosesAtMs}
+                      onUndo={handleUndoUnlock}
+                      pending={controlPending}
+                    />
+                  )}
 
                   {primaryAction()}
                 </div>

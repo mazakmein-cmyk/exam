@@ -553,11 +553,44 @@ div[class*="Suggestions"] {
   animation: live-pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/*
+  A10's undo window, draining left to right.
+
+  Deliberately CSS rather than a JS countdown. Phase 0 exists largely because a
+  250ms interval driving React state re-rendered the entire control room four
+  times a second for the length of every question; adding a second ticking
+  element to the same page would give that cost straight back. `transform` is
+  compositor-only, so this animates without touching layout or the main thread.
+
+  The duration is set inline from the remaining window, so the bar always
+  finishes with the real deadline even when the pill mounts part-way through.
+*/
+@keyframes live-undo-drain {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+.live-undo-drain {
+  width: 100%;
+  transform-origin: left center;
+  animation-name: live-undo-drain;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  will-change: transform;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .live-dot,
   .animate-pulse,
   .animate-bounce {
     animation: none !important;
+  }
+
+  /* Hold the bar full rather than freezing it mid-drain, which would read as a
+     stalled control rather than a deliberate absence of motion. */
+  .live-undo-drain {
+    animation: none !important;
+    transform: scaleX(1);
   }
 }
 

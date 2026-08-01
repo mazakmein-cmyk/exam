@@ -954,6 +954,34 @@ export type Database = {
         Args: { p_ordinal: number }
         Returns: string
       }
+      live_question_grace_seconds: {
+        Args: Record<string, never>
+        Returns: number
+      }
+      live_question_visual_end: {
+        Args: {
+          p_extra_seconds: number
+          p_time_seconds: number
+          p_unlocked_at: string
+        }
+        Returns: string
+      }
+      live_ordinal_min_seconds: {
+        Args: { p_live_exam_id: string; p_ordinal: number }
+        Returns: number
+      }
+      live_refresh_fastest_names: {
+        Args: { p_live_exam_id: string }
+        Returns: undefined
+      }
+      add_live_question_time: {
+        Args: { p_live_exam_id: string; p_seconds: number }
+        Returns: Database["public"]["Tables"]["live_exams"]["Row"]
+      }
+      undo_last_live_unlock: {
+        Args: { p_live_exam_id: string }
+        Returns: Database["public"]["Tables"]["live_exams"]["Row"]
+      }
       live_question_deadline: {
         Args: {
           p_extra_seconds: number

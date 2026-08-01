@@ -334,7 +334,11 @@ export default function LiveExamPresent() {
                 </div>
               </div>
 
-              <PresentAnsweredRow inRoom={session.onlineCount} isRevealing={isRevealing} />
+                      <PresentAnsweredRow
+                inRoom={session.onlineCount}
+                isRevealing={isRevealing}
+                extraSeconds={session.extraSeconds}
+              />
             </>
           )}
         </section>
@@ -460,15 +464,24 @@ function PresentTimerRing({ idleLabel }: { idleLabel: string }) {
 function PresentAnsweredRow({
   inRoom,
   isRevealing,
+  extraSeconds,
 }: {
   inRoom: number;
   isRevealing: boolean;
+  extraSeconds: number;
 }) {
   return (
     <div className="mt-6 flex shrink-0 items-center gap-3 text-xl font-semibold text-white/60">
       <Users className="h-6 w-6" />
       <span className="tabular-nums text-white/85">{inRoom}</span>
       <span>in the room</span>
+      {/* A3, announced to the room. The clock growing without explanation looks
+          like a fault; naming it makes it a gift. */}
+      {extraSeconds > 0 && !isRevealing && (
+        <span className="rounded-full bg-amber-400/20 px-3 py-1 text-base font-bold tabular-nums text-amber-200">
+          +{extraSeconds}s added
+        </span>
+      )}
       {isRevealing && (
         <span className="ml-auto rounded-full bg-white/10 px-4 py-1.5 text-base font-bold uppercase tracking-[0.14em] text-white/70">
           Time up

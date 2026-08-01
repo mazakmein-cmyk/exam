@@ -690,9 +690,21 @@ export default function LiveExamStudent() {
   const isTimerActive = timerReady && timerPhase.running;
   const isTimerExpiredLocally = currentQuestionIndex >= 0 && timerReady && !timerPhase.running;
 
-  // A question is officially "locked" when the timer expires or analytics arrive
   const currentAnalytics = currentQuestionIndex >= 0 ? analytics.get(currentQuestionIndex) : undefined;
-  const isLocked = isTimerExpiredLocally || !!currentAnalytics;
+  /**
+   * A question is locked when its countdown has run out.
+   *
+   * It used to ALSO lock on the mere existence of an analytics row, which was a
+   * blocker once A3 exists. `live_question_analytics` is readable by every student
+   * with no time condition at all, so if a row landed early — a second control tab,
+   * the missed-expiry sweep, a compute inside the grace — and the creator then
+   * granted time, the student was locked out of a question that was open again, and
+   * the class split was already on their screen.
+   *
+   * The running clock is the authority. A row existing means somebody computed
+   * something; it does not mean this student is out of time.
+   */
+  const isLocked = isTimerExpiredLocally || (!!currentAnalytics && !isTimerActive);
 
   const myCurrentResponse = currentQuestionIndex >= 0 ? responses.get(currentQuestionIndex) : undefined;
   const hasSubmitted = !!myCurrentResponse;
@@ -1605,6 +1617,14 @@ export default function LiveExamStudent() {
                   </>
                 )}
               </div>
+              {/* A3 — the room was just given more time. Shown beside the clock
+                  because that is where the student's eyes already are when the
+                  number they were watching suddenly grows. */}
+              {session.extraSeconds > 0 && (
+                <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold tabular-nums text-amber-600">
+                  +{session.extraSeconds}s
+                </span>
+              )}
               <LiveTimerChip idleLabel={isLocked ? "Time up" : "—"} />
             </div>
             {/* Whole-exam map. Desktop gets the same rail in the side panel, so

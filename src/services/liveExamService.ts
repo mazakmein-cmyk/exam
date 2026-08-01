@@ -887,6 +887,45 @@ export async function fetchOpenQuestionTally(examId: string): Promise<LiveOpenQu
   return data as unknown as LiveOpenQuestionTally;
 }
 
+// ─── A3 / A10 — live controls ────────────────────────────────
+
+/**
+ * A3: grant more time on the open question.
+ *
+ * Rejected once the VISUAL countdown has reached zero, not once the server's
+ * grace has run out. Past zero every client has already latched "expired" and
+ * begun revealing, so reopening the question would contradict what the room has
+ * been told. Errors are machine-parseable — see lib/live/liveErrors.ts.
+ *
+ * @param seconds 30 or 60; anything else is refused server-side
+ */
+export async function addLiveQuestionTime(
+  examId: string,
+  seconds: 30 | 60
+): Promise<LiveExam> {
+  const { data, error } = await supabase
+    .rpc("add_live_question_time", { p_live_exam_id: examId, p_seconds: seconds });
+
+  if (error) throw error;
+  return data as unknown as LiveExam;
+}
+
+/**
+ * A10: take back the last unlock.
+ *
+ * Never deletes a response — if anyone has answered, the unlock stands and the
+ * error carries the count so the UI can say who is affected. Also refuses when the
+ * previous question has not itself finished, which would otherwise drop the room
+ * back into a still-running question.
+ */
+export async function undoLastLiveUnlock(examId: string): Promise<LiveExam> {
+  const { data, error } = await supabase
+    .rpc("undo_last_live_unlock", { p_live_exam_id: examId });
+
+  if (error) throw error;
+  return data as unknown as LiveExam;
+}
+
 /**
  * B12: raise an anonymous "I'm lost" for the open question.
  *
