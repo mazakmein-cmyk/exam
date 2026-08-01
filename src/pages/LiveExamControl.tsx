@@ -99,6 +99,8 @@ import {
 } from "@/components/live/LiveInsight";
 import { classifyDistribution } from "@/lib/live/classifyDistribution.js";
 import { tallyOptions } from "@/lib/live/optionTally.js";
+import { MomentChip } from "@/components/live/MomentCard";
+import { selectMoment, withRealNames } from "@/lib/live/moments.js";
 import {
   fetchLiveExam,
   fetchAllLiveQuestions,
@@ -114,6 +116,9 @@ import {
   updateLiveExam,
   addLiveQuestionTime,
   undoLastLiveUnlock,
+  fetchLiveMoments,
+  celebrateLiveExam,
+  type LiveMoment,
   type LeaderboardVisibility,
   type LiveExam,
   type LiveQuestion,
@@ -192,6 +197,8 @@ export default function LiveExamControl() {
    * name from fastest_user_id.
    */
   const [participantNames, setParticipantNames] = useState<Map<string, string>>(new Map());
+  /** B14. Fetched alongside analytics, never polled — a handful of rows per question. */
+  const [moments, setMoments] = useState<LiveMoment[]>([]);
 
   // Dialog states
   const [showEndDialog, setShowEndDialog] = useState(false);
@@ -337,6 +344,10 @@ export default function LiveExamControl() {
       // Ranks are recomputed alongside analytics, including by the server's
       // end-of-session backfill which this tab never triggered.
       void refreshLeaderboard();
+      // B14 is derived in the same server call, so this is the moment it exists.
+      if (liveExamId) {
+        void fetchLiveMoments(liveExamId).then(setMoments).catch(() => {});
+      }
     },
     onReconnect: () => {
       // Rehydrate analytics/leaderboard missed while disconnected.
@@ -566,6 +577,7 @@ export default function LiveExamControl() {
     currentResponseCount === 0 &&
     !currentAnalytics &&
     session.serverNow() < undoClosesAtMs;
+
 
   /**
    * Missed expiry: this tab was closed or asleep when a question ended, so
@@ -852,6 +864,35 @@ export default function LiveExamControl() {
     },
     [liveExamId, session, postToPresent, toast]
   );
+
+  // ─── B14 ───────────────────────────────────────────────────
+
+  /**
+   * The one moment worth mentioning for the question on screen.
+   *
+   * Real names are swapped in here and only here: get_live_moments returns the
+   * masked name because that same row reaches the projector, and the control room
+   * is the only screen never cast.
+   */
+  const featuredMoment = useMemo(() => {
+    if (previewIdx < 0 || moments.length === 0) return null;
+    return selectMoment(withRealNames(moments, participantNames), previewIdx);
+  }, [moments, participantNames, previewIdx]);
+
+  const handleCelebrate = useCallback(async () => {
+    if (!liveExamId || controlPending) return;
+    setControlPending(true);
+    try {
+      await celebrateLiveExam(liveExamId);
+      // No local confetti: the control room is the one screen that must stay
+      // responsive, and there is no audience in front of it.
+      postToPresent({ t: "celebrate", seq: Date.now() });
+    } catch (err) {
+      reportControlError(err);
+    } finally {
+      setControlPending(false);
+    }
+  }, [liveExamId, controlPending, postToPresent, reportControlError]);
 
   /**
    * Stable so the memoised rail is not re-rendered by the answered-count poll.
@@ -1377,6 +1418,14 @@ export default function LiveExamControl() {
 
                   {/* B12 — creator side only. Hidden entirely at zero. */}
                   <ConfusionCount count={tally.confusion_count ?? 0} />
+
+                  {/* B14 layer 1 — a suggestion for the creator to voice, plus the
+                      button that makes it loud. Never auto-blasted. */}
+                  <MomentChip
+                    moment={featuredMoment}
+                    onCelebrate={handleCelebrate}
+                    pending={controlPending}
+                  />
 
                   {/* A8 — the one sentence. Subscribes to the countdown itself so
                       the page does not. */}

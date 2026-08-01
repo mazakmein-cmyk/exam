@@ -107,6 +107,29 @@ export function playTick(): void {
   }
 }
 
+/**
+ * A short bright fanfare for a whole-room celebration (B14).
+ *
+ * Deliberately longer and higher than the correct-answer chime, so the two are
+ * distinguishable without looking: one means "you got it", the other means
+ * "everyone look up". Still synthesised — no audio asset, no network fetch, and
+ * it inherits the same mute flag as everything else here.
+ */
+export function playCelebrate(): void {
+  if (muted) return;
+  try {
+    const ac = getCtx();
+    if (!ac) return;
+    // A major triad walked upward, then the octave, with the last note held.
+    tone(ac, { freq: 523.25, at: 0, duration: 0.14, gain: 0.1 });
+    tone(ac, { freq: 659.25, at: 0.09, duration: 0.14, gain: 0.1 });
+    tone(ac, { freq: 783.99, at: 0.18, duration: 0.16, gain: 0.11 });
+    tone(ac, { freq: 1046.5, at: 0.28, duration: 0.42, gain: 0.12 });
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Rising arpeggio: the student's answer was correct. */
 export function playCorrectChime(): void {
   if (muted) return;

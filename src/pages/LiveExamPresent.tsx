@@ -27,7 +27,7 @@
  * one number per row.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Radio, Users, Trophy, MonitorCog, WifiOff } from "lucide-react";
 import SEO from "@/components/SEO";
@@ -39,6 +39,10 @@ import { useLiveCountdown, useLiveTimerPhase, useLiveTimerTarget } from "@/lib/l
 import AnswerRiver from "@/components/live/AnswerRiver";
 import { useOpenQuestionTally, TALLY_POLL_MS } from "@/hooks/useOpenQuestionTally";
 import { tallyOptions } from "@/lib/live/optionTally.js";
+import { MomentBanner } from "@/components/live/MomentCard";
+import { selectMoment } from "@/lib/live/moments.js";
+import { fireCelebration, shouldCelebrate } from "@/lib/live/celebrate";
+import { fetchLiveMoments, type LiveMoment } from "@/services/liveExamService";
 import { useLiveSession } from "@/hooks/useLiveSession";
 import { usePeerWindow } from "@/hooks/usePeerWindow";
 import { useFitText } from "@/hooks/useFitText";
@@ -62,6 +66,13 @@ export default function LiveExamPresent() {
   const [questions, setQuestions] = useState<LiveQuestion[]>([]);
   const [leaderboard, setLeaderboard] = useState<LiveParticipant[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [moments, setMoments] = useState<LiveMoment[]>([]);
+  /**
+   * Last celebrate sequence acted on. Starts null so the FIRST observation only
+   * establishes a baseline — otherwise opening the projector during a session that
+   * had already celebrated once would greet the room with confetti.
+   */
+  const celebratedSeqRef = useRef<number | null>(null);
   /** The rescue button hides itself so it never appears in a photo of the wall. */
   const [chromeVisible, setChromeVisible] = useState(true);
 
@@ -110,13 +121,38 @@ export default function LiveExamPresent() {
 
   // ─── Session ───────────────────────────────────────────────
 
+  const loadMoments = useCallback(() => {
+    if (!liveExamId) return;
+    void fetchLiveMoments(liveExamId).then(setMoments).catch(() => {});
+  }, [liveExamId]);
+
   const session = useLiveSession(liveExamId, {
     role: "creator",
     onUnlock: () => setChromeVisible(false),
-    onAnalytics: () => void loadStandings(),
+    onAnalytics: () => {
+      void loadStandings();
+      loadMoments();
+    },
     onEnded: () => void loadStandings(),
     onReconnect: () => void loadStandings(),
+    /**
+     * B14 layer 2. Fired from the exam row's monotonic counter rather than a
+     * broadcast, so a reconnect cannot replay it.
+     */
+    onCelebrate: (seq) => {
+      if (shouldCelebrate(celebratedSeqRef.current, seq)) {
+        fireCelebration("display");
+      }
+      celebratedSeqRef.current = seq;
+    },
   });
+
+  // Establish the baseline from the first sync, so only a genuine increase fires.
+  useEffect(() => {
+    if (celebratedSeqRef.current === null && !session.loading) {
+      celebratedSeqRef.current = session.celebrateSeq;
+    }
+  }, [session.loading, session.celebrateSeq]);
 
   const status = session.status ?? exam?.status ?? null;
   const index = session.currentQuestionIndex;
@@ -237,6 +273,18 @@ export default function LiveExamPresent() {
     leaderboard.length > 0;
 
   const sectionLabel = useMemo(() => question?.section_label || null, [question]);
+
+  /**
+   * The moment for the question just revealed.
+   *
+   * Names arrive already masked from get_live_moments — this screen is
+   * creator-authenticated but pointed at a class, so it gets exactly what a
+   * student would. No withRealNames here, deliberately.
+   */
+  const featuredMoment = useMemo(
+    () => (index < 0 ? null : selectMoment(moments, index)),
+    [moments, index]
+  );
 
   // ─── States before a question is on screen ─────────────────
 
@@ -392,6 +440,14 @@ export default function LiveExamPresent() {
           <PresentTimerRing
             idleLabel={isEnded ? "Done" : index < 0 ? "Ready" : "Time up"}
           />
+
+          {/* B14 layer 2 — between questions only, so it never competes with a
+              question the room is trying to read. */}
+          {(isRevealing || isEnded) && featuredMoment && (
+            <div className="w-full">
+              <MomentBanner moment={featuredMoment} />
+            </div>
+          )}
 
           {showLeaderboard ? (
             <div className="w-full min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-4">

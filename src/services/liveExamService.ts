@@ -887,6 +887,49 @@ export async function fetchOpenQuestionTally(examId: string): Promise<LiveOpenQu
   return data as unknown as LiveOpenQuestionTally;
 }
 
+// ─── B14 — moments and celebration ───────────────────────────
+
+export type LiveMoment = {
+  question_ordinal: number;
+  kind: "comeback" | "lone_correct" | "streak" | "perfect_run" | "class_first_perfect";
+  /** Creator only; withheld from everyone else, because it maps to a real person. */
+  user_id: string | null;
+  /** Already MASKED under privacy mode — the creator re-resolves it locally. */
+  display_name: string | null;
+  value: number;
+  /** Lower sorts first; the display ranking is decided server-side. */
+  priority: number;
+};
+
+/**
+ * Every moment found so far this session.
+ *
+ * Small by construction — at most a handful per question — so this is one fetch
+ * alongside the analytics the creator is already waiting for, not a poll.
+ */
+export async function fetchLiveMoments(examId: string): Promise<LiveMoment[]> {
+  const { data, error } = await supabase
+    .rpc("get_live_moments", { p_live_exam_id: examId });
+
+  if (error) throw error;
+  return (data || []) as unknown as LiveMoment[];
+}
+
+/**
+ * Fire the celebration for the whole room.
+ *
+ * Increments a monotonic counter on the exam row rather than broadcasting an
+ * event, so a client that reconnects can tell "already fired for seq 3" from
+ * "seq 4 is new" and does not replay confetti on every reconnect.
+ */
+export async function celebrateLiveExam(examId: string): Promise<number> {
+  const { data, error } = await supabase
+    .rpc("celebrate_live_exam", { p_live_exam_id: examId });
+
+  if (error) throw error;
+  return Number(data) || 0;
+}
+
 // ─── A3 / A10 — live controls ────────────────────────────────
 
 /**

@@ -53,6 +53,7 @@ import LiveQuestionBody, { questionPreviewText } from "@/components/live/LiveQue
 import LiveOption, { optionLetter, type OptionVisual } from "@/components/live/LiveOption";
 import LiveLeaderboard from "@/components/live/LiveLeaderboard";
 import ConfusionButton from "@/components/live/ConfusionButton";
+import { fireCelebration, shouldCelebrate } from "@/lib/live/celebrate";
 import QuestionRail, { RailLegend, type ChipStatus, type RailItem } from "@/components/live/QuestionRail";
 import { LiveTimerBar, LiveTimerChip } from "@/components/live/LiveTimer";
 import {
@@ -281,6 +282,8 @@ export default function LiveExamStudent() {
   // Ordinals already celebrated with confetti (once per question)
   const celebratedRef = useRef<Set<number>>(new Set());
   const prevRankRef = useRef<number | null>(null);
+  /** Last celebrate sequence this device acted on; null until the first sync. */
+  const celebratedSeqRef = useRef<number | null>(null);
 
   // ─── Shared helpers ────────────────────────────────────────
 
@@ -549,7 +552,28 @@ export default function LiveExamStudent() {
     onReconnect: () => {
       void refetchSessionData();
     },
+    /**
+     * B14 layer 2. The creator pressed Celebrate, so the whole room joins in.
+     *
+     * Gated on a monotonic sequence rather than an event, so a reconnect — which
+     * re-reads the exam row — cannot replay a celebration from ten minutes ago.
+     */
+    onCelebrate: (seq) => {
+      if (shouldCelebrate(celebratedSeqRef.current, seq)) {
+        fireCelebration("phone");
+      }
+      celebratedSeqRef.current = seq;
+    },
   });
+
+  // The first observation only sets a baseline: a student joining a session that
+  // has already celebrated must not be greeted with confetti for someone else's
+  // moment.
+  useEffect(() => {
+    if (celebratedSeqRef.current === null && !session.loading) {
+      celebratedSeqRef.current = session.celebrateSeq;
+    }
+  }, [session.loading, session.celebrateSeq]);
 
   const sessionStatus = session.status ?? exam?.status ?? null;
   const sessionIndex = session.currentQuestionIndex;

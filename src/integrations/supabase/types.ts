@@ -970,6 +970,25 @@ export type Database = {
         Args: { p_live_exam_id: string; p_ordinal: number }
         Returns: number
       }
+      compute_live_moments: {
+        Args: { p_live_exam_id: string; p_ordinal: number }
+        Returns: undefined
+      }
+      get_live_moments: {
+        Args: { p_live_exam_id: string }
+        Returns: {
+          question_ordinal: number
+          kind: string
+          user_id: string | null
+          display_name: string | null
+          value: number
+          priority: number
+        }[]
+      }
+      celebrate_live_exam: {
+        Args: { p_live_exam_id: string }
+        Returns: number
+      }
       live_refresh_fastest_names: {
         Args: { p_live_exam_id: string }
         Returns: undefined
