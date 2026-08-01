@@ -924,6 +924,91 @@ export async function fetchOpenQuestionTally(examId: string): Promise<LiveOpenQu
   return data as unknown as LiveOpenQuestionTally;
 }
 
+// ─── D1 — the session report ─────────────────────────────────
+
+export type LiveReportQuestion = {
+  ordinal: number;
+  text: string;
+  options: unknown;
+  correct_answer: unknown;
+  answer_type: string;
+  total_responses: number;
+  correct_count: number;
+  wrong_count: number;
+  skipped_count: number;
+  option_distribution: Record<string, number>;
+  median_time_ms: number | null;
+  fast_correct: number;
+  slow_correct: number;
+  fast_wrong: number;
+  slow_wrong: number;
+  impulsive_wrong: number;
+  confusion_count: number;
+  accuracy_pct: number | null;
+};
+
+export type LiveReport = {
+  exam_name: string;
+  started_at: string | null;
+  ended_at: string | null;
+  origin_exam_id: string | null;
+  totals: {
+    total_responses: number;
+    total_correct: number;
+    accuracy_pct: number | null;
+    questions_asked: number;
+    confusion_total: number;
+  };
+  /** Hardest first — "what do I reteach" is the top of the list, not a scroll away. */
+  questions: LiveReportQuestion[];
+  pacing: { ordinal: number; unlocked_at: string; extra_seconds: number; undo_count: number }[];
+  moments: { ordinal: number; kind: string; user_id: string | null; value: number; priority: number }[];
+  attendance: {
+    user_id: string;
+    joined_at: string;
+    total_correct: number;
+    total_answered: number;
+    rank: number | null;
+  }[];
+  /**
+   * user_id → display name, resolved at READ time from the CURRENT privacy
+   * setting. The payload itself stores only ids, so toggling privacy after the
+   * fact re-masks a report computed months ago with no migration or trigger.
+   */
+  names: Record<string, string>;
+};
+
+/** The creator's own view: real names, and built on demand if it predates D1. */
+export async function fetchLiveReport(examId: string): Promise<LiveReport | null> {
+  const { data, error } = await supabase
+    .rpc("get_live_exam_report", { p_live_exam_id: examId });
+  if (error) throw error;
+  return (data as unknown as LiveReport) ?? null;
+}
+
+/**
+ * The public view. No auth required, and always masked when privacy mode is on —
+ * "shareable" means it can end up in a staff group chat and from there anywhere.
+ */
+export async function fetchLiveReportByToken(token: string): Promise<LiveReport | null> {
+  const { data, error } = await supabase
+    .rpc("get_live_exam_report_by_token", { p_token: token });
+  if (error) throw error;
+  return (data as unknown as LiveReport) ?? null;
+}
+
+/** Returns the token when enabling, null when disabling. The token is kept, so
+ *  toggling off and on again does not break a link already sent. */
+export async function setLiveReportSharing(
+  examId: string,
+  enabled: boolean
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .rpc("set_live_report_sharing", { p_live_exam_id: examId, p_enabled: enabled });
+  if (error) throw error;
+  return (data as string) ?? null;
+}
+
 // ─── B14 — moments and celebration ───────────────────────────
 
 export type LiveMoment = {

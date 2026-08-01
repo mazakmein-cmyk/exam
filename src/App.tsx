@@ -36,6 +36,7 @@ const LiveExamDetail = lazy(() => import("./pages/LiveExamDetail"));
 const LiveExamControl = lazy(() => import("./pages/LiveExamControl"));
 const LiveExamStudent = lazy(() => import("./pages/LiveExamStudent"));
 const LiveExamPresent = lazy(() => import("./pages/LiveExamPresent"));
+const LiveExamReport = lazy(() => import("./pages/LiveExamReport"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -116,6 +117,11 @@ const router = createBrowserRouter([
       { path: "/live/:shareCode", element: <LiveExamStudent /> },
       { path: "/live-exam/:creatorId/:liveExamId", element: <LiveExamDetail /> },
       { path: "/live-exam/:creatorId/:liveExamId/control", element: <LiveExamControl /> },
+      { path: "/live-exam/:creatorId/:liveExamId/report", element: <LiveExamReport /> },
+      // D1's public link. Deliberately under the normal layout, not the present
+      // one: a report is read on a laptop, and a copy-confirmation toast is
+      // welcome there in a way it never is on a projector.
+      { path: "/live-report/:token", element: <LiveExamReport /> },
       { path: "*", element: <NotFound /> },
     ],
   },

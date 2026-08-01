@@ -73,6 +73,7 @@ import {
   ListChecks,
   MonitorPlay,
   FlaskConical,
+  FileBarChart,
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import SEO from "@/components/SEO";
@@ -1095,6 +1096,16 @@ export default function LiveExamControl() {
       setAnalytics(new Map<string, LiveQuestionAnalytics>(allAnalytics.map(a => [a.live_question_id, a])));
 
       toast({ title: "Exam Ended", description: "Final rankings have been computed." });
+
+      /**
+       * D1 is GENERATED, not requested.
+       *
+       * A report behind a "generate report" button gets opened by maybe one
+       * creator in five, and the entire value of this feature is in being read.
+       * The server builds the payload inside end_live_session, so by the time we
+       * navigate there is a finished page waiting rather than a spinner.
+       */
+      navigate(`/live-exam/${creatorId}/${liveExamId}/report`);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -1348,9 +1359,12 @@ export default function LiveExamControl() {
     if (!isLive && !isEnded) return null;
     if (isEnded) {
       return (
-        <Button variant="outline" className="h-11 w-full" onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to exam editor
+        <Button
+          className="h-11 w-full"
+          onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}/report`)}
+        >
+          <FileBarChart className="mr-2 h-4 w-4" />
+          See the session report
         </Button>
       );
     }

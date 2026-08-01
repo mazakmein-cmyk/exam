@@ -993,6 +993,22 @@ export type Database = {
         Args: { p_section_id: string; p_ordered_ids: string[] }
         Returns: undefined
       }
+      build_live_exam_report: {
+        Args: { p_live_exam_id: string }
+        Returns: Json
+      }
+      get_live_exam_report: {
+        Args: { p_live_exam_id: string }
+        Returns: Json
+      }
+      get_live_exam_report_by_token: {
+        Args: { p_token: string }
+        Returns: Json
+      }
+      set_live_report_sharing: {
+        Args: { p_live_exam_id: string; p_enabled: boolean }
+        Returns: string
+      }
       renumber_live_global_indexes: {
         Args: { p_live_exam_id: string }
         Returns: undefined
