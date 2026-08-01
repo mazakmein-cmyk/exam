@@ -120,15 +120,26 @@ export type Database = {
       }
       live_exams: {
         Row: {
+          auto_start: boolean
+          celebrate_seq: number
           created_at: string
+          current_question_extra_seconds: number
           current_question_index: number
           current_question_unlocked_at: string | null
           description: string | null
           ended_at: string | null
           id: string
           instruction: string | null
+          leaderboard_visibility: string
           name: string
+          origin_exam_id: string | null
+          present_show_leaderboard: boolean
+          present_show_river: boolean
           primary_language: string
+          privacy_mode: boolean
+          report_public: boolean
+          report_share_token: string | null
+          scheduled_start_at: string | null
           share_code: string
           started_at: string | null
           status: string
@@ -138,15 +149,26 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auto_start?: boolean
+          celebrate_seq?: number
           created_at?: string
+          current_question_extra_seconds?: number
           current_question_index?: number
           current_question_unlocked_at?: string | null
           description?: string | null
           ended_at?: string | null
           id?: string
           instruction?: string | null
+          leaderboard_visibility?: string
           name: string
+          origin_exam_id?: string | null
+          present_show_leaderboard?: boolean
+          present_show_river?: boolean
           primary_language?: string
+          privacy_mode?: boolean
+          report_public?: boolean
+          report_share_token?: string | null
+          scheduled_start_at?: string | null
           share_code?: string
           started_at?: string | null
           status?: string
@@ -156,15 +178,26 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auto_start?: boolean
+          celebrate_seq?: number
           created_at?: string
+          current_question_extra_seconds?: number
           current_question_index?: number
           current_question_unlocked_at?: string | null
           description?: string | null
           ended_at?: string | null
           id?: string
           instruction?: string | null
+          leaderboard_visibility?: string
           name?: string
+          origin_exam_id?: string | null
+          present_show_leaderboard?: boolean
+          present_show_river?: boolean
           primary_language?: string
+          privacy_mode?: boolean
+          report_public?: boolean
+          report_share_token?: string | null
+          scheduled_start_at?: string | null
           share_code?: string
           started_at?: string | null
           status?: string
@@ -173,7 +206,105 @@ export type Database = {
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "live_exams_origin_exam_id_fkey"
+            columns: ["origin_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_confusion_signals: {
+        Row: {
+          created_at: string
+          live_exam_id: string
+          live_question_id: string
+          question_ordinal: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          live_exam_id: string
+          live_question_id: string
+          question_ordinal?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          live_exam_id?: string
+          live_question_id?: string
+          question_ordinal?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_confusion_signals_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_presence: {
+        Row: {
+          last_seen_at: string
+          live_exam_id: string
+          user_id: string
+        }
+        Insert: {
+          last_seen_at?: string
+          live_exam_id: string
+          user_id: string
+        }
+        Update: {
+          last_seen_at?: string
+          live_exam_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_presence_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_unlock_log: {
+        Row: {
+          extra_seconds: number
+          live_exam_id: string
+          question_ordinal: number
+          undone_at: string | null
+          unlocked_at: string
+        }
+        Insert: {
+          extra_seconds?: number
+          live_exam_id: string
+          question_ordinal: number
+          undone_at?: string | null
+          unlocked_at: string
+        }
+        Update: {
+          extra_seconds?: number
+          live_exam_id?: string
+          question_ordinal?: number
+          undone_at?: string | null
+          unlocked_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_unlock_log_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       live_participants: {
         Row: {
@@ -226,45 +357,69 @@ export type Database = {
         Row: {
           avg_time_correct_ms: number | null
           computed_at: string
+          confusion_count: number
           correct_count: number
+          fast_correct: number
+          fast_wrong: number
           fastest_time_ms: number | null
           fastest_user_id: string | null
           fastest_user_name: string | null
           id: string
+          impulsive_wrong: number
           live_exam_id: string
           live_question_id: string
+          median_time_ms: number | null
           option_distribution: Json | null
           skipped_count: number
+          slow_correct: number
+          slow_wrong: number
+          time_histogram: Json
           total_responses: number
           wrong_count: number
         }
         Insert: {
           avg_time_correct_ms?: number | null
           computed_at?: string
+          confusion_count?: number
           correct_count?: number
+          fast_correct?: number
+          fast_wrong?: number
           fastest_time_ms?: number | null
           fastest_user_id?: string | null
           fastest_user_name?: string | null
           id?: string
+          impulsive_wrong?: number
           live_exam_id: string
           live_question_id: string
+          median_time_ms?: number | null
           option_distribution?: Json | null
           skipped_count?: number
+          slow_correct?: number
+          slow_wrong?: number
+          time_histogram?: Json
           total_responses?: number
           wrong_count?: number
         }
         Update: {
           avg_time_correct_ms?: number | null
           computed_at?: string
+          confusion_count?: number
           correct_count?: number
+          fast_correct?: number
+          fast_wrong?: number
           fastest_time_ms?: number | null
           fastest_user_id?: string | null
           fastest_user_name?: string | null
           id?: string
+          impulsive_wrong?: number
           live_exam_id?: string
           live_question_id?: string
+          median_time_ms?: number | null
           option_distribution?: Json | null
           skipped_count?: number
+          slow_correct?: number
+          slow_wrong?: number
+          time_histogram?: Json
           total_responses?: number
           wrong_count?: number
         }
@@ -698,6 +853,29 @@ export type Database = {
           },
         ]
       }
+      live_participants_public: {
+        Row: {
+          display_name: string | null
+          id: string | null
+          is_active: boolean | null
+          joined_at: string | null
+          live_exam_id: string | null
+          rank: number | null
+          total_answered: number | null
+          total_correct: number | null
+          total_time_ms: number | null
+          user_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_participants_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: false
+            referencedRelation: "live_exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       compute_live_question_analytics: {
@@ -767,6 +945,30 @@ export type Database = {
       grade_live_answer: {
         Args: { p_correct: Json; p_selected: Json }
         Returns: boolean
+      }
+      flag_live_confusion: {
+        Args: { p_live_exam_id: string }
+        Returns: undefined
+      }
+      live_anon_name: {
+        Args: { p_ordinal: number }
+        Returns: string
+      }
+      live_question_deadline: {
+        Args: {
+          p_extra_seconds: number
+          p_time_seconds: number
+          p_unlocked_at: string
+        }
+        Returns: string
+      }
+      live_open_question_tally: {
+        Args: { p_live_exam_id: string }
+        Returns: Json
+      }
+      live_session_sync: {
+        Args: { p_beat?: boolean; p_live_exam_id: string }
+        Returns: Json
       }
       start_live_session: {
         Args: { p_live_exam_id: string }

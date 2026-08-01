@@ -1,80 +1,106 @@
 /**
  * useLiveExamRealtime.ts
  * ----------------------
- * Supabase Realtime subscription hooks for the Live Exam module.
- * Provides reactive updates for:
- *   - Exam state changes (question unlocked, status changed)
- *   - Participant count / leaderboard changes
- *   - New responses (for creator's live submission counter)
- *   - Analytics computed (for students to see after timer ends)
+ * Supabase Realtime subscription for the Live Exam module — the push lane.
+ *
+ * What it carries, and why it carries so little
+ * ---------------------------------------------
+ * Only two tables remain in the realtime publication:
+ *
+ *   live_exams               one row change per unlock / status change / A3
+ *                            grant. This is the one push students genuinely
+ *                            need, and it is O(questions).
+ *   live_question_analytics  one row per question, when the reveal lands.
+ *
+ * Everything else was removed in the Phase 0 migration:
+ *
+ *   live_participants  compute_live_rankings UPDATEs every participant row
+ *                      after every question, and every student was subscribed,
+ *                      so a session cost (participants x questions x students)
+ *                      messages — 20,000,000 for 1000 students over 20
+ *                      questions, against a 2,000,000/month allowance. It also
+ *                      bought nothing: ranks only change when that RPC runs,
+ *                      and both pages already refetch the leaderboard at
+ *                      exactly that moment.
+ *   live_responses     one message per student per question, all of it to a
+ *                      single creator tab. Replaced by
+ *                      live_open_question_tally(), polled at 750ms from that
+ *                      one tab, which also carries the confusion count and the
+ *                      A10 undo guard in the same round trip.
+ *
+ * If a future feature seems to want a per-row push to students, cost it as
+ * (rows x students) before adding it here.
  *
  * Channels self-heal: on CHANNEL_ERROR / TIMED_OUT / CLOSED (or the browser
  * coming back online / a tab returning from a long background) the channel is
- * rebuilt with capped exponential backoff, and `onReconnect` fires so pages
- * can refetch any events missed while disconnected.
+ * rebuilt with capped exponential backoff, and `onReconnect` fires so pages can
+ * refetch anything missed while disconnected. `onSubscribeFailure` reports a
+ * channel that has never managed to subscribe at all, which is how a client
+ * past the plan's concurrent-connection cap discovers it must fall back to
+ * polling instead of waiting forever for a push that will never arrive.
  */
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-import type {
-  LiveExam,
-  LiveParticipant,
-  LiveResponse,
-  LiveQuestionAnalytics,
-} from "@/services/liveExamService";
+import type { LiveExam, LiveQuestionAnalytics } from "@/services/liveExamService";
 
 // ─── Types ───────────────────────────────────────────────────
 
 type RealtimeCallbacks = {
-  /** Called when live_exams row is updated (question unlock, status change, etc.) */
+  /** live_exams row updated: question unlocked, time granted, status changed. */
   onExamUpdate?: (exam: LiveExam) => void;
-  /** Called when a new participant joins */
-  onParticipantJoined?: (participant: LiveParticipant) => void;
-  /** Called when participant data changes (rank updated, etc.) */
-  onParticipantUpdated?: (participant: LiveParticipant) => void;
-  /** Called when a new response is submitted (creator sees live count) */
-  onNewResponse?: (response: LiveResponse) => void;
-  /** Called when analytics are computed for a question */
+  /** Analytics computed (or recomputed) for a question. */
   onAnalyticsComputed?: (analytics: LiveQuestionAnalytics) => void;
   /**
-   * Called once per recovery, after the channel successfully resubscribes
-   * following a connection drop. Pages should refetch state they may have
-   * missed while disconnected (exam row, responses, analytics, ...).
+   * Fires once per recovery, after the channel successfully resubscribes
+   * following a drop. Pages should refetch state they may have missed.
    */
   onReconnect?: () => void;
+  /**
+   * Fires when the channel has failed to subscribe and has never once
+   * succeeded. The push lane is unavailable for this client — the caller
+   * should switch to polling rather than sit and wait.
+   */
+  onSubscribeFailure?: () => void;
+  /**
+   * Fires every time the channel reaches SUBSCRIBED, including the first time.
+   *
+   * It must fire on the first success and not only after a prior failure: the
+   * caller uses this to learn that the push lane works, and therefore that it
+   * can drop to a slow keep-alive poll. Reporting only recoveries would leave a
+   * perfectly healthy client polling at the full rate for the whole session —
+   * the exact load this design exists to avoid.
+   */
+  onSubscribeSuccess?: () => void;
 };
 
 const MAX_BACKOFF_MS = 15_000;
 const LONG_HIDDEN_MS = 30_000;
+/** Consecutive failures before we declare the push lane unavailable. */
+const FAILURES_BEFORE_FALLBACK = 2;
 
 // ─── Main Hook ───────────────────────────────────────────────
 
 /**
- * Subscribe to all Realtime events for a specific live exam.
- * Automatically cleans up on unmount or when examId changes.
+ * Subscribe to Realtime events for a live exam. One channel per hook instance;
+ * cleans up on unmount or when examId changes.
  *
- * Usage:
- * ```tsx
- * useLiveExamRealtime(examId, {
- *   onExamUpdate: (exam) => setExam(exam),
- *   onParticipantJoined: (p) => setParticipants(prev => [...prev, p]),
- *   onAnalyticsComputed: (a) => setAnalytics(prev => [...prev, a]),
- *   onReconnect: () => refetchEverything(),
- * });
- * ```
+ * Call this ONCE per page. It used to be called a second time indirectly by a
+ * participant-count helper, which opened a second channel with its own full set
+ * of bindings for the same exam.
  */
 export function useLiveExamRealtime(
   examId: string | undefined,
   callbacks: RealtimeCallbacks
 ) {
-  // Store callbacks in a ref to avoid re-subscribing when callbacks change
+  // Callbacks live in a ref so changing them never re-subscribes.
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
 
   // Unique per hook instance: supabase-js dedupes channels by topic, so two
-  // hook instances sharing `live-exam-${examId}` would silently merge — the
-  // second subscribe() becomes a no-op and the extra bindings break the join
+  // instances sharing `live-exam-${examId}` would silently merge — the second
+  // subscribe() becomes a no-op and the extra bindings break the join
   // ("mismatch between server and client bindings"). A unique suffix keeps
   // every instance on its own channel; postgres_changes delivery doesn't
   // depend on the topic name.
@@ -91,12 +117,14 @@ export function useLiveExamRealtime(
     let dropPending = false; // a drop happened since the last SUBSCRIBED
     let isCleanedUp = false; // set before removeChannel on unmount so its CLOSED is ignored
     let hiddenAt: number | null = null;
+    let consecutiveFailures = 0;
+    let fallbackAnnounced = false;
 
     const buildChannel = () => {
       const ch: RealtimeChannel = supabase
         .channel(`live-exam-${examId}-${instanceIdRef.current}`)
 
-        // ─ live_exams changes (question unlock, status) ─
+        // ─ live_exams: unlock, A3 time grant, status ─
         .on(
           "postgres_changes",
           {
@@ -112,55 +140,7 @@ export function useLiveExamRealtime(
           }
         )
 
-        // ─ New participants ─
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "live_participants",
-            filter: `live_exam_id=eq.${examId}`,
-          },
-          (payload: RealtimePostgresChangesPayload<Record<string, any>>) => {
-            if (payload.new && callbacksRef.current.onParticipantJoined) {
-              callbacksRef.current.onParticipantJoined(payload.new as unknown as LiveParticipant);
-            }
-          }
-        )
-
-        // ─ Participant updates (rank changes) ─
-        .on(
-          "postgres_changes",
-          {
-            event: "UPDATE",
-            schema: "public",
-            table: "live_participants",
-            filter: `live_exam_id=eq.${examId}`,
-          },
-          (payload: RealtimePostgresChangesPayload<Record<string, any>>) => {
-            if (payload.new && callbacksRef.current.onParticipantUpdated) {
-              callbacksRef.current.onParticipantUpdated(payload.new as unknown as LiveParticipant);
-            }
-          }
-        )
-
-        // ─ New responses (for creator's live counter) ─
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "live_responses",
-            filter: `live_exam_id=eq.${examId}`,
-          },
-          (payload: RealtimePostgresChangesPayload<Record<string, any>>) => {
-            if (payload.new && callbacksRef.current.onNewResponse) {
-              callbacksRef.current.onNewResponse(payload.new as unknown as LiveResponse);
-            }
-          }
-        )
-
-        // ─ Analytics computed (shown to everyone after timer ends) ─
+        // ─ Analytics computed (the reveal, for everyone) ─
         .on(
           "postgres_changes",
           {
@@ -201,6 +181,9 @@ export function useLiveExamRealtime(
 
         if (status === "SUBSCRIBED") {
           retryAttempt = 0;
+          consecutiveFailures = 0;
+          fallbackAnnounced = false;
+          callbacksRef.current.onSubscribeSuccess?.();
           if (dropPending && hadSubscribed) {
             dropPending = false;
             callbacksRef.current.onReconnect?.();
@@ -213,6 +196,16 @@ export function useLiveExamRealtime(
           status === "CLOSED"
         ) {
           dropPending = true;
+          // A channel that has never once subscribed is not a blip — it is a
+          // client that cannot have a push lane at all (connection cap, proxy
+          // blocking websockets). Say so, so the caller can start polling.
+          if (!hadSubscribed) {
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= FAILURES_BEFORE_FALLBACK && !fallbackAnnounced) {
+              fallbackAnnounced = true;
+              callbacksRef.current.onSubscribeFailure?.();
+            }
+          }
           scheduleResubscribe();
         }
       });
@@ -272,145 +265,4 @@ export function useLiveExamRealtime(
       if (channel) supabase.removeChannel(channel);
     };
   }, [examId]);
-}
-
-// ─── Convenience: Participant Count Hook ─────────────────────
-
-/**
- * Simple hook that tracks the live participant count for an exam.
- * Returns the current count which updates in real-time.
- */
-export function useLiveParticipantCount(examId: string | undefined): number {
-  const [count, setCount] = useState(0);
-
-  const refetchCount = useCallback(async () => {
-    if (!examId) return;
-
-    const { count: freshCount } = await supabase
-      .from("live_participants")
-      .select("*", { count: "exact", head: true })
-      .eq("live_exam_id", examId);
-
-    setCount(freshCount || 0);
-  }, [examId]);
-
-  // Fetch initial count
-  useEffect(() => {
-    refetchCount();
-  }, [refetchCount]);
-
-  // Subscribe to participant changes; refetch after a connection drop
-  useLiveExamRealtime(examId, {
-    onParticipantJoined: () => setCount((prev) => prev + 1),
-    onReconnect: refetchCount,
-  });
-
-  return count;
-}
-
-// ─── Convenience: Response Count per Question Hook ───────────
-
-/**
- * Tracks how many students have submitted a response for a specific question.
- * Useful for the creator's live dashboard showing "X/Y submitted".
- */
-export function useLiveResponseCount(
-  examId: string | undefined,
-  questionId: string | undefined
-): number {
-  const [count, setCount] = useState(0);
-
-  const refetchCount = useCallback(async () => {
-    if (!examId || !questionId) return;
-
-    const { count: freshCount } = await supabase
-      .from("live_responses")
-      .select("*", { count: "exact", head: true })
-      .eq("live_exam_id", examId)
-      .eq("live_question_id", questionId);
-
-    setCount(freshCount || 0);
-  }, [examId, questionId]);
-
-  useEffect(() => {
-    refetchCount();
-  }, [refetchCount]);
-
-  useLiveExamRealtime(examId, {
-    onNewResponse: (response) => {
-      if (response.live_question_id === questionId) {
-        setCount((prev) => prev + 1);
-      }
-    },
-    onReconnect: refetchCount,
-  });
-
-  return count;
-}
-
-// ─── Convenience: Auto-syncing Leaderboard Hook ──────────────
-
-/**
- * Returns a live-updating leaderboard array for an exam.
- * Automatically merges new participants and rank updates.
- */
-export function useLiveLeaderboard(
-  examId: string | undefined,
-  limit: number = 20
-): LiveParticipant[] {
-  const [participants, setParticipants] = useState<LiveParticipant[]>([]);
-
-  const refetchLeaderboard = useCallback(async () => {
-    if (!examId) return;
-
-    const { data } = await supabase
-      .from("live_participants")
-      .select("*")
-      .eq("live_exam_id", examId)
-      .order("rank", { ascending: true, nullsFirst: false })
-      .limit(limit);
-
-    setParticipants((data || []) as unknown as LiveParticipant[]);
-  }, [examId, limit]);
-
-  useEffect(() => {
-    refetchLeaderboard();
-  }, [refetchLeaderboard]);
-
-  useLiveExamRealtime(examId, {
-    onParticipantJoined: (p) => {
-      setParticipants((prev) => {
-        if (prev.find((e) => e.user_id === p.user_id)) return prev;
-        const next = [...prev, p];
-        return next
-          .sort((a, b) => {
-            if (a.rank === null && b.rank === null) return 0;
-            if (a.rank === null) return 1;
-            if (b.rank === null) return -1;
-            return a.rank - b.rank;
-          })
-          .slice(0, limit);
-      });
-    },
-    onParticipantUpdated: (p) => {
-      setParticipants((prev) => {
-        const next = prev.map((e) => (e.user_id === p.user_id ? p : e));
-        // If not in list yet, add
-        if (!prev.find((e) => e.user_id === p.user_id)) {
-          next.push(p);
-        }
-        return next
-          .sort((a, b) => {
-            if (a.rank === null && b.rank === null) return 0;
-            if (a.rank === null) return 1;
-            if (b.rank === null) return -1;
-            return a.rank - b.rank;
-          })
-          .slice(0, limit);
-      });
-    },
-    onReconnect: refetchLeaderboard,
-  });
-
-  return participants;
 }

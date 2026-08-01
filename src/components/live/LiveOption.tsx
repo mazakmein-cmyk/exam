@@ -8,6 +8,8 @@
  * look already-right before the reveal.
  */
 
+import { memo } from "react";
+
 import { Check, X } from "lucide-react";
 import { renderMathInRichText } from "@/lib/renderMath";
 
@@ -58,7 +60,7 @@ export function optionLetter(i: number): string {
   return String.fromCharCode(65 + i);
 }
 
-export default function LiveOption({
+function LiveOption({
   index,
   html,
   imageUrl,
@@ -70,6 +72,7 @@ export default function LiveOption({
   distributionLabel,
   showShortcut = false,
   compact = false,
+  display = false,
 }: {
   index: number;
   html: string;
@@ -83,6 +86,13 @@ export default function LiveOption({
   distributionLabel?: string;
   showShortcut?: boolean;
   compact?: boolean;
+  /**
+   * Projector mode: every size becomes em-based so the whole row scales with the
+   * container's measured font size. A px or rem size here would ignore it, which
+   * is how an option projected onto a wall stays at fourteen pixels while the
+   * question above it grows.
+   */
+  display?: boolean;
 }) {
   const interactive = !!onClick && !disabled;
   const Tag: any = interactive ? "button" : "div";
@@ -94,7 +104,7 @@ export default function LiveOption({
       disabled={interactive ? false : undefined}
       aria-pressed={interactive ? visual === "selected" : undefined}
       className={`relative w-full overflow-hidden rounded-xl border text-left transition-all
-        ${compact ? "px-3 py-2.5" : "px-3.5 py-3 sm:px-4 sm:py-3.5"}
+        ${display ? "px-[0.55em] py-[0.45em]" : compact ? "px-3 py-2.5" : "px-3.5 py-3 sm:px-4 sm:py-3.5"}
         ${SHELL[visual]}
         ${interactive ? "cursor-pointer active:scale-[0.995]" : ""}
         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background`}
@@ -108,22 +118,28 @@ export default function LiveOption({
         />
       )}
 
-      <div className="relative z-10 flex items-center gap-3">
+      <div className={`relative z-10 flex items-center ${display ? "gap-[0.5em]" : "gap-3"}`}>
         <span
-          className={`flex shrink-0 items-center justify-center font-mono text-xs font-bold transition-colors
-            ${compact ? "h-6 w-6" : "h-7 w-7 sm:h-8 sm:w-8 sm:text-sm"}
+          className={`flex shrink-0 items-center justify-center font-mono font-bold transition-colors
+            ${
+              display
+                ? "h-[1.5em] w-[1.5em] text-[0.7em]"
+                : compact
+                  ? "h-6 w-6 text-xs"
+                  : "h-7 w-7 text-xs sm:h-8 sm:w-8 sm:text-sm"
+            }
             ${multi ? "rounded-md" : "rounded-full"} ${BADGE[visual]}`}
         >
           {optionLetter(index)}
         </span>
 
-        <div className={`min-w-0 flex-1 ${compact ? "text-sm" : "text-sm sm:text-[15px]"}`}>
+        <div className={`min-w-0 flex-1 ${display ? "" : compact ? "text-sm" : "text-sm sm:text-[15px]"}`}>
           <span className="live-prose" dangerouslySetInnerHTML={{ __html: renderMathInRichText(html) }} />
           {imageUrl && (
             <img
               src={imageUrl}
               alt={`Option ${optionLetter(index)}`}
-              className={`mt-1.5 max-w-full rounded-lg border border-border/60 ${compact ? "max-h-24" : "max-h-32"}`}
+              className={`mt-1.5 max-w-full rounded-lg border border-border/60 ${display ? "max-h-[4em]" : compact ? "max-h-24" : "max-h-32"}`}
             />
           )}
         </div>
@@ -148,3 +164,11 @@ export default function LiveOption({
     </Tag>
   );
 }
+
+/**
+ * Memoised because the creator's control room re-renders roughly once a second
+ * while a question is open (the answered count polls at 750ms). Without this,
+ * every one of those ticks re-ran a KaTeX pass over the option's rich text — and the props that
+ * decide its output only change when the question does.
+ */
+export default memo(LiveOption);

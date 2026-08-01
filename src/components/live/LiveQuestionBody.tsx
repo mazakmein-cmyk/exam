@@ -8,6 +8,8 @@
  * into a two-pane passage/question layout, so the parsing lives here once.
  */
 
+import { memo } from "react";
+
 import { renderMathInHtml } from "@/lib/renderMath";
 
 export type ParsedQuestionText = {
@@ -68,16 +70,39 @@ type Props = {
   text: string | null | undefined;
   /** Tighter spacing and a shorter passage image — for review and preview panes. */
   compact?: boolean;
+  /**
+   * Projector mode: emit no font-size of our own and inherit the container's.
+   *
+   * Required by the present screen, where the size comes from measuring the
+   * available frame rather than from a breakpoint. Any hard-coded size here wins
+   * over the inherited one, which is how a question destined for a wall ended up
+   * rendering at fifteen pixels.
+   */
+  display?: boolean;
   className?: string;
 };
 
-export default function LiveQuestionBody({ text, compact = false, className = "" }: Props) {
+function LiveQuestionBody({ text, compact = false, display = false, className = "" }: Props) {
   const parsed = parseLiveQuestionText(text);
+
+  /**
+   * On the projector the size is decided by measurement, not by a breakpoint, so
+   * this variant emits NO font-size class and inherits from its container
+   * instead. `.live-prose` and KaTeX are both em-based throughout, so one
+   * inherited size scales the paragraphs, the lists, the sub/superscripts and
+   * the rendered maths together.
+   *
+   * Without this the hard-coded `text-[15px]` won, and a question projected onto
+   * a wall rendered at fifteen pixels.
+   */
+  const bodySize = display ? "" : compact ? "text-sm" : "text-[15px] sm:text-base";
+  const asideSize = display ? "text-[0.4em]" : "text-[10px]";
+  const passageSize = display ? "" : compact ? "text-sm" : "text-[15px]";
 
   if (!parsed.hasPassage) {
     return (
       <div
-        className={`live-prose leading-relaxed ${compact ? "text-sm" : "text-[15px] sm:text-base"} ${className}`}
+        className={`live-prose leading-relaxed ${bodySize} ${className}`}
         dangerouslySetInnerHTML={{ __html: renderMathInHtml(parsed.questionHtml) }}
       />
     );
@@ -87,7 +112,7 @@ export default function LiveQuestionBody({ text, compact = false, className = ""
     <div className={`flex flex-col lg:flex-row ${compact ? "gap-4" : "gap-6"} ${className}`}>
       {/* Passage */}
       <div className={`lg:w-1/2 ${compact ? "space-y-2" : "space-y-3"} lg:border-r lg:border-border/60 lg:pr-6`}>
-        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Passage</p>
+        <p className={`${asideSize} font-bold uppercase tracking-[0.14em] text-muted-foreground`}>Passage</p>
         {parsed.passageImageUrl && (
           <div className="rounded-xl border border-border/60 bg-muted/30 p-2 flex justify-center">
             <img
@@ -99,7 +124,7 @@ export default function LiveQuestionBody({ text, compact = false, className = ""
         )}
         {parsed.passageHtml && (
           <div
-            className={`live-prose whitespace-pre-wrap text-foreground/90 ${compact ? "text-sm" : "text-[15px]"}`}
+            className={`live-prose whitespace-pre-wrap text-foreground/90 ${passageSize}`}
             dangerouslySetInnerHTML={{ __html: renderMathInHtml(parsed.passageHtml) }}
           />
         )}
@@ -107,12 +132,20 @@ export default function LiveQuestionBody({ text, compact = false, className = ""
 
       {/* Question */}
       <div className={`lg:w-1/2 ${compact ? "space-y-2" : "space-y-3"}`}>
-        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Question</p>
+        <p className={`${asideSize} font-bold uppercase tracking-[0.14em] text-muted-foreground`}>Question</p>
         <div
-          className={`live-prose leading-relaxed ${compact ? "text-sm" : "text-[15px] sm:text-base"}`}
+          className={`live-prose leading-relaxed ${bodySize}`}
           dangerouslySetInnerHTML={{ __html: renderMathInHtml(parsed.questionHtml) }}
         />
       </div>
     </div>
   );
 }
+
+/**
+ * Memoised because the creator's control room re-renders roughly once a second
+ * while a question is open (the answered count polls at 750ms). Without this,
+ * every one of those ticks re-ran a full KaTeX pass over the question text — and the props that
+ * decide its output only change when the question does.
+ */
+export default memo(LiveQuestionBody);

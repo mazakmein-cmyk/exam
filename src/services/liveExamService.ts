@@ -11,6 +11,8 @@ import { supabase } from "@/integrations/supabase/client";
 
 export type LiveExamStatus = "draft" | "published" | "live" | "ended";
 
+export type LeaderboardVisibility = "full" | "private" | "off";
+
 export type LiveExam = {
   id: string;
   user_id: string;
@@ -23,6 +25,18 @@ export type LiveExam = {
   ended_at: string | null;
   current_question_index: number;
   current_question_unlocked_at: string | null;
+  /** Seconds granted mid-question by the creator (A3). Reset on every unlock. */
+  current_question_extra_seconds: number;
+  scheduled_start_at: string | null;
+  auto_start: boolean;
+  privacy_mode: boolean;
+  leaderboard_visibility: LeaderboardVisibility;
+  present_show_leaderboard: boolean;
+  present_show_river: boolean;
+  celebrate_seq: number;
+  report_share_token: string | null;
+  report_public: boolean;
+  origin_exam_id: string | null;
   supported_languages: string[];
   primary_language: string;
   total_questions: number;
@@ -104,6 +118,19 @@ export type LiveQuestionAnalytics = {
   fastest_user_id: string | null;
   fastest_user_name: string | null;
   computed_at: string;
+  // ─ B6 time profile, computed server-side with the rest of the analytics ─
+  /** Median response time. The threshold the fast/slow split uses. */
+  median_time_ms: number | null;
+  fast_correct: number;
+  slow_correct: number;
+  fast_wrong: number;
+  slow_wrong: number;
+  /** Wrong answers submitted in under 20% of the window — confident, not lost. */
+  impulsive_wrong: number;
+  /** 12 dense buckets across the question's window, for the sparkline. */
+  time_histogram: number[];
+  /** B12 signals for this question. */
+  confusion_count: number;
 };
 
 // ─── Create Live Exam ────────────────────────────────────────
@@ -209,7 +236,17 @@ export async function fetchLiveExamByShareCode(shareCode: string): Promise<LiveE
 
 export async function updateLiveExam(
   examId: string,
-  updates: Partial<Pick<LiveExam, "name" | "description" | "instruction" | "status" | "supported_languages" | "primary_language" | "total_questions">>
+  updates: Partial<Pick<LiveExam,
+    | "name" | "description" | "instruction" | "status"
+    | "supported_languages" | "primary_language" | "total_questions"
+    // Session settings. Deliberately editable while an exam is live — a creator
+    // decides to hide names or turn the leaderboard off mid-session, and making
+    // them wait for the next run is the wrong answer.
+    | "scheduled_start_at" | "auto_start"
+    | "privacy_mode" | "leaderboard_visibility"
+    | "present_show_leaderboard" | "present_show_river"
+    | "report_public"
+  >>
 ): Promise<LiveExam> {
   const { data, error } = await supabase
     .from("live_exams")
@@ -760,6 +797,102 @@ export async function computeQuestionAnalytics(
   return data as unknown as LiveQuestionAnalytics;
 }
 
+// ─── Session sync (the pull lane) ────────────────────────────
+
+/**
+ * What every client needs to stay in step with the session, in one round trip.
+ *
+ * This is the fallback transport for students who cannot hold a realtime
+ * connection — the free tier caps concurrent connections well below a large
+ * class — and it doubles as the presence heartbeat and the server clock anchor.
+ * `next_poll_ms` is the server telling the client how soon to come back, scaled
+ * by how many people are actually in the room; clients may only slow it down.
+ */
+export type LiveSessionSync = {
+  status: LiveExamStatus;
+  current_question_index: number;
+  current_question_unlocked_at: string | null;
+  current_question_extra_seconds: number;
+  scheduled_start_at: string | null;
+  auto_start: boolean;
+  privacy_mode: boolean;
+  leaderboard_visibility: LeaderboardVisibility;
+  present_show_leaderboard: boolean;
+  present_show_river: boolean;
+  celebrate_seq: number;
+  total_questions: number;
+  /** DB clock at the moment of the reply — the anchor for every countdown. */
+  server_now: string;
+  /** 0 means stop polling (ended or draft). */
+  next_poll_ms: number;
+  /** Seen within the last 45s. Unlike is_active, this is actually maintained. */
+  online_count: number;
+  joined_count: number;
+  is_creator: boolean;
+  my_rank: number | null;
+  my_total_correct: number | null;
+  /** Creator only. */
+  confusion_count: number | null;
+  /** Creator only. */
+  open_response_count: number | null;
+};
+
+export async function syncLiveSession(
+  examId: string,
+  beat = false
+): Promise<LiveSessionSync> {
+  const { data, error } = await supabase
+    .rpc("live_session_sync", { p_live_exam_id: examId, p_beat: beat });
+
+  if (error) throw error;
+  return data as unknown as LiveSessionSync;
+}
+
+// ─── Open-question tally (the creator's fast lane) ───────────
+
+/**
+ * Live state of the question currently on screen, for the creator only.
+ *
+ * Polled a little over once a second from the single control-room browser. It
+ * replaced a realtime subscription to live_responses, which cost one message
+ * per student per question — 20,000 messages for one 1000-student session,
+ * versus roughly 1.3 requests a second from one tab here.
+ *
+ * `option_tally` keys are the JSON text of selected_answer, byte-identical to
+ * live_question_analytics.option_distribution, so one normaliser serves the
+ * live river and the post-reveal breakdown alike.
+ */
+export type LiveOpenQuestionTally = {
+  live_question_id: string | null;
+  response_count: number;
+  confusion_count: number;
+  option_tally: Record<string, number>;
+  first_response_at: string | null;
+  server_now: string;
+};
+
+export async function fetchOpenQuestionTally(examId: string): Promise<LiveOpenQuestionTally> {
+  const { data, error } = await supabase
+    .rpc("live_open_question_tally", { p_live_exam_id: examId });
+
+  if (error) throw error;
+  return data as unknown as LiveOpenQuestionTally;
+}
+
+/**
+ * B12: raise an anonymous "I'm lost" for the open question.
+ *
+ * Returns nothing on purpose — a student must not be able to infer anything
+ * about how many others have flagged. Repeat calls are silently absorbed by the
+ * table's primary key, so the UI needs no rate limiting of its own.
+ */
+export async function flagLiveConfusion(examId: string): Promise<void> {
+  const { error } = await supabase
+    .rpc("flag_live_confusion", { p_live_exam_id: examId });
+
+  if (error) throw error;
+}
+
 // ─── Fetch My Participated Live Exams (Student Dashboard) ────
 
 export async function fetchMyParticipatedLiveExams(): Promise<any[]> {
@@ -850,7 +983,13 @@ export async function joinLiveExam(examId: string): Promise<LiveParticipant> {
   return data as unknown as LiveParticipant;
 }
 
-/** Fetch participants / leaderboard for an exam */
+/**
+ * Leaderboard as the CREATOR sees it: the base table, real names, every row.
+ *
+ * Only the creator has a SELECT policy on live_participants. Everyone else — and
+ * that includes the present screen, which is authenticated as the creator but
+ * pointed at a projector — must go through fetchPublicLeaderboard.
+ */
 export async function fetchLeaderboard(examId: string, limit?: number): Promise<LiveParticipant[]> {
   let query = supabase
     .from("live_participants")
@@ -865,6 +1004,64 @@ export async function fetchLeaderboard(examId: string, limit?: number): Promise<
   const { data, error } = await query;
   if (error) throw error;
   return (data || []) as unknown as LiveParticipant[];
+}
+
+/**
+ * Leaderboard as the ROOM sees it — the masked view (E1) with the visibility
+ * rule applied (E3).
+ *
+ * Used by students and by the present screen. The masking lives in the view
+ * rather than in this function on purpose: a name hidden only in the client is
+ * one devtools request away from being visible, and `display_name` used to be
+ * readable by any authenticated user for any live exam.
+ *
+ * When `leaderboard_visibility` is 'private' or 'off' the view returns only the
+ * caller's own row, so a student cannot learn anyone else's standing even by
+ * asking directly.
+ */
+export async function fetchPublicLeaderboard(
+  examId: string,
+  limit?: number
+): Promise<LiveParticipant[]> {
+  let query = supabase
+    .from("live_participants_public")
+    .select("*")
+    .eq("live_exam_id", examId)
+    .order("rank", { ascending: true, nullsFirst: false });
+
+  if (limit) {
+    query = query.limit(limit);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []) as unknown as LiveParticipant[];
+}
+
+/**
+ * user_id → real display name, for the creator's own screen.
+ *
+ * Needed because privacy mode makes the denormalised
+ * `live_question_analytics.fastest_user_name` a pseudonym — it has to be, since
+ * that table is in the realtime publication and realtime delivers whole rows to
+ * every student. The real identity survives in `fastest_user_id`, and this map
+ * turns it back into a name on the one screen that is allowed to show it.
+ *
+ * One request per session for the creator; two columns, so a 1000-student class
+ * is a few tens of kilobytes.
+ */
+export async function fetchParticipantNames(examId: string): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from("live_participants")
+    .select("user_id, display_name")
+    .eq("live_exam_id", examId);
+
+  if (error) throw error;
+  const map = new Map<string, string>();
+  ((data || []) as { user_id: string; display_name: string }[]).forEach((r) => {
+    map.set(r.user_id, r.display_name);
+  });
+  return map;
 }
 
 /** Get total participant count */

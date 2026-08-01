@@ -7,9 +7,27 @@
  * (rose). A 20s question and a 5-minute question therefore feel the same.
  * Emerald and rose are reserved for correctness elsewhere, so the timer never
  * borrows emerald.
+ *
+ * Two layers, and the split matters
+ * ---------------------------------
+ * `TimerBar` / `TimerChip` / `TimerRing` are pure: seconds in, pixels out. They
+ * know nothing about where the time came from, which is what lets the present
+ * screen render a huge one from the same code.
+ *
+ * `LiveTimerBar` / `LiveTimerChip` / `LiveTimerRing` are the connected
+ * versions. They subscribe to the shared countdown store themselves, so the
+ * ticking value never passes through a page's state. That is deliberate and
+ * load-bearing: the countdown used to live in `useState` at the top of both
+ * live pages, which re-rendered the leaderboard, the question rail and the
+ * whole question preview four times a second for the length of every question.
+ *
+ * Rule of thumb: if a component renders a list, or is a page, it must not read
+ * the ticking value. Render a connected timer instead and let it re-render
+ * alone.
  */
 
 import { Clock } from "lucide-react";
+import { useLiveCountdown } from "@/lib/live/timerStore";
 
 export type TimerTone = "calm" | "warn" | "critical" | "idle";
 
@@ -193,5 +211,68 @@ export function TimerRing({
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Connected variants ──────────────────────────────────────
+//
+// Each of these subscribes to the countdown store directly, so it re-renders
+// roughly once a second and nothing above it re-renders at all.
+
+/** Header hairline, wired to the live countdown. */
+export function LiveTimerBar({ className = "" }: { className?: string }) {
+  const { remaining, total, running } = useLiveCountdown();
+  return <TimerBar remaining={remaining} total={total} active={running} className={className} />;
+}
+
+/** Sticky mm:ss pill, wired to the live countdown. */
+export function LiveTimerChip({
+  idleLabel = "Locked",
+  className = "",
+}: {
+  idleLabel?: string;
+  className?: string;
+}) {
+  const { remaining, total, running } = useLiveCountdown();
+  return (
+    <TimerChip
+      remaining={remaining}
+      total={total}
+      active={running}
+      idleLabel={idleLabel}
+      className={className}
+    />
+  );
+}
+
+/**
+ * Control-deck ring, wired to the live countdown.
+ *
+ * `idleLabel` is a function of the session rather than a plain string because
+ * "no question yet", "time up" and "session over" are three different idle
+ * states and the ring is the only place that says which one you are in.
+ */
+export function LiveTimerRing({
+  size = 132,
+  strokeWidth = 8,
+  idleLabel = "—",
+  caption,
+}: {
+  size?: number;
+  strokeWidth?: number;
+  idleLabel?: string;
+  caption?: string;
+}) {
+  const { remaining, total, running } = useLiveCountdown();
+  return (
+    <TimerRing
+      remaining={remaining}
+      total={total}
+      active={running}
+      size={size}
+      strokeWidth={strokeWidth}
+      idleLabel={idleLabel}
+      caption={running ? caption : undefined}
+    />
   );
 }

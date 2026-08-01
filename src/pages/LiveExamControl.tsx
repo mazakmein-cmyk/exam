@@ -17,6 +17,24 @@
  * The rail doubles as navigation: clicking a past question swaps the preview
  * pane to it, which is why the old stacked "Previous Questions" accordion is
  * gone — it pushed the live controls off screen.
+ *
+ * Where the live state comes from
+ * -------------------------------
+ * `exam` is the document: name, share code, languages. Loaded once.
+ * `session` is the live state: which question is open, since when, who is in
+ * the room. It arrives through `useLiveSession`, which owns the transport
+ * (realtime with a polling fallback), the server clock, and the deadline.
+ *
+ * This page therefore holds no timer state of its own. It used to: a 250ms
+ * interval driving `useState` at the top of the component, which re-rendered
+ * the leaderboard, the rail and the whole question preview four times a second
+ * for the length of every question. The countdown now lives in a store that
+ * only the timer components subscribe to, and this page reads a boolean that
+ * flips once per question.
+ *
+ * The answered count, the option tally and the confusion count all arrive from
+ * one 750ms poll (`useOpenQuestionTally`) instead of a realtime subscription
+ * that sent this single browser one message per student per question.
  */
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
@@ -33,13 +51,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   ArrowLeft,
   Play,
@@ -60,6 +71,7 @@ import {
   CornerUpLeft,
   CheckCircle2,
   ListChecks,
+  MonitorPlay,
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import SEO from "@/components/SEO";
@@ -67,8 +79,10 @@ import LiveQuestionBody, { questionPreviewText } from "@/components/live/LiveQue
 import LiveOption, { type OptionVisual } from "@/components/live/LiveOption";
 import LiveLeaderboard from "@/components/live/LiveLeaderboard";
 import QuestionRail, { RailLegend, type ChipStatus, type RailItem } from "@/components/live/QuestionRail";
-import { TimerBar, TimerRing } from "@/components/live/LiveTimer";
+import { LiveTimerBar, LiveTimerRing } from "@/components/live/LiveTimer";
 import { OutcomeBar, MeterRow } from "@/components/live/LiveStats";
+import PresenterHud from "@/components/live/PresenterHud";
+import SessionSettingsMenu from "@/components/live/SessionSettingsMenu";
 import {
   fetchLiveExam,
   fetchAllLiveQuestions,
@@ -80,50 +94,24 @@ import {
   computeRankings,
   fetchLeaderboard,
   fetchAllAnalytics,
-  fetchResponseCount,
+  fetchParticipantNames,
+  updateLiveExam,
+  type LeaderboardVisibility,
   type LiveExam,
   type LiveQuestion,
   type LiveSection,
   type LiveParticipant,
   type LiveQuestionAnalytics,
 } from "@/services/liveExamService";
+import { useLiveSession } from "@/hooks/useLiveSession";
 import {
-  useLiveExamRealtime,
-  useLiveParticipantCount,
-} from "@/hooks/useLiveExamRealtime";
-
-// ─── Timer Hook ──────────────────────────────────────────────
-
-function useCountdown(targetEndTime: number | null, onExpire: () => void) {
-  const [remaining, setRemaining] = useState<number>(0);
-  const expiredRef = useRef(false);
-  const onExpireRef = useRef(onExpire);
-  onExpireRef.current = onExpire;
-
-  useEffect(() => {
-    expiredRef.current = false;
-    if (!targetEndTime) {
-      setRemaining(0);
-      return;
-    }
-
-    const tick = () => {
-      const now = Date.now();
-      const left = Math.max(0, Math.ceil((targetEndTime - now) / 1000));
-      setRemaining(left);
-      if (left <= 0 && !expiredRef.current) {
-        expiredRef.current = true;
-        onExpireRef.current();
-      }
-    };
-
-    tick();
-    const interval = setInterval(tick, 250);
-    return () => clearInterval(interval);
-  }, [targetEndTime]);
-
-  return remaining;
-}
+  useOpenQuestionTally,
+  TALLY_IDLE_POLL_MS,
+  TALLY_POLL_MS,
+} from "@/hooks/useOpenQuestionTally";
+import { useLiveTimerExpiry, useLiveTimerPhase, useLiveTimerTarget } from "@/lib/live/timerStore";
+import { usePeerWindow } from "@/hooks/usePeerWindow";
+import { presentWindowName } from "@/lib/live/presentChannel";
 
 /** Is this option (index) part of the stored correct answer? */
 function isCorrectOption(correctAnswer: any, i: number): boolean {
@@ -172,19 +160,27 @@ export default function LiveExamControl() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Core state
+  // Core state. `exam` is the document; live session state comes from the spine.
   const [exam, setExam] = useState<LiveExam | null>(null);
   const [questions, setQuestions] = useState<LiveQuestion[]>([]);
   const [sections, setSections] = useState<LiveSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<LiveParticipant[]>([]);
   const [analytics, setAnalytics] = useState<Map<string, LiveQuestionAnalytics>>(new Map());
-  const [responseCountMap, setResponseCountMap] = useState<Map<string, number>>(new Map());
+  /**
+   * user_id → real display name. Privacy mode makes the denormalised
+   * fastest_user_name a pseudonym (it has to be — that table is broadcast to
+   * every student), so this is how the creator's own screen recovers the real
+   * name from fastest_user_id.
+   */
+  const [participantNames, setParticipantNames] = useState<Map<string, string>>(new Map());
 
   // Dialog states
   const [showEndDialog, setShowEndDialog] = useState(false);
   const [showStartDialog, setShowStartDialog] = useState(false);
-  const [showShareDialog, setShowShareDialog] = useState(false);
+  /** A1: the join panel, pinned on until the creator dismisses it. */
+  const [hudPinned, setHudPinned] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   /** Past question being inspected in the preview pane; null = the live one. */
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
@@ -194,23 +190,27 @@ export default function LiveExamControl() {
    */
   const [showKey, setShowKey] = useState(false);
 
-  // Live participant count via realtime
-  const participantCount = useLiveParticipantCount(liveExamId);
-
-  // Realtime callbacks are registered once, so they read state through refs.
-  const examRef = useRef<LiveExam | null>(null);
+  // Async callbacks read the question list through a ref so a late-arriving
+  // event can never act against a stale copy.
   const questionsRef = useRef<LiveQuestion[]>([]);
-  examRef.current = exam;
   questionsRef.current = questions;
-
-  // Timer state
-  const [timerEndTime, setTimerEndTime] = useState<number | null>(null);
-  const [timerExpiredForIndex, setTimerExpiredForIndex] = useState<number>(-1);
 
   // Grace window: server accepts submissions until +2s after the visual
   // timer ends, so analytics wait ~2.5s before computing.
   const [collectingFinal, setCollectingFinal] = useState(false);
   const graceTimeoutRef = useRef<number | null>(null);
+  /**
+   * Questions whose analytics computation has been started by this tab.
+   *
+   * There are two paths into computing — the countdown expiring, and the
+   * missed-expiry sweep for a tab that was away when a question ended — and the
+   * window between them is not covered by the grace timeout alone: the timeout
+   * clears its own ref before awaiting the RPC, so for the duration of that
+   * request the sweep sees "no compute pending, no analytics yet" and fires a
+   * second one. Idempotent server-side, but it doubles the work and races two
+   * ranking recomputes against each other.
+   */
+  const computeStartedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     return () => {
@@ -246,51 +246,15 @@ export default function LiveExamControl() {
       allAnalytics.forEach(a => analyticsMap.set(a.live_question_id, a));
       setAnalytics(analyticsMap);
 
-      // Load leaderboard if exam is live or ended
+      // Load leaderboard if exam is live or ended. The BASE table, not the
+      // masked view: this is the one screen allowed to show real names.
       if (examData.status === "live" || examData.status === "ended") {
-        const lb = await fetchLeaderboard(liveExamId, 20);
+        const [lb, names] = await Promise.all([
+          fetchLeaderboard(liveExamId, 20),
+          fetchParticipantNames(liveExamId).catch(() => new Map<string, string>()),
+        ]);
         setLeaderboard(lb);
-      }
-
-      // Restore timer if exam is live and a question is unlocked
-      if (examData.status === "live" && examData.current_question_index >= 0 && examData.current_question_unlocked_at) {
-        const currentQ = qs[examData.current_question_index];
-        if (currentQ) {
-          // Seed the live submission counter for the open question
-          const count = await fetchResponseCount(liveExamId, currentQ.id);
-          setResponseCountMap(prev => {
-            const next = new Map(prev);
-            next.set(currentQ.id, count);
-            return next;
-          });
-
-          const unlockedAt = new Date(examData.current_question_unlocked_at).getTime();
-          const endTime = unlockedAt + currentQ.time_seconds * 1000;
-          if (Date.now() < endTime) {
-            setTimerEndTime(endTime);
-          } else {
-            // Timer already expired — mark it so we don't re-trigger
-            setTimerExpiredForIndex(examData.current_question_index);
-            setTimerEndTime(null);
-            // Expiry was missed while this page was away: compute now.
-            // Skip if a local grace timeout is about to do the same thing.
-            if (!analyticsMap.has(currentQ.id) && graceTimeoutRef.current === null) {
-              try {
-                const analyticsResult = await computeQuestionAnalytics(liveExamId, currentQ.id);
-                setAnalytics(prev => {
-                  const next = new Map(prev);
-                  next.set(currentQ.id, analyticsResult);
-                  return next;
-                });
-                await computeRankings(liveExamId);
-                const lb = await fetchLeaderboard(liveExamId, 20);
-                setLeaderboard(lb);
-              } catch (err) {
-                console.error("Missed-expiry analytics computation failed:", err);
-              }
-            }
-          }
-        }
+        setParticipantNames(names);
       }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -299,146 +263,206 @@ export default function LiveExamControl() {
     }
   };
 
-  /**
-   * Re-derive the countdown from the exam row itself.
-   *
-   * handleUnlockNext arms the timer only in the tab that clicked it. Any other
-   * control-room tab — a second window, a projector, or this one when the
-   * realtime UPDATE beats the RPC promise — learns about the new question purely
-   * through onExamUpdate. Without this it would keep the previous question's
-   * expired-timer state forever: no Unlock control, and `canUnlockNext` stuck
-   * false. Derives from the server's unlocked_at, never from client time.
-   */
-  const applyTimerFromExam = (examData: LiveExam, qs: LiveQuestion[]) => {
-    if (
-      examData.status === "live" &&
-      examData.current_question_index >= 0 &&
-      examData.current_question_unlocked_at
-    ) {
-      const currentQ = qs[examData.current_question_index];
-      if (!currentQ) return;
-      const endTime =
-        new Date(examData.current_question_unlocked_at).getTime() + currentQ.time_seconds * 1000;
-      if (Date.now() < endTime) {
-        setTimerEndTime(endTime);
-        setTimerExpiredForIndex(-1);
-      } else {
-        setTimerEndTime(null);
-        setTimerExpiredForIndex(examData.current_question_index);
-      }
-    } else {
-      setTimerEndTime(null);
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+
+  /** Pull the leaderboard and fold in an analytics row. */
+  const absorbAnalytics = useCallback(
+    (row: LiveQuestionAnalytics) => {
+      setAnalytics((prev) => {
+        const next = new Map(prev);
+        next.set(row.live_question_id, row);
+        return next;
+      });
+    },
+    []
+  );
+
+  const refreshLeaderboard = useCallback(async () => {
+    if (!liveExamId) return;
+    try {
+      setLeaderboard(await fetchLeaderboard(liveExamId, 20));
+    } catch {
+      /* transient — the next question's compute refreshes it again */
     }
-  };
+  }, [liveExamId]);
 
-  // ─── Realtime subscriptions ────────────────────────────────
+  // ─── Live session (transport, clock, deadline) ──────────────
 
-  useLiveExamRealtime(liveExamId, {
-    onExamUpdate: (updatedExam) => {
-      const prev = examRef.current;
-      setExam(updatedExam);
-      const movedOn =
-        !prev ||
-        prev.current_question_index !== updatedExam.current_question_index ||
-        prev.current_question_unlocked_at !== updatedExam.current_question_unlocked_at;
-      if (movedOn) applyTimerFromExam(updatedExam, questionsRef.current);
+  const session = useLiveSession(liveExamId, {
+    role: "creator",
+    onUnlock: () => {
+      // A second control tab, or the projector, learns about the unlock here
+      // rather than from its own click. Nothing to do beyond letting the
+      // derived state below recompute — but the preview must snap back to the
+      // live question, which the currentQuestionIndex effect handles.
     },
-    onParticipantJoined: () => {
-      // Count is handled by useLiveParticipantCount
+    onEnded: () => {
+      void refreshLeaderboard();
     },
-    onParticipantUpdated: (p) => {
-      setLeaderboard(prev => {
-        const next = prev.map(e => e.user_id === p.user_id ? p : e);
-        if (!prev.find(e => e.user_id === p.user_id)) next.push(p);
-        return next
-          .sort((a, b) => {
-            if (a.rank === null && b.rank === null) return 0;
-            if (a.rank === null) return 1;
-            if (b.rank === null) return -1;
-            return a.rank - b.rank;
-          })
-          .slice(0, 20);
-      });
-    },
-    onNewResponse: (response) => {
-      setResponseCountMap(prev => {
-        const next = new Map(prev);
-        const current = next.get(response.live_question_id) || 0;
-        next.set(response.live_question_id, current + 1);
-        return next;
-      });
-    },
-    onAnalyticsComputed: (a) => {
-      setAnalytics(prev => {
-        const next = new Map(prev);
-        next.set(a.live_question_id, a);
-        return next;
-      });
+    onAnalytics: (row) => {
+      absorbAnalytics(row);
+      // Ranks are recomputed alongside analytics, including by the server's
+      // end-of-session backfill which this tab never triggered.
+      void refreshLeaderboard();
     },
     onReconnect: () => {
-      // Rehydrate counts/analytics/leaderboard missed while disconnected
-      loadData(true);
+      // Rehydrate analytics/leaderboard missed while disconnected.
+      void loadDataRef.current(true);
     },
   });
 
-  // ─── Timer expired handler ─────────────────────────────────
-
-  const handleTimerExpired = useCallback(() => {
-    if (!exam || !liveExamId) return;
-    const idx = exam.current_question_index;
-    if (idx < 0 || idx >= questions.length) return;
-    if (timerExpiredForIndex >= idx) return; // Already handled
-
-    setTimerExpiredForIndex(idx);
-    setTimerEndTime(null);
-
-    const currentQ = questions[idx];
-    if (!currentQ) return;
-
-    // Server accepts submissions until +2s after the visual timer, so wait
-    // out the grace window before computing analytics.
-    setCollectingFinal(true);
-    if (graceTimeoutRef.current) window.clearTimeout(graceTimeoutRef.current);
-    graceTimeoutRef.current = window.setTimeout(async () => {
-      graceTimeoutRef.current = null;
-      setCollectingFinal(false);
-      try {
-        // Compute analytics + rankings via RPC
-        const analyticsResult = await computeQuestionAnalytics(liveExamId, currentQ.id);
-        setAnalytics(prev => {
-          const next = new Map(prev);
-          next.set(currentQ.id, analyticsResult);
-          return next;
-        });
-
-        await computeRankings(liveExamId);
-
-        // Refresh leaderboard
-        const lb = await fetchLeaderboard(liveExamId, 20);
-        setLeaderboard(lb);
-
-        toast({ title: `Q${idx + 1} Timer Ended`, description: "Analytics computed & rankings updated." });
-      } catch (error: any) {
-        console.error("Analytics computation failed:", error);
-        toast({ title: "Error computing analytics", description: error.message, variant: "destructive" });
-      }
-    }, 2500);
-  }, [exam, liveExamId, questions, timerExpiredForIndex]);
-
-  const remaining = useCountdown(timerEndTime, handleTimerExpired);
-
   // ─── Derived state ────────────────────────────────────────
 
-  const currentQuestionIndex = exam?.current_question_index ?? -1;
+  const status = session.status ?? exam?.status ?? null;
+  /**
+   * Who is actually here, from the presence heartbeat.
+   *
+   * Not `joinedCount`: that counts everyone who ever opened the link, which is
+   * the wrong denominator for a response rate and the wrong answer to "how many
+   * are in the room". (The old `is_active` column looked like this number but
+   * was never written by any client, so it always meant "ever joined".)
+   */
+  const inRoom = session.onlineCount;
+  const currentQuestionIndex = session.currentQuestionIndex;
   const currentQuestion = currentQuestionIndex >= 0 ? questions[currentQuestionIndex] : null;
-  const isLive = exam?.status === "live";
-  const isEnded = exam?.status === "ended";
+  const isLive = status === "live";
+  const isEnded = status === "ended";
   const hasStarted = currentQuestionIndex >= 0;
-  const isTimerActive = timerEndTime !== null && remaining > 0;
-  const isTimerExpired = currentQuestionIndex >= 0 && timerExpiredForIndex >= currentQuestionIndex;
-  const canUnlockNext = isLive && (!hasStarted || isTimerExpired) && !collectingFinal && currentQuestionIndex < questions.length - 1;
+  const hasOpenQuestion = isLive && hasStarted && !!session.unlockedAt;
+
+  // Point the shared countdown at the open question. The arithmetic lives in
+  // lib/live/deadline.js, shared with the SQL function of the same name, so
+  // this page never spells out a deadline.
+  useLiveTimerTarget({
+    index: currentQuestionIndex,
+    unlockedAt: session.unlockedAt,
+    extraSeconds: session.extraSeconds,
+    timeSeconds: currentQuestion?.time_seconds ?? null,
+    active: isLive,
+  });
+
+  const timerPhase = useLiveTimerPhase();
+  /**
+   * The countdown store is one commit behind a brand-new index, so gate on it
+   * having caught up. During that single render the question counts as neither
+   * running nor expired, which keeps a creator leaning on the space bar from
+   * unlocking twice.
+   */
+  const timerReady = timerPhase.key === currentQuestionIndex;
+  const isTimerActive = timerReady && timerPhase.running;
+  const isTimerExpired = hasOpenQuestion && timerReady && !timerPhase.running;
+
+  const canUnlockNext =
+    isLive &&
+    (!hasStarted || isTimerExpired) &&
+    !collectingFinal &&
+    currentQuestionIndex < questions.length - 1;
+
   const currentAnalytics = currentQuestion ? analytics.get(currentQuestion.id) : null;
-  const currentResponseCount = currentQuestion ? (responseCountMap.get(currentQuestion.id) || 0) : 0;
+
+  // One poll carries the answered count, the option tally and the confusion
+  // count. It replaced a realtime subscription that sent this single browser one
+  // message per student per question. Fast while answers can still arrive
+  // (including through the grace window), slow once the numbers are settled and
+  // the creator is discussing the reveal.
+  const { tally, refresh: refreshTally } = useOpenQuestionTally(
+    liveExamId,
+    hasOpenQuestion,
+    isTimerActive || collectingFinal ? TALLY_POLL_MS : TALLY_IDLE_POLL_MS
+  );
+  /** Guarded on the id so a just-closed question's count never bleeds forward. */
+  const currentResponseCount =
+    currentQuestion && tally.live_question_id === currentQuestion.id ? tally.response_count : 0;
+
+  // ─── Timer expiry → analytics ──────────────────────────────
+
+  const handleTimerExpired = useCallback(
+    (expiredIndex: number) => {
+      if (!liveExamId) return;
+      const currentQ = questionsRef.current[expiredIndex];
+      if (!currentQ) return;
+
+      // Server accepts submissions until +2s after the visual timer, so wait
+      // out the grace window before computing analytics.
+      setCollectingFinal(true);
+      if (graceTimeoutRef.current) window.clearTimeout(graceTimeoutRef.current);
+      graceTimeoutRef.current = window.setTimeout(async () => {
+        graceTimeoutRef.current = null;
+        setCollectingFinal(false);
+        // Claimed before the await, so the missed-expiry sweep cannot slip in
+        // while the RPC is in flight.
+        computeStartedRef.current.add(currentQ.id);
+        try {
+          absorbAnalytics(await computeQuestionAnalytics(liveExamId, currentQ.id));
+          await computeRankings(liveExamId);
+          await refreshLeaderboard();
+          toast({
+            title: `Q${expiredIndex + 1} Timer Ended`,
+            description: "Analytics computed & rankings updated.",
+          });
+        } catch (error: any) {
+          console.error("Analytics computation failed:", error);
+          // Released so the sweep can retry: without analytics this question has
+          // no reveal for students and no contribution to the rankings.
+          computeStartedRef.current.delete(currentQ.id);
+          toast({
+            title: "Error computing analytics",
+            description: error.message,
+            variant: "destructive",
+          });
+        }
+      }, 2500);
+    },
+    [liveExamId, absorbAnalytics, refreshLeaderboard, toast]
+  );
+
+  // Fires once per question, and never for a question that was already over
+  // when this tab arrived — that case is handled by the missed-expiry sweep.
+  useLiveTimerExpiry(handleTimerExpired);
+
+  /**
+   * Missed expiry: this tab was closed or asleep when a question ended, so
+   * nobody computed its analytics. The countdown store deliberately does not
+   * fire for an already-expired target (it would double-compute for the tab
+   * that was present), so the recovery lives here instead.
+   */
+  useEffect(() => {
+    if (!liveExamId || !isTimerExpired || !currentQuestion) return;
+    if (analytics.has(currentQuestion.id)) return;
+    if (graceTimeoutRef.current !== null || collectingFinal) return;
+    // The expiry path may already have a compute in flight for this question.
+    if (computeStartedRef.current.has(currentQuestion.id)) return;
+    computeStartedRef.current.add(currentQuestion.id);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await computeQuestionAnalytics(liveExamId, currentQuestion.id);
+        if (cancelled) return;
+        absorbAnalytics(row);
+        await computeRankings(liveExamId);
+        await refreshLeaderboard();
+      } catch (err) {
+        console.error("Missed-expiry analytics computation failed:", err);
+        // Released so a later render can retry — a question left without
+        // analytics has no reveal and no ranking.
+        computeStartedRef.current.delete(currentQuestion.id);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    liveExamId,
+    isTimerExpired,
+    currentQuestion,
+    analytics,
+    collectingFinal,
+    absorbAnalytics,
+    refreshLeaderboard,
+  ]);
 
   // A fresh unlock always pulls the preview back to the live question.
   useEffect(() => {
@@ -471,10 +495,16 @@ export default function LiveExamControl() {
   const fastest = useMemo(() => {
     for (let i = currentQuestionIndex; i >= 0; i--) {
       const a = questions[i] ? analytics.get(questions[i].id) : undefined;
-      if (a?.fastest_user_name) return { index: i, name: a.fastest_user_name, ms: a.fastest_time_ms };
+      if (a?.fastest_user_name) {
+        // Under privacy mode the stored name is a pseudonym, because that row is
+        // broadcast to every student. The creator's own deck resolves the real
+        // name from the id — this screen is never on the projector.
+        const real = a.fastest_user_id ? participantNames.get(a.fastest_user_id) : undefined;
+        return { index: i, name: real || a.fastest_user_name, ms: a.fastest_time_ms };
+      }
     }
     return null;
-  }, [analytics, questions, currentQuestionIndex]);
+  }, [analytics, questions, currentQuestionIndex, participantNames]);
 
   /** Running accuracy across every question whose analytics have landed. */
   const sessionAccuracy = useMemo(() => {
@@ -507,6 +537,80 @@ export default function LiveExamControl() {
     [questions, currentQuestionIndex, previewIndex, isReviewing, sectionNameById]
   );
 
+  // ─── A2 / Q2: the projector window ─────────────────────────
+
+  const presentUrl = `/live-exam/${creatorId}/${liveExamId}/present`;
+  const { peerOpen: presentOpen, openPeer: openPresent, post: postToPresent } = usePeerWindow(
+    liveExamId,
+    "control",
+    presentUrl,
+    presentWindowName(liveExamId || "")
+  );
+
+  /**
+   * Persist a session setting, and echo it to the projector immediately.
+   *
+   * The database row is the source of truth — the present window will pick the
+   * change up through its own session sync regardless. The broadcast just skips
+   * the round trip so a creator flicking "hide names" while casting sees the wall
+   * change at once rather than a second later, which is the difference between
+   * feeling in control and wondering if the toggle worked.
+   */
+  const handleSettingsChange = useCallback(
+    async (patch: Partial<{
+      privacyMode: boolean;
+      leaderboardVisibility: LeaderboardVisibility;
+      presentShowLeaderboard: boolean;
+      presentShowRiver: boolean;
+    }>) => {
+      if (!liveExamId) return;
+      setSavingSettings(true);
+      try {
+        await updateLiveExam(liveExamId, {
+          ...(patch.privacyMode !== undefined ? { privacy_mode: patch.privacyMode } : {}),
+          ...(patch.leaderboardVisibility !== undefined
+            ? { leaderboard_visibility: patch.leaderboardVisibility }
+            : {}),
+          ...(patch.presentShowLeaderboard !== undefined
+            ? { present_show_leaderboard: patch.presentShowLeaderboard }
+            : {}),
+          ...(patch.presentShowRiver !== undefined
+            ? { present_show_river: patch.presentShowRiver }
+            : {}),
+        });
+        session.refresh();
+        if (patch.presentShowLeaderboard !== undefined || patch.presentShowRiver !== undefined) {
+          postToPresent({
+            t: "config",
+            showLeaderboard: patch.presentShowLeaderboard,
+            showRiver: patch.presentShowRiver,
+          });
+        }
+      } catch (error: any) {
+        toast({ title: "Couldn't save that setting", description: error.message, variant: "destructive" });
+      } finally {
+        setSavingSettings(false);
+      }
+    },
+    [liveExamId, session, postToPresent, toast]
+  );
+
+  /**
+   * Stable so the memoised rail is not re-rendered by the answered-count poll.
+   * An inline arrow here would give QuestionRail a new prop identity roughly
+   * once a second, defeating its memo for every chip in the exam.
+   */
+  const handleRailSelect = useCallback(
+    (item: RailItem) => {
+      // Clicking the live question returns the pane to it; a past question
+      // opens read-only review without pausing anything.
+      if (item.index === currentQuestionIndex) setPreviewIndex(null);
+      else if (item.index < currentQuestionIndex) setPreviewIndex(item.index);
+      else toast({ title: `Q${item.index + 1} hasn't been unlocked yet` });
+    },
+    [currentQuestionIndex, toast]
+  );
+
   // ─── Actions ───────────────────────────────────────────────
 
   const handleStartLive = async () => {
@@ -514,6 +618,7 @@ export default function LiveExamControl() {
     try {
       const updated = await startLiveSession(liveExamId);
       setExam(updated);
+      session.refresh();
       setShowStartDialog(false);
       toast({ title: "🔴 You're Live!", description: "Students can now join. Unlock the first question when ready." });
     } catch (error: any) {
@@ -521,8 +626,14 @@ export default function LiveExamControl() {
     }
   };
 
+  const unlockingRef = useRef(false);
+
   const handleUnlockNext = async () => {
     if (!liveExamId || !exam) return;
+    // The space bar makes a double-fire cheap to trigger; the server would
+    // happily advance twice and skip a question in front of the whole class.
+    if (unlockingRef.current) return;
+    unlockingRef.current = true;
 
     try {
       // Never carry a pending grace compute across an unlock
@@ -532,27 +643,23 @@ export default function LiveExamControl() {
       }
       setCollectingFinal(false);
 
-      // Server increments the index and stamps the unlock with DB time
+      // Server increments the index and stamps the unlock with DB time. The
+      // session spine picks the new row up through realtime (or its next poll)
+      // and re-arms the countdown from the server's timestamp, so there is
+      // nothing to set here — an unlock that this tab did and one it merely
+      // observed now travel the identical path.
       const updated = await unlockNextQuestion(liveExamId);
       setExam(updated);
+      session.refresh();
+      refreshTally();
 
       const nextIndex = updated.current_question_index;
-      const nextQ = questions[nextIndex];
-      if (nextQ && updated.current_question_unlocked_at) {
-        // Countdown derives from the server timestamp, not client Date.now()
-        const endTime = new Date(updated.current_question_unlocked_at).getTime() + nextQ.time_seconds * 1000;
-        setTimerEndTime(endTime);
-        // Reset response count for new question
-        setResponseCountMap(prev => {
-          const next = new Map(prev);
-          next.set(nextQ.id, 0);
-          return next;
-        });
-      }
-
+      const nextQ = questionsRef.current[nextIndex];
       toast({ title: `Q${nextIndex + 1} Unlocked!`, description: `Timer: ${nextQ?.time_seconds}s` });
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      unlockingRef.current = false;
     }
   };
 
@@ -564,11 +671,11 @@ export default function LiveExamControl() {
         graceTimeoutRef.current = null;
       }
       setCollectingFinal(false);
-      setTimerEndTime(null);
 
       // Server back-fills any missing analytics and computes final rankings
       const updated = await endLiveSession(liveExamId);
       setExam(updated);
+      session.refresh();
       setShowEndDialog(false);
 
       const [lb, allAnalytics] = await Promise.all([
@@ -594,7 +701,7 @@ export default function LiveExamControl() {
     if (!canUnlockNext) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (showEndDialog || showStartDialog || showShareDialog) return;
+      if (showEndDialog || showStartDialog) return;
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON" || el?.isContentEditable) return;
@@ -605,7 +712,7 @@ export default function LiveExamControl() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canUnlockNext, showEndDialog, showStartDialog, showShareDialog]);
+  }, [canUnlockNext, showEndDialog, showStartDialog]);
 
   const shareUrl = exam ? `${window.location.origin}/live/${exam.share_code}` : "";
 
@@ -637,35 +744,15 @@ export default function LiveExamControl() {
     );
   }
 
-  // ─── Share dialog (link + QR) ──────────────────────────────
-
-  const shareDialog = (
-    <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Share Live Exam</DialogTitle>
-          <DialogDescription>
-            Students can scan the QR code or open the link to join.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col items-center gap-4 py-2">
-          <div className="bg-white p-4 rounded-xl border">
-            <QRCode value={shareUrl} size={180} />
-          </div>
-          <div className="flex items-center gap-2 w-full p-2 bg-muted/50 rounded-xl border">
-            <code className="flex-1 text-xs font-mono text-foreground break-all px-2">{shareUrl}</code>
-            <Button variant="ghost" size="icon" className="shrink-0" onClick={handleCopyLink}>
-              <Copy className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+  // The old Share dialog is gone. It was a modal that covered the timer, the
+  // unlock button and the leaderboard, so creators opened it for each late
+  // arrival and closed it immediately — which is exactly the interruption A1
+  // exists to remove. Joining is now served by the pinnable HUD here, the
+  // pre-flight card below, and the projector's own lobby.
 
   // ─── Pre-live state (published but not started) ────────────
 
-  if (exam.status === "published") {
+  if (status === "published") {
     return (
       <div className="relative min-h-screen bg-background">
         <SEO
@@ -678,11 +765,30 @@ export default function LiveExamControl() {
         <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-gradient-to-b from-primary/[0.07] to-transparent" />
 
         <div className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center gap-6 px-5 py-12">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}>
               <ArrowLeft className="mr-1.5 h-4 w-4" />
               Back to editor
             </Button>
+            {/*
+              Available before going live on purpose: a creator plugs in HDMI and
+              drags this window across while the room is still filling up, not
+              once the first question is already on the wall.
+            */}
+            <Button variant="outline" size="sm" onClick={openPresent}>
+              <MonitorPlay className="mr-1.5 h-4 w-4" />
+              {presentOpen ? "Focus big screen" : "Open big screen"}
+            </Button>
+            <SessionSettingsMenu
+              settings={{
+                privacyMode: session.privacyMode,
+                leaderboardVisibility: session.leaderboardVisibility,
+                presentShowLeaderboard: session.presentShowLeaderboard,
+                presentShowRiver: session.presentShowRiver,
+              }}
+              onChange={handleSettingsChange}
+              saving={savingSettings}
+            />
           </div>
 
           <div className="flex items-start gap-4">
@@ -702,8 +808,10 @@ export default function LiveExamControl() {
                 { icon: ListChecks, label: `${questions.length} questions ready`, done: questions.length > 0 },
                 {
                   icon: Users,
-                  label: `${participantCount} student${participantCount !== 1 ? "s" : ""} waiting in the room`,
-                  done: participantCount > 0,
+                  // Presence, not "ever joined" — the number a creator glances
+                  // at before starting has to mean "here now".
+                  label: `${inRoom} student${inRoom !== 1 ? "s" : ""} waiting in the room`,
+                  done: inRoom > 0,
                 },
                 { icon: Target, label: `${sections.length || 1} section${sections.length !== 1 ? "s" : ""}`, done: true },
               ].map((row, i) => (
@@ -766,7 +874,6 @@ export default function LiveExamControl() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          {shareDialog}
         </div>
       </div>
     );
@@ -774,7 +881,17 @@ export default function LiveExamControl() {
 
   // ─── Main Live / Ended View ────────────────────────────────
 
-  const responseRatePct = participantCount > 0 ? Math.round((currentResponseCount / participantCount) * 100) : 0;
+  /**
+   * Answered as a share of the room.
+   *
+   * The denominator takes the max of presence and the answer count so the rate
+   * can never read above 100%: if more people have answered than presence
+   * believes are here, presence is the number that is wrong (a student on an
+   * old tab, or one whose heartbeat is in flight), and the rate should not
+   * announce that as 140%.
+   */
+  const responseDenominator = Math.max(inRoom, currentResponseCount, 1);
+  const responseRatePct = Math.round((currentResponseCount / responseDenominator) * 100);
 
   /** The one thing the creator should do next, as a single primary control. */
   const primaryAction = () => {
@@ -890,13 +1007,44 @@ export default function LiveExamControl() {
           <div className="flex shrink-0 items-center gap-2">
             <div className="flex items-center gap-1.5 rounded-full bg-muted/70 px-3 py-1.5">
               <Users className="h-3.5 w-3.5 text-primary" />
-              <span className="text-xs font-bold tabular-nums">{participantCount}</span>
+              <span className="text-xs font-bold tabular-nums">{inRoom}</span>
               <span className="hidden text-xs text-muted-foreground sm:inline">live</span>
             </div>
-            <Button variant="outline" size="sm" className="h-8" onClick={() => setShowShareDialog(true)}>
+            {/* A1: pin the join panel rather than reopening a modal per late arrival. */}
+            <Button
+              variant={hudPinned ? "secondary" : "outline"}
+              size="sm"
+              className="h-8"
+              onClick={() => setHudPinned((v) => !v)}
+              title={hudPinned ? "Unpin the join panel" : "Keep the QR and code on screen"}
+            >
               <QrCodeIcon className="h-4 w-4 sm:mr-1.5" />
-              <span className="hidden sm:inline">Share</span>
+              <span className="hidden sm:inline">{hudPinned ? "Pinned" : "Join"}</span>
             </Button>
+
+            {/* A2: the wall. Named window, so this focuses rather than duplicates. */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={openPresent}
+              title="Open the projector view in a second window"
+            >
+              <MonitorPlay className="h-4 w-4 sm:mr-1.5" />
+              <span className="hidden sm:inline">{presentOpen ? "Focus screen" : "Big screen"}</span>
+            </Button>
+
+            <SessionSettingsMenu
+              settings={{
+                privacyMode: session.privacyMode,
+                leaderboardVisibility: session.leaderboardVisibility,
+                presentShowLeaderboard: session.presentShowLeaderboard,
+                presentShowRiver: session.presentShowRiver,
+              }}
+              onChange={handleSettingsChange}
+              saving={savingSettings}
+            />
+
             {isLive && (
               <Button variant="destructive" size="sm" className="h-8" onClick={() => setShowEndDialog(true)}>
                 <Square className="h-4 w-4 sm:mr-1.5" />
@@ -905,7 +1053,9 @@ export default function LiveExamControl() {
             )}
           </div>
         </div>
-        <TimerBar remaining={remaining} total={currentQuestion?.time_seconds || 0} active={isTimerActive} />
+        {/* Connected: subscribes to the countdown itself, so a tick re-renders
+            this hairline and nothing else on the page. */}
+        <LiveTimerBar />
       </header>
 
       {/* ─── Body: two columns, each pane scrolls independently ─── */}
@@ -917,13 +1067,10 @@ export default function LiveExamControl() {
             <section className="shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm">
               <div className="flex flex-col gap-5 p-4 sm:flex-row sm:items-center">
                 <div className="flex justify-center sm:block">
-                  <TimerRing
-                    remaining={remaining}
-                    total={currentQuestion?.time_seconds || 0}
-                    active={isTimerActive}
+                  <LiveTimerRing
                     size={116}
                     idleLabel={isEnded ? "—" : hasStarted ? "Time up" : "Ready"}
-                    caption={isTimerActive ? "remaining" : undefined}
+                    caption="remaining"
                   />
                 </div>
 
@@ -947,7 +1094,7 @@ export default function LiveExamControl() {
                   <MeterRow
                     label="Answered"
                     value={currentResponseCount}
-                    max={participantCount || 1}
+                    max={responseDenominator}
                     tone={responseRatePct >= 80 ? "correct" : "brand"}
                   />
 
@@ -957,7 +1104,7 @@ export default function LiveExamControl() {
 
               {/* Pulse strip: the four numbers a creator narrates out loud */}
               <div className="grid grid-cols-2 divide-x divide-border/60 border-t border-border/60 sm:grid-cols-4">
-                <DeckStat label="In the room" value={participantCount} icon={Users} tone="brand" />
+                <DeckStat label="In the room" value={inRoom} icon={Users} tone="brand" />
                 <DeckStat
                   label="Response rate"
                   value={`${responseRatePct}%`}
@@ -1163,13 +1310,7 @@ export default function LiveExamControl() {
                 items={railItems}
                 size="sm"
                 className="no-scrollbar min-w-0 flex-1 py-0.5"
-                onSelect={(item) => {
-                  // Clicking the live question returns the pane to it; a past
-                  // question opens read-only review without pausing anything.
-                  if (item.index === currentQuestionIndex) setPreviewIndex(null);
-                  else if (item.index < currentQuestionIndex) setPreviewIndex(item.index);
-                  else toast({ title: `Q${item.index + 1} hasn't been unlocked yet` });
-                }}
+                onSelect={handleRailSelect}
               />
               <RailLegend
                 statuses={["current", "done", "upcoming"]}
@@ -1178,6 +1319,25 @@ export default function LiveExamControl() {
             </div>
           </div>
         </footer>
+      )}
+
+      {/*
+        A1 — the pinned join panel.
+        Fixed to a reserved corner so it can never cover the control deck or the
+        unlock button; the whole point is that a late arrival stops being an
+        interruption, and a panel that hides the primary control would just be a
+        different interruption.
+      */}
+      {hudPinned && (
+        <div className="pointer-events-auto fixed bottom-20 right-4 z-40">
+          <PresenterHud
+            shareUrl={shareUrl}
+            shareCode={exam.share_code}
+            inRoom={inRoom}
+            variant="control"
+            onClose={() => setHudPinned(false)}
+          />
+        </div>
       )}
 
       {/* End Exam Dialog */}
@@ -1203,7 +1363,6 @@ export default function LiveExamControl() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {shareDialog}
     </div>
   );
 }

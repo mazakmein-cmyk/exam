@@ -6,6 +6,8 @@
  * is legible without reading a single number.
  */
 
+import { memo } from "react";
+
 import { Crown, Medal } from "lucide-react";
 import type { LiveParticipant } from "@/services/liveExamService";
 
@@ -81,7 +83,7 @@ function LeaderboardRow({
   );
 }
 
-export default function LiveLeaderboard({
+function LiveLeaderboard({
   entries,
   currentUserId,
   self,
@@ -138,3 +140,11 @@ export default function LiveLeaderboard({
     </div>
   );
 }
+
+/**
+ * Memoised because the creator's control room re-renders roughly once a second
+ * while a question is open (the answered count polls at 750ms). Without this,
+ * every one of those ticks re-ran all twenty leaderboard rows — and the props that
+ * decide its output only change when the question does.
+ */
+export default memo(LiveLeaderboard);

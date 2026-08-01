@@ -35,6 +35,7 @@ const BlogPost = lazy(() => import("./pages/BlogPost"));
 const LiveExamDetail = lazy(() => import("./pages/LiveExamDetail"));
 const LiveExamControl = lazy(() => import("./pages/LiveExamControl"));
 const LiveExamStudent = lazy(() => import("./pages/LiveExamStudent"));
+const LiveExamPresent = lazy(() => import("./pages/LiveExamPresent"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,6 +62,30 @@ const Layout = () => (
     </Suspense>
     <Toaster />
     <Sonner />
+  </>
+);
+
+/**
+ * Layout for the projector view — identical to Layout except that it mounts NO
+ * toaster (E4).
+ *
+ * This is the structural half of "toasts stay creator-side". The present screen
+ * is on a wall in front of a class, and the control room raises toasts for
+ * routine events ("Q4 Unlocked!") as well as failures ("Error computing
+ * analytics"). The second kind, projected, makes the product look broken and
+ * makes students doubt whether their answer registered.
+ *
+ * A flag the present page had to remember to check would eventually be
+ * forgotten, and the cost of forgetting lands in front of thirty people. With no
+ * toaster in the tree there is nothing to forget: a stray toast() call from
+ * shared code simply has nowhere to render.
+ */
+const PresentLayout = () => (
+  <>
+    <AuthStateListener />
+    <Suspense fallback={<RouteFallback />}>
+      <Outlet />
+    </Suspense>
   </>
 );
 
@@ -92,6 +117,13 @@ const router = createBrowserRouter([
       { path: "/live-exam/:creatorId/:liveExamId", element: <LiveExamDetail /> },
       { path: "/live-exam/:creatorId/:liveExamId/control", element: <LiveExamControl /> },
       { path: "*", element: <NotFound /> },
+    ],
+  },
+  {
+    // Its own layout, so no toaster exists on this route at all. See PresentLayout.
+    element: <PresentLayout />,
+    children: [
+      { path: "/live-exam/:creatorId/:liveExamId/present", element: <LiveExamPresent /> },
     ],
   },
 ]);

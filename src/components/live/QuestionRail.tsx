@@ -7,6 +7,8 @@
  * rail readable for colour-blind users and at a glance from a distance.
  */
 
+import { memo } from "react";
+
 import { Check, X, Minus, Lock, Eye, Dot } from "lucide-react";
 
 export type ChipStatus =
@@ -109,7 +111,7 @@ export function QuestionChip({
   );
 }
 
-export default function QuestionRail({
+function QuestionRail({
   items,
   onSelect,
   size = "md",
@@ -190,3 +192,11 @@ export function RailLegend({ statuses, className = "" }: { statuses: ChipStatus[
     </div>
   );
 }
+
+/**
+ * Memoised because the creator's control room re-renders roughly once a second
+ * while a question is open (the answered count polls at 750ms). Without this,
+ * every one of those ticks re-ran every chip in the exam - which for a long paper is hundreds of nodes — and the props that
+ * decide its output only change when the question does.
+ */
+export default memo(QuestionRail);

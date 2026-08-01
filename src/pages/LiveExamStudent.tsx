@@ -17,7 +17,7 @@
  * both "selected" and "correct", so a pick looked pre-graded.)
  */
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import confetti from "canvas-confetti";
 import { supabase } from "@/integrations/supabase/client";
@@ -53,7 +53,7 @@ import LiveQuestionBody, { questionPreviewText } from "@/components/live/LiveQue
 import LiveOption, { optionLetter, type OptionVisual } from "@/components/live/LiveOption";
 import LiveLeaderboard from "@/components/live/LiveLeaderboard";
 import QuestionRail, { RailLegend, type ChipStatus, type RailItem } from "@/components/live/QuestionRail";
-import { TimerBar, TimerChip } from "@/components/live/LiveTimer";
+import { LiveTimerBar, LiveTimerChip } from "@/components/live/LiveTimer";
 import {
   fetchLiveExamByShareCode,
   fetchAllLiveQuestionsStudent,
@@ -61,7 +61,7 @@ import {
   fetchLiveSections,
   fetchAllAnalytics,
   joinLiveExam,
-  fetchLeaderboard,
+  fetchPublicLeaderboard,
   submitLiveResponse,
   fetchMyResponses,
   type LiveExam,
@@ -71,10 +71,13 @@ import {
   type LiveResponse,
   type LiveQuestionAnalytics,
 } from "@/services/liveExamService";
+import { useLiveSession } from "@/hooks/useLiveSession";
 import {
-  useLiveExamRealtime,
-  useLiveParticipantCount,
-} from "@/hooks/useLiveExamRealtime";
+  useLiveCountdown,
+  useLiveTimerExpiry,
+  useLiveTimerPhase,
+  useLiveTimerTarget,
+} from "@/lib/live/timerStore";
 import { toExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/examAccess";
 import CreatorExamBlocked from "@/components/CreatorExamBlocked";
 import {
@@ -90,37 +93,32 @@ const AVAILABLE_LANGUAGES = [
   { code: "hi", label: "Hindi", nativeLabel: "हिंदी", flag: "🇮🇳" },
 ];
 
-// ─── Timer Hook ──────────────────────────────────────────────
+/**
+ * Window across which the class's leaderboard refetches are scattered after a
+ * reveal. Every student is triggered by the same event at the same millisecond,
+ * so without this the whole room requests the standings at once.
+ */
+const LEADERBOARD_SPREAD_MS = 2500;
 
-function useCountdown(targetEndTime: number | null, onExpire: () => void) {
-  const [remaining, setRemaining] = useState<number>(0);
-  const expiredRef = useRef(false);
-  const onExpireRef = useRef(onExpire);
-  onExpireRef.current = onExpire;
+// ─── Countdown side effects ──────────────────────────────────
+
+/**
+ * Plays the final-seconds tick.
+ *
+ * A leaf component rather than an effect in the page, because reading the
+ * ticking countdown is what forces a re-render every second — and this page
+ * renders the question, the options, the review list and the leaderboard. An
+ * invisible component that re-renders alone is the cheapest place to hear the
+ * clock from.
+ */
+function CountdownTickSound() {
+  const { remaining, running } = useLiveCountdown();
 
   useEffect(() => {
-    expiredRef.current = false;
-    if (!targetEndTime) {
-      setRemaining(0);
-      return;
-    }
+    if (running && remaining > 0 && remaining <= 5) playTick();
+  }, [remaining, running]);
 
-    const tick = () => {
-      const now = Date.now();
-      const left = Math.max(0, Math.ceil((targetEndTime - now) / 1000));
-      setRemaining(left);
-      if (left <= 0 && !expiredRef.current) {
-        expiredRef.current = true;
-        onExpireRef.current();
-      }
-    };
-
-    tick();
-    const interval = setInterval(tick, 250);
-    return () => clearInterval(interval);
-  }, [targetEndTime]);
-
-  return remaining;
+  return null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -265,10 +263,6 @@ export default function LiveExamStudent() {
   // Which pane the phone layout shows; desktop shows all three at once.
   const [mobilePane, setMobilePane] = useState<MobilePane>("question");
 
-  // Timer State
-  const [timerEndTime, setTimerEndTime] = useState<number | null>(null);
-  const [timerExpiredForIndex, setTimerExpiredForIndex] = useState<number>(-1);
-
   // Refs so async/realtime callbacks always see fresh values
   const examRef = useRef<LiveExam | null>(null);
   const questionsRef = useRef<LiveQuestion[]>([]);
@@ -281,8 +275,6 @@ export default function LiveExamStudent() {
   // Ordinals already celebrated with confetti (once per question)
   const celebratedRef = useRef<Set<number>>(new Set());
   const prevRankRef = useRef<number | null>(null);
-
-  const participantCount = useLiveParticipantCount(exam?.id);
 
   // ─── Shared helpers ────────────────────────────────────────
 
@@ -315,29 +307,10 @@ export default function LiveExamStudent() {
     }
   };
 
-  const applyTimer = (examData: LiveExam, qs: LiveQuestion[]) => {
-    if (examData.status === "live" && examData.current_question_index >= 0 && examData.current_question_unlocked_at) {
-      const currentQ = qs[examData.current_question_index];
-      if (!currentQ) return;
-      const unlockedAt = new Date(examData.current_question_unlocked_at).getTime();
-      const endTime = unlockedAt + currentQ.time_seconds * 1000;
-      if (Date.now() < endTime) {
-        setTimerEndTime(endTime);
-        setTimerExpiredForIndex(-1);
-      } else {
-        setTimerEndTime(null);
-        setTimerExpiredForIndex(examData.current_question_index);
-      }
-    } else {
-      setTimerEndTime(null);
-    }
-  };
-
-  const handleExamEnded = (endedExam: LiveExam) => {
-    setTimerEndTime(null);
-    fetchLeaderboard(endedExam.id, 20).then(setLeaderboard).catch(() => {});
+  const handleExamEnded = (endedExamId: string) => {
+    fetchPublicLeaderboard(endedExamId, 20).then(setLeaderboard).catch(() => {});
     refreshReveal();
-    fetchAllAnalytics(endedExam.id)
+    fetchAllAnalytics(endedExamId)
       .then((rows) => setAnalytics(toOrdinalAnalyticsMap(rows)))
       .catch(() => {});
   };
@@ -412,12 +385,13 @@ export default function LiveExamStudent() {
 
       // 5. Load Leaderboard if live/ended
       if (examData.status === "live" || examData.status === "ended") {
-        const lb = await fetchLeaderboard(examData.id, 20);
+        const lb = await fetchPublicLeaderboard(examData.id, 20);
         setLeaderboard(lb);
       }
 
-      // 6. Setup Timer if active question
-      applyTimer(examData, qs);
+      // The countdown is armed by useLiveTimerTarget from session state, not
+      // from here — a load and an unlock must take the same path or the two
+      // drift apart on rejoin.
     } catch (error: any) {
       toast({ title: "Error", description: error.message || "Failed to join live exam.", variant: "destructive" });
     } finally {
@@ -446,39 +420,42 @@ export default function LiveExamStudent() {
     }
   };
 
-  // ─── Exam state transitions (realtime + reconnect) ─────────
+  /**
+   * Refetch the standings, spread out across the room.
+   *
+   * Every student learns of a reveal at the same instant, so an immediate fetch
+   * here means the whole class asks for the top 20 simultaneously — a thundering
+   * herd that arrives as a spike rather than a stream, and the larger the class
+   * the worse it gets. Spreading over a couple of seconds costs nothing a
+   * student can perceive (the leaderboard is not what they are looking at the
+   * moment an answer is revealed) and flattens the spike completely.
+   *
+   * Their own rank does NOT wait for this — it rides on the session sync, so the
+   * number they actually care about is already correct.
+   */
+  const leaderboardTimerRef = useRef<number | null>(null);
 
-  const handleExamUpdate = (updatedExam: LiveExam) => {
-    const prev = examRef.current;
-    examRef.current = updatedExam;
-    setExam(updatedExam);
-
-    if (prev && updatedExam.current_question_index > prev.current_question_index) {
-      // New question unlocked!
-      applyTimer(updatedExam, questionsRef.current);
-      setSelectedAnswer(null);
-      setMobilePane("question");
-      playUnlockDing();
-      toast({ title: "New Question Unlocked!" });
-      // Previous question's timer is definitively over — pull its reveal/grades.
-      refreshReveal();
-      window.setTimeout(refreshReveal, 2500);
-    }
-
-    if (prev && prev.status === "live" && updatedExam.status === "ended") {
-      toast({ title: "Exam Ended" });
-      handleExamEnded(updatedExam);
-    }
+  const scheduleLeaderboardRefresh = (examId: string) => {
+    if (leaderboardTimerRef.current !== null) window.clearTimeout(leaderboardTimerRef.current);
+    leaderboardTimerRef.current = window.setTimeout(() => {
+      leaderboardTimerRef.current = null;
+      void fetchPublicLeaderboard(examId, 20).then(setLeaderboard).catch(() => {});
+    }, Math.random() * LEADERBOARD_SPREAD_MS);
   };
 
-  /** Full state refetch after a dropped realtime connection resubscribes. */
-  const handleReconnect = async () => {
+  useEffect(() => {
+    return () => {
+      if (leaderboardTimerRef.current !== null) window.clearTimeout(leaderboardTimerRef.current);
+    };
+  }, []);
+
+  /** Everything the page can miss while its connection is away. */
+  const refetchSessionData = async () => {
     const ex = examRef.current;
-    if (!ex || !shareCode) return;
+    if (!ex) return;
     try {
-      const [freshExam, lb, myResponses, revealed, analyticsRows] = await Promise.all([
-        fetchLiveExamByShareCode(shareCode),
-        fetchLeaderboard(ex.id, 20),
+      const [lb, myResponses, revealed, analyticsRows] = await Promise.all([
+        fetchPublicLeaderboard(ex.id, 20),
         fetchMyResponses(ex.id),
         fetchRevealedAnswers(ex.id),
         fetchAllAnalytics(ex.id).catch(() => [] as LiveQuestionAnalytics[]),
@@ -491,44 +468,56 @@ export default function LiveExamStudent() {
       });
       setRevealedAnswers(revealed);
       setAnalytics(toOrdinalAnalyticsMap(analyticsRows));
-
-      const prev = examRef.current;
-      examRef.current = freshExam;
-      setExam(freshExam);
-      if (prev && freshExam.current_question_index > prev.current_question_index) {
-        setSelectedAnswer(null);
-        playUnlockDing();
-        toast({ title: "New Question Unlocked!" });
-      }
-      applyTimer(freshExam, questionsRef.current);
-      if (prev && prev.status === "live" && freshExam.status === "ended") {
-        toast({ title: "Exam Ended" });
-      }
     } catch {
-      /* the channel will retry; next reconnect refetches again */
+      /* transient; the next reveal or reconnect refetches again */
     }
   };
 
-  // ─── Realtime Subscriptions ────────────────────────────────
+  // ─── Live session (transport, clock, deadline) ──────────────
 
-  useLiveExamRealtime(exam?.id, {
-    onExamUpdate: handleExamUpdate,
-    onParticipantUpdated: (p) => {
-      if (p.user_id === user?.id) setParticipant(p);
-      setLeaderboard((prev) => {
-        const next = prev.map((e) => (e.user_id === p.user_id ? p : e));
-        if (!prev.find((e) => e.user_id === p.user_id)) next.push(p);
-        return next
-          .sort((a, b) => {
-            if (a.rank === null && b.rank === null) return 0;
-            if (a.rank === null) return 1;
-            if (b.rank === null) return -1;
-            return a.rank - b.rank;
-          })
-          .slice(0, 20);
-      });
+  const session = useLiveSession(exam?.id, {
+    role: "student",
+    enabled: !!exam?.id && access !== "blocked",
+    onUnlock: () => {
+      setSelectedAnswer(null);
+      setMobilePane("question");
+      playUnlockDing();
+      toast({ title: "New Question Unlocked!" });
+      // The previous question's timer is definitively over — pull its
+      // reveal and server grade. Twice, because the server holds the answer
+      // back through a 2s grace window.
+      refreshReveal();
+      window.setTimeout(refreshReveal, 2500);
     },
-    onAnalyticsComputed: (a) => {
+    onRewind: (index) => {
+      // The creator took an unlock back. Anything this page had already
+      // revealed for the reopened question must go: the server re-hides it,
+      // but a copy is sitting in memory here.
+      setSelectedAnswer(null);
+      setRevealedAnswers((prev) => {
+        const next = new Map(prev);
+        questionsRef.current.forEach((q, idx) => {
+          if (idx >= index) next.delete(q.id);
+        });
+        return next;
+      });
+      setAnalytics((prev) => {
+        const next = new Map(prev);
+        Array.from(next.keys()).forEach((ord) => {
+          if (ord >= index) next.delete(ord);
+        });
+        return next;
+      });
+      celebratedRef.current = new Set(
+        Array.from(celebratedRef.current).filter((ord) => ord < index)
+      );
+    },
+    onEnded: () => {
+      toast({ title: "Exam Ended" });
+      const ex = examRef.current;
+      if (ex) handleExamEnded(ex.id);
+    },
+    onAnalytics: (a) => {
       // Analytics rows are keyed by the canonical primary-language question id.
       const ord = canonicalIdToOrdinalRef.current.get(a.live_question_id);
       if (ord === undefined) return;
@@ -539,31 +528,41 @@ export default function LiveExamStudent() {
       });
       // Analytics landing means the timer (+grace) ended — the answer is revealed now.
       refreshReveal();
+      // Ranks are recomputed alongside analytics, so the standings are stale
+      // from this moment. Refetched rather than pushed: broadcasting every
+      // participant row to every student cost (participants x students) messages
+      // per question and told them nothing this one request does not.
+      scheduleLeaderboardRefresh(a.live_exam_id);
     },
-    onReconnect: handleReconnect,
+    onReconnect: () => {
+      void refetchSessionData();
+    },
   });
 
-  // ─── Timer Expired ─────────────────────────────────────────
+  const sessionStatus = session.status ?? exam?.status ?? null;
+  const sessionIndex = session.currentQuestionIndex;
 
-  const handleTimerExpired = () => {
-    const ex = examRef.current;
-    if (!ex) return;
-    const idx = ex.current_question_index;
-    if (idx >= 0 && timerExpiredForIndex < idx) {
-      setTimerExpiredForIndex(idx);
-      setTimerEndTime(null);
-      // Server reveals at +2s grace, so retry shortly after the first attempt.
-      refreshReveal();
-      window.setTimeout(refreshReveal, 2500);
-    }
-  };
+  // ─── Countdown ─────────────────────────────────────────────
 
-  const remaining = useCountdown(timerEndTime, handleTimerExpired);
+  useLiveTimerTarget({
+    index: sessionIndex,
+    unlockedAt: session.unlockedAt,
+    extraSeconds: session.extraSeconds,
+    timeSeconds: sessionIndex >= 0 ? questions[sessionIndex]?.time_seconds ?? null : null,
+    active: sessionStatus === "live",
+  });
 
-  // Tick sound for the last 5 seconds
-  useEffect(() => {
-    if (timerEndTime !== null && remaining > 0 && remaining <= 5) playTick();
-  }, [remaining, timerEndTime]);
+  // Stable across renders: refreshReveal reads the exam through a ref, so a
+  // handler captured on the first render is still correct on the twentieth.
+  const handleTimerExpired = useCallback(() => {
+    // Server reveals at +2s grace, so retry shortly after the first attempt.
+    refreshReveal();
+    window.setTimeout(refreshReveal, 2500);
+  }, []);
+
+  useLiveTimerExpiry(handleTimerExpired);
+
+  const timerPhase = useLiveTimerPhase();
 
   // ─── Submit Response ───────────────────────────────────────
 
@@ -584,7 +583,10 @@ export default function LiveExamStudent() {
       toast({ title: "Preview mode", description: "Answers aren't recorded for your own exam." });
       return;
     }
-    const idx = exam.current_question_index;
+    // The session's index, not the exam row's: the exam row is loaded once and
+    // does not track unlocks, so submitting against it would send an answer for
+    // whichever question was open when this page loaded.
+    const idx = session.currentQuestionIndex;
     const currentQ = questions[idx];
     if (!currentQ || selectedAnswer === null) return;
     const isMulti = isMultiAnswer(currentQ.answer_type);
@@ -638,14 +640,21 @@ export default function LiveExamStudent() {
 
   // ─── Derived State ─────────────────────────────────────────
 
-  const isLobby = exam?.status === "published" || (exam?.status === "live" && exam.current_question_index === -1);
-  const isLive = exam?.status === "live" && exam.current_question_index >= 0;
-  const isEnded = exam?.status === "ended";
+  const isLobby = sessionStatus === "published" || (sessionStatus === "live" && sessionIndex === -1);
+  const isLive = sessionStatus === "live" && sessionIndex >= 0;
+  const isEnded = sessionStatus === "ended";
 
-  const currentQuestionIndex = exam?.current_question_index ?? -1;
+  const currentQuestionIndex = sessionIndex;
   const currentQuestion = isLive ? questions[currentQuestionIndex] : null;
-  const isTimerActive = timerEndTime !== null && remaining > 0;
-  const isTimerExpiredLocally = currentQuestionIndex >= 0 && timerExpiredForIndex >= currentQuestionIndex;
+  /**
+   * Gate on the countdown store having caught up with the index. For the one
+   * render between an unlock arriving and the target being set, the question is
+   * neither running nor expired — showing "time's up" in that gap would flash a
+   * lock over a question the student has a full minute for.
+   */
+  const timerReady = timerPhase.key === currentQuestionIndex;
+  const isTimerActive = timerReady && timerPhase.running;
+  const isTimerExpiredLocally = currentQuestionIndex >= 0 && timerReady && !timerPhase.running;
 
   // A question is officially "locked" when the timer expires or analytics arrive
   const currentAnalytics = currentQuestionIndex >= 0 ? analytics.get(currentQuestionIndex) : undefined;
@@ -655,7 +664,8 @@ export default function LiveExamStudent() {
   const hasSubmitted = !!myCurrentResponse;
   const isCurrentRevealed = currentQuestion ? revealedAnswers.has(currentQuestion.id) : false;
   const isCurrentMulti = isMultiAnswer(currentQuestion?.answer_type);
-  const currentTotalSeconds = currentQuestion?.time_seconds || 0;
+  /** Presence, so "in the room" means here now rather than ever joined. */
+  const inRoom = session.onlineCount;
 
   /** Server-graded correctness first; fall back to comparing with the revealed answer. */
   const getCorrectness = (res: LiveResponse | undefined, q: LiveQuestion | undefined): boolean | null => {
@@ -742,9 +752,51 @@ export default function LiveExamStudent() {
     return total > 0 ? correct / total : null;
   }, [analytics]);
 
-  const myAccuracy = participant && participant.total_answered > 0
-    ? participant.total_correct / participant.total_answered
-    : null;
+  // ─── My live standing ──────────────────────────────────────
+  //
+  // `participant` is the row returned when this student joined, and it is never
+  // refreshed after that. It used to be, by a broadcast of every participant row
+  // to every student — which cost (participants x students) messages per
+  // question and is exactly the fan-out Phase 0 removed.
+  //
+  // Rank and score now ride along on the session sync this client is already
+  // making for its heartbeat, so keeping them live costs no extra request.
+
+  /** Server-assigned rank, refreshed by every sync. */
+  const myRank = session.myRank;
+  /** Server-graded correct count — never derived from local answers. */
+  const myTotalCorrect = session.myTotalCorrect ?? 0;
+  /**
+   * How many questions I have answered. Counted locally because this client is
+   * the only party that needs it and it already holds every response it made —
+   * asking the server would be a round trip for something we know.
+   */
+  const answeredCount = responses.size;
+  const myAccuracy = answeredCount > 0 ? myTotalCorrect / answeredCount : null;
+  /**
+   * A LiveParticipant-shaped "you" for the leaderboard, carrying the live rank
+   * rather than the frozen one from the join response.
+   *
+   * Memoised: LiveLeaderboard is memoised, and a fresh object here every render
+   * would defeat that for all twenty of its rows.
+   */
+  const mySelf: LiveParticipant | null = useMemo(
+    () =>
+      participant
+        ? {
+            ...participant,
+            // Under privacy mode everyone else on this list is a pseudonym, so
+            // "You" is both consistent and unambiguous — showing their real name
+            // beside a column of animals reads like a leak even though it is
+            // their own screen.
+            display_name: session.privacyMode ? "You" : participant.display_name,
+            rank: myRank,
+            total_correct: myTotalCorrect,
+            total_answered: answeredCount,
+          }
+        : null,
+    [participant, session.privacyMode, myRank, myTotalCorrect, answeredCount]
+  );
 
   const totalQuestionCount = questions.length || exam?.total_questions || 0;
 
@@ -776,15 +828,14 @@ export default function LiveExamStudent() {
   // ─── Rank movement badge ───────────────────────────────────
 
   useEffect(() => {
-    const r = participant?.rank ?? null;
-    if (r === null) return;
+    if (myRank === null) return;
     const prev = prevRankRef.current;
-    prevRankRef.current = r;
-    if (prev === null || prev === r) return;
-    setRankDelta(prev - r); // positive = climbed
+    prevRankRef.current = myRank;
+    if (prev === null || prev === myRank) return;
+    setRankDelta(prev - myRank); // positive = climbed
     const t = window.setTimeout(() => setRankDelta(null), 4000);
     return () => window.clearTimeout(t);
-  }, [participant?.rank]);
+  }, [myRank]);
 
   // ─── Keyboard answering ────────────────────────────────────
 
@@ -1025,7 +1076,7 @@ export default function LiveExamStudent() {
               </div>
               <div className="flex shrink-0 items-center gap-1.5 rounded-full bg-background/80 px-2.5 py-1 text-xs font-bold">
                 <Users className="h-3.5 w-3.5 text-emerald-600" />
-                <span className="tabular-nums">{participantCount}</span>
+                <span className="tabular-nums">{inRoom}</span>
               </div>
             </div>
           </div>
@@ -1093,9 +1144,6 @@ export default function LiveExamStudent() {
   }
 
   // ─── Render: LIVE PLAY & ENDED ─────────────────────────────
-
-  const answeredCount = responses.size;
-  const myRank = participant?.rank ?? null;
 
   /** How each option should look right now. */
   const optionVisual = (i: number): OptionVisual => {
@@ -1451,7 +1499,7 @@ export default function LiveExamStudent() {
               <div className="flex items-center gap-2 rounded-full bg-muted/70 px-3 py-1.5">
                 <span className="inline-flex items-center gap-1 text-xs font-bold tabular-nums">
                   <Trophy className="h-3.5 w-3.5 text-amber-500" />
-                  {participant?.total_correct || 0}
+                  {myTotalCorrect}
                 </span>
                 {myRank !== null && (
                   <>
@@ -1489,7 +1537,10 @@ export default function LiveExamStudent() {
         </div>
 
         {/* Time pressure stays in peripheral vision even on a long question. */}
-        <TimerBar remaining={remaining} total={currentTotalSeconds} active={isTimerActive} />
+        {/* Connected: a tick re-renders this hairline and the mm:ss chip below,
+            never the question, the review list or the leaderboard. */}
+        <LiveTimerBar />
+        <CountdownTickSound />
       </header>
 
       {/* ─── Question bar: where am I, how long left ─── */}
@@ -1512,12 +1563,7 @@ export default function LiveExamStudent() {
                   </>
                 )}
               </div>
-              <TimerChip
-                remaining={remaining}
-                total={currentTotalSeconds}
-                active={isTimerActive}
-                idleLabel={isLocked ? "Time up" : "—"}
-              />
+              <LiveTimerChip idleLabel={isLocked ? "Time up" : "—"} />
             </div>
             {/* Whole-exam map. Desktop gets the same rail in the side panel, so
                 this copy is phone-only to keep the sticky stack shallow. */}
@@ -1567,13 +1613,13 @@ export default function LiveExamStudent() {
                   <div className="grid grid-cols-3 divide-x divide-border/60 border-t border-border/60">
                     <div className="px-3 py-4 text-center">
                       <p className="text-2xl font-bold tabular-nums text-emerald-600">
-                        {participant?.total_correct || 0}
+                        {myTotalCorrect}
                         <span className="text-base font-semibold text-muted-foreground">/{totalQuestionCount}</span>
                       </p>
                       <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Correct</p>
                     </div>
                     <div className="px-3 py-4 text-center">
-                      <p className="text-2xl font-bold tabular-nums">#{participant?.rank || "—"}</p>
+                      <p className="text-2xl font-bold tabular-nums">#{myRank ?? "—"}</p>
                       <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Rank</p>
                     </div>
                     <div className="px-3 py-4 text-center">
@@ -1807,7 +1853,7 @@ export default function LiveExamStudent() {
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                 <div>
-                  <p className="text-xl font-bold tabular-nums text-emerald-600">{participant?.total_correct || 0}</p>
+                  <p className="text-xl font-bold tabular-nums text-emerald-600">{myTotalCorrect}</p>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Correct</p>
                 </div>
                 <div>
@@ -1824,7 +1870,7 @@ export default function LiveExamStudent() {
               <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-3 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5">
                   <Users className="h-3.5 w-3.5" />
-                  {participantCount} in the room
+                  {inRoom} in the room
                 </span>
                 <span className="tabular-nums">
                   {answeredCount}/{totalQuestionCount} answered
@@ -1848,7 +1894,7 @@ export default function LiveExamStudent() {
                 <LiveLeaderboard
                   entries={leaderboard}
                   currentUserId={user?.id}
-                  self={participant && participant.rank !== null && participant.rank > 20 ? participant : null}
+                  self={mySelf && mySelf.rank !== null && mySelf.rank > 20 ? mySelf : null}
                   emptyLabel={
                     isLive ? "Standings appear once the first question closes." : "No standings for this session."
                   }
