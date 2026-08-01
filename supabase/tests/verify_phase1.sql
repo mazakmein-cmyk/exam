@@ -129,6 +129,32 @@ WITH checks AS (
   FROM pg_publication_tables
   WHERE pubname = 'supabase_realtime' AND schemaname = 'public'
     AND tablename = 'live_participants'
+
+  UNION ALL
+
+  -- 13. Check 11 is an invariant, not a one-off. Masking at compute time plus a
+  --     migration back-fill leaves a hole: a creator who turns privacy ON later
+  --     never re-masks the rows written while it was off. A trigger closes it,
+  --     because privacy_mode can be flipped from anywhere.
+  SELECT '13. privacy toggle re-masks stored names (trigger)',
+         'checked',
+         EXISTS (SELECT 1 FROM pg_trigger
+                 WHERE tgrelid = 'public.live_exams'::regclass
+                   AND tgname = 'trg_live_privacy_mode_changed'
+                   AND NOT tgisinternal)
+
+  UNION ALL
+
+  -- 14. That trigger must be narrowly scoped. live_exams is UPDATEd on every
+  --     unlock, so an unguarded trigger would re-scan the whole exam's analytics
+  --     dozens of times per session for nothing.
+  SELECT '14. re-mask trigger only fires when privacy_mode changes',
+         'checked',
+         (pg_get_triggerdef(t.oid) LIKE '%UPDATE OF privacy_mode%'
+          AND pg_get_triggerdef(t.oid) LIKE '%privacy_mode IS DISTINCT FROM%')
+  FROM pg_trigger t
+  WHERE t.tgrelid = 'public.live_exams'::regclass
+    AND t.tgname = 'trg_live_privacy_mode_changed'
 )
 SELECT
   CASE WHEN ok THEN '✅ PASS' ELSE '❌ FAIL' END AS result,

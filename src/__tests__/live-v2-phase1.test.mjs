@@ -57,6 +57,7 @@ function readMigration(filename) {
 
 const PRIVACY_SQL = readMigration("20260803000000_live_v2_privacy.sql");
 const STEP2_SQL = readMigration("20260803010000_live_v2_privacy_step3.sql");
+const REMASK_SQL = readMigration("20260803020000_live_v2_privacy_remask_trigger.sql");
 const PRESENT = readSrc("pages/LiveExamPresent.tsx");
 const CONTROL = readSrc("pages/LiveExamControl.tsx");
 const STUDENT = readSrc("pages/LiveExamStudent.tsx");
@@ -245,6 +246,53 @@ test("existing rows are re-masked, not left leaking", () => {
   assert(
     /UPDATE public\.live_question_analytics/.test(PRIVACY_SQL),
     "a session that ran before this migration has real names in a student-readable row"
+  );
+});
+
+test("re-masking is an invariant, not a one-time migration statement", () => {
+  // The bug verify_phase1.sql check 11 caught in production: masking at compute
+  // time plus a migration back-fill still leaves rows written BEFORE a creator
+  // turned privacy on, and those are readable — and pushed — to every student.
+  assert(
+    /CREATE TRIGGER trg_live_privacy_mode_changed/.test(REMASK_SQL),
+    "privacy_mode can be flipped from the control room, another client or the SQL editor; only a trigger covers all of them"
+  );
+  assert(
+    /live_refresh_fastest_names/.test(REMASK_SQL),
+    "the re-derivation must live in one reusable function"
+  );
+});
+
+test("the re-mask trigger cannot fire on an ordinary unlock", () => {
+  // live_exams is UPDATEd on every unlock (index, unlocked_at, extra seconds).
+  assert(
+    /AFTER UPDATE OF privacy_mode ON public\.live_exams/.test(REMASK_SQL),
+    "must be column-scoped"
+  );
+  assert(
+    /WHEN \(OLD\.privacy_mode IS DISTINCT FROM NEW\.privacy_mode\)/.test(REMASK_SQL),
+    "must also guard on the value actually changing, or every unlock rescans the exam's analytics"
+  );
+});
+
+test("re-masking works in both directions", () => {
+  assert(
+    /WHEN v_privacy THEN public\.live_anon_name\(o\.ord\)\s*\n\s*ELSE o\.display_name/.test(REMASK_SQL),
+    "turning privacy OFF must restore real names, or past sessions stay pseudonymised forever"
+  );
+});
+
+test("a no-op toggle does not broadcast to the whole room", () => {
+  assert(
+    /IS DISTINCT FROM \(/.test(REMASK_SQL),
+    "live_question_analytics is in the realtime publication; rewriting unchanged rows would push one message per question to every student"
+  );
+});
+
+test("an unresolvable participant is blanked rather than left named", () => {
+  assert(
+    /SET fastest_user_name = NULL/.test(REMASK_SQL),
+    "if the participant row is gone we cannot prove the stored name is safe"
   );
 });
 
