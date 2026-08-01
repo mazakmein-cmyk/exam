@@ -36,6 +36,9 @@ import LiveOption, { type OptionVisual } from "@/components/live/LiveOption";
 import PresenterHud from "@/components/live/PresenterHud";
 import { TimerBar, TimerRing } from "@/components/live/LiveTimer";
 import { useLiveCountdown, useLiveTimerPhase, useLiveTimerTarget } from "@/lib/live/timerStore";
+import AnswerRiver from "@/components/live/AnswerRiver";
+import { useOpenQuestionTally, TALLY_POLL_MS } from "@/hooks/useOpenQuestionTally";
+import { tallyOptions } from "@/lib/live/optionTally.js";
 import { useLiveSession } from "@/hooks/useLiveSession";
 import { usePeerWindow } from "@/hooks/usePeerWindow";
 import { useFitText } from "@/hooks/useFitText";
@@ -204,6 +207,27 @@ export default function LiveExamPresent() {
   });
 
   const optionCount = Array.isArray(question?.options) ? question!.options.length : 0;
+
+  /**
+   * B9 on the wall.
+   *
+   * Polled only while a question is genuinely running and the creator has the
+   * setting on — the projector is the one surface where an always-on poll would be
+   * pure cost, since nobody is looking at it between questions.
+   *
+   * This is a SECOND tally poller (the control room has its own), which is
+   * acceptable because both live in the creator's browser: two requests every
+   * 750ms from one machine, not per student.
+   */
+  const riverEnabled = (configPreview.showRiver ?? session.presentShowRiver) && isRunning;
+  const { tally } = useOpenQuestionTally(liveExamId, riverEnabled, TALLY_POLL_MS);
+
+  const riverCounts = useMemo(() => {
+    if (!question || tally.live_question_id !== question.id) {
+      return { counts: [] as number[], totalSelections: 0, unparsed: 0 };
+    }
+    return tallyOptions(tally.option_tally, optionCount);
+  }, [tally, question, optionCount]);
   const showLeaderboard =
     (configPreview.showLeaderboard ?? session.presentShowLeaderboard) &&
     // The projector is what the room sees, so it obeys the leaderboard-visibility
@@ -334,7 +358,27 @@ export default function LiveExamPresent() {
                 </div>
               </div>
 
-                      <PresentAnsweredRow
+                      {/*
+                B9. Neutral by construction — AnswerRiver has no `correct` prop
+                at all, renders in one colour and keeps options in fixed order,
+                so a student watching the wall learns how the room is split and
+                nothing about who is right.
+              */}
+              {riverEnabled && riverCounts.counts.length > 0 && (
+                <div className="mt-5 shrink-0" style={{ fontSize: fit.fontSizePx }}>
+                  <AnswerRiver
+                    counts={riverCounts.counts}
+                    responders={tally.response_count}
+                    roomSize={session.onlineCount}
+                    isMulti={
+                      question?.answer_type === "multi" || question?.answer_type === "multi-select"
+                    }
+                    display
+                  />
+                </div>
+              )}
+
+              <PresentAnsweredRow
                 inRoom={session.onlineCount}
                 isRevealing={isRevealing}
                 extraSeconds={session.extraSeconds}

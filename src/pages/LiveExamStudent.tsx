@@ -52,6 +52,7 @@ import SEO from "@/components/SEO";
 import LiveQuestionBody, { questionPreviewText } from "@/components/live/LiveQuestionBody";
 import LiveOption, { optionLetter, type OptionVisual } from "@/components/live/LiveOption";
 import LiveLeaderboard from "@/components/live/LiveLeaderboard";
+import ConfusionButton from "@/components/live/ConfusionButton";
 import QuestionRail, { RailLegend, type ChipStatus, type RailItem } from "@/components/live/QuestionRail";
 import { LiveTimerBar, LiveTimerChip } from "@/components/live/LiveTimer";
 import {
@@ -62,6 +63,7 @@ import {
   fetchAllAnalytics,
   joinLiveExam,
   fetchPublicLeaderboard,
+  flagLiveConfusion,
   submitLiveResponse,
   fetchMyResponses,
   type LiveExam,
@@ -608,6 +610,17 @@ export default function LiveExamStudent() {
       return next.sort((a, b) => a - b);
     });
   };
+
+  /**
+   * B12. Fire-and-forget by design: nothing is returned, nothing is shown beyond
+   * the button's own tick, and a failure is swallowed rather than toasted — a
+   * toast would announce to anyone glancing at the screen that this student
+   * pressed it, which is the one thing that would stop them using it.
+   */
+  const handleFlagConfusion = useCallback(async () => {
+    if (!exam) return;
+    await flagLiveConfusion(exam.id);
+  }, [exam]);
 
   const handleSubmit = async () => {
     if (!exam || !participant || submitting) return;
@@ -1234,11 +1247,20 @@ export default function LiveExamStudent() {
     // Timer running, answer already in.
     if (!isLocked && hasSubmitted) {
       return (
-        <div className="flex items-center gap-3 rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3">
           <Lock className="h-4 w-4 shrink-0 text-primary" />
-          <p className="text-sm font-medium text-foreground">
+          <p className="min-w-0 flex-1 text-sm font-medium text-foreground">
             Locked in. <span className="font-normal text-muted-foreground">The answer is revealed when the timer ends.</span>
           </p>
+          {/* B12 — still available after answering. Being unsure and having
+              answered are not mutually exclusive, and this is often exactly when
+              a student realises they did not follow it. */}
+          {!isPreview && (
+            <ConfusionButton
+              questionKey={currentQuestionIndex}
+              onFlag={handleFlagConfusion}
+            />
+          )}
         </div>
       );
     }

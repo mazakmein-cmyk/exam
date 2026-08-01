@@ -89,6 +89,16 @@ import {
   UNDO_WINDOW_MS,
 } from "@/components/live/LiveTimeControls";
 import { parseLiveError } from "@/lib/live/liveErrors";
+import AnswerRiver from "@/components/live/AnswerRiver";
+import {
+  ConfusionCount,
+  InsightHeading,
+  LiveCoachLine,
+  MisconceptionCallout,
+  TimeProfile,
+} from "@/components/live/LiveInsight";
+import { classifyDistribution } from "@/lib/live/classifyDistribution.js";
+import { tallyOptions } from "@/lib/live/optionTally.js";
 import {
   fetchLiveExam,
   fetchAllLiveQuestions,
@@ -622,6 +632,118 @@ export default function LiveExamControl() {
 
   /** Answer key visible when the question is over, being reviewed, or unhidden. */
   const keyVisible = isReviewing || isTimerExpired || showKey || isEnded;
+
+  // ─── Phase 3 insight, all derived from data already on this page ──────────
+
+  const previewOptionCount = Array.isArray(previewQuestion?.options)
+    ? previewQuestion!.options.length
+    : 0;
+
+  /**
+   * B9. While a question is open the counts come from the 750ms tally; once it
+   * closes they come from the analytics row. Same normaliser either way, because
+   * both are built from `selected_answer::text` in SQL and carry the same four
+   * key shapes.
+   */
+  const liveTally = useMemo(() => {
+    const openMatches =
+      currentQuestion && tally.live_question_id === currentQuestion.id && !isReviewing;
+    const source = openMatches ? tally.option_tally : previewAnalytics?.option_distribution;
+    return tallyOptions(source, previewOptionCount);
+  }, [tally, currentQuestion, isReviewing, previewAnalytics, previewOptionCount]);
+
+  /** B4. Only meaningful once the numbers are final. */
+  const classification = useMemo(() => {
+    if (!previewQuestion || !previewAnalytics) return null;
+    return classifyDistribution({
+      optionDistribution: previewAnalytics.option_distribution,
+      correctAnswer: previewQuestion.correct_answer,
+      totalResponses: previewAnalytics.total_responses,
+      optionCount: previewOptionCount,
+      answerType: previewQuestion.answer_type,
+      onlineCount: inRoom,
+    });
+  }, [previewQuestion, previewAnalytics, previewOptionCount, inRoom]);
+
+  /** B6. Computed server-side with the rest of the analytics; nothing to fetch. */
+  const timeProfile = useMemo(() => {
+    if (!previewAnalytics) return null;
+    return {
+      fastCorrect: previewAnalytics.fast_correct ?? 0,
+      slowCorrect: previewAnalytics.slow_correct ?? 0,
+      fastWrong: previewAnalytics.fast_wrong ?? 0,
+      slowWrong: previewAnalytics.slow_wrong ?? 0,
+      impulsiveWrong: previewAnalytics.impulsive_wrong ?? 0,
+      medianMs: previewAnalytics.median_time_ms ?? null,
+      histogram: Array.isArray(previewAnalytics.time_histogram)
+        ? previewAnalytics.time_histogram
+        : [],
+    };
+  }, [previewAnalytics]);
+
+  /**
+   * Presence a moment ago, for A8's "the wifi died, not the question" rule.
+   *
+   * Sampled from the session's own online count rather than a new request, and
+   * held in a ref so sampling never causes a render.
+   */
+  const onlineHistoryRef = useRef<{ at: number; n: number }[]>([]);
+  const onlineDelta30s = useMemo(() => {
+    const now = Date.now();
+    const hist = onlineHistoryRef.current;
+    if (hist.length === 0 || hist[hist.length - 1].n !== inRoom) {
+      hist.push({ at: now, n: inRoom });
+    }
+    while (hist.length > 1 && now - hist[0].at > 45_000) hist.shift();
+    const oldest = hist[0];
+    return oldest ? inRoom - oldest.n : 0;
+  }, [inRoom]);
+
+  /**
+   * A8's inputs, minus the ticking one.
+   *
+   * `remainingSeconds` is supplied by LiveCoachLine, which subscribes to the
+   * countdown itself. Reading it here would re-render the whole control room once
+   * a second — exactly what Phase 0 removed.
+   */
+  const coachContext = useMemo(() => {
+    if (!isLive || isReviewing) return null;
+    const startedAt = exam?.started_at ? new Date(exam.started_at).getTime() : null;
+    return {
+      phase: (!hasStarted ? "lobby" : isTimerActive ? "open" : "revealed") as
+        | "lobby"
+        | "open"
+        | "revealed"
+        | "ended",
+      totalSeconds: (currentQuestion?.time_seconds ?? 0) + session.extraSeconds,
+      answered: currentResponseCount,
+      onlineCount: inRoom,
+      onlineDelta30s,
+      confusionCount: tally.confusion_count ?? 0,
+      classification: isTimerActive ? null : classification,
+      timeProfile: isTimerActive ? null : timeProfile,
+      questionIndex: currentQuestionIndex,
+      totalQuestions: questions.length,
+      elapsedMinutes: startedAt ? (Date.now() - startedAt) / 60000 : 0,
+      plannedMinutes: questions.reduce((m, q) => m + q.time_seconds / 60, 0),
+    };
+  }, [
+    isLive,
+    isReviewing,
+    hasStarted,
+    isTimerActive,
+    currentQuestion,
+    session.extraSeconds,
+    currentResponseCount,
+    inRoom,
+    onlineDelta30s,
+    tally.confusion_count,
+    classification,
+    timeProfile,
+    currentQuestionIndex,
+    questions,
+    exam?.started_at,
+  ]);
 
   /**
    * Fastest correct answer to show on the deck. While a question is open it has
@@ -1253,6 +1375,13 @@ export default function LiveExamControl() {
                     />
                   )}
 
+                  {/* B12 — creator side only. Hidden entirely at zero. */}
+                  <ConfusionCount count={tally.confusion_count ?? 0} />
+
+                  {/* A8 — the one sentence. Subscribes to the countdown itself so
+                      the page does not. */}
+                  <LiveCoachLine context={coachContext} />
+
                   {primaryAction()}
                 </div>
               </div>
@@ -1393,6 +1522,35 @@ export default function LiveExamControl() {
                         </div>
                       )}
 
+                    {/*
+                      B9 — the river, while the question is still open.
+                      Replaced by the full outcome panel the moment analytics land,
+                      so the two never compete for the same space.
+                    */}
+                    {!isReviewing && isTimerActive && liveTally.counts.length > 0 && (
+                      <div className="rounded-xl border border-border/60 bg-muted/25 p-4">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <InsightHeading>Answers landing</InsightHeading>
+                          <p className="text-xs tabular-nums text-muted-foreground">
+                            {currentResponseCount} of {inRoom}
+                          </p>
+                        </div>
+                        <AnswerRiver
+                          className="mt-3"
+                          counts={liveTally.counts}
+                          responders={currentResponseCount}
+                          roomSize={inRoom}
+                          isMulti={
+                            previewQuestion?.answer_type === "multi" ||
+                            previewQuestion?.answer_type === "multi-select"
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {/* B4 — the shape of the answer, named. */}
+                    <MisconceptionCallout classification={classification} />
+
                     {/* Outcome for whichever question is on screen */}
                     {previewAnalytics && (
                       <div className="rounded-xl border border-border/60 bg-muted/25 p-4">
@@ -1418,11 +1576,27 @@ export default function LiveExamControl() {
                           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Zap className="h-3.5 w-3.5 text-amber-500" />
                             Fastest correct:{" "}
-                            <span className="font-semibold text-foreground">{previewAnalytics.fastest_user_name}</span>
+                            <span className="font-semibold text-foreground">
+                              {/* Privacy mode stores a pseudonym here because this
+                                  row is broadcast to every student; the creator's
+                                  own deck resolves the real name from the id. */}
+                              {(previewAnalytics.fastest_user_id &&
+                                participantNames.get(previewAnalytics.fastest_user_id)) ||
+                                previewAnalytics.fastest_user_name}
+                            </span>
                             {previewAnalytics.fastest_time_ms
                               ? ` · ${(previewAnalytics.fastest_time_ms / 1000).toFixed(1)}s`
                               : ""}
                           </p>
+                        )}
+
+                        {/* B6 — right/wrong split by fast/slow. Two students who
+                            both answered wrong are two different problems, and an
+                            accuracy percentage renders them identical. */}
+                        {timeProfile && (
+                          <div className="mt-3">
+                            <TimeProfile profile={timeProfile} />
+                          </div>
                         )}
                       </div>
                     )}
