@@ -127,6 +127,17 @@ export function useFitText<T extends HTMLElement = HTMLDivElement>(
     return () => cancelAnimationFrame(raf);
   }, [token]);
 
+  /**
+   * Re-fit when the frame itself changes size — dragging the window to a
+   * projector, going fullscreen, a resolution switch.
+   *
+   * Keyed on `token` as well as the debounce, because the container is
+   * conditionally rendered: on the present screen it only exists while a
+   * question is on screen. With a constant dependency list this effect ran once,
+   * on a render where `containerRef.current` was still null, bailed, and never
+   * ran again — so the observer was never attached at all and the projector
+   * never re-fitted for the rest of the session.
+   */
   useEffect(() => {
     const box = containerRef.current;
     if (!box || typeof ResizeObserver === "undefined") return;
@@ -145,7 +156,7 @@ export function useFitText<T extends HTMLElement = HTMLDivElement>(
       if (timer !== null) clearTimeout(timer);
       observer.disconnect();
     };
-  }, [opts.resizeDebounceMs]);
+  }, [opts.resizeDebounceMs, token]);
 
   return { containerRef, contentRef, fontSizePx, measured };
 }

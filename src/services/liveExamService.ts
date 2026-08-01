@@ -829,8 +829,16 @@ export type LiveSessionSync = {
   online_count: number;
   joined_count: number;
   is_creator: boolean;
+  /**
+   * Withheld (null) while a question is still open, on the same terms
+   * get_my_live_responses withholds is_correct: a score that moves is the same
+   * information as a correctness flag, and two accounts could otherwise learn
+   * the right answer before the question closes.
+   */
   my_rank: number | null;
   my_total_correct: number | null;
+  /** False when the two fields above were withheld rather than genuinely null. */
+  score_visible: boolean;
   /** Creator only. */
   confusion_count: number | null;
   /** Creator only. */

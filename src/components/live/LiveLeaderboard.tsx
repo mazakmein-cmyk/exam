@@ -114,7 +114,16 @@ function LiveLeaderboard({
     <div className={`space-y-0.5 ${className}`}>
       {entries.map((p, idx) => (
         <LeaderboardRow
-          key={p.user_id}
+          /**
+           * Keyed on the participant row id, not user_id.
+           *
+           * Under privacy mode the masked view returns NULL for everyone else's
+           * user_id — it is the join key back to a real identity, so masking the
+           * name without masking it achieved nothing. `id` is unique, always
+           * present, and joins to nothing a student can read. The isMe check
+           * below still works because the caller keeps their own user_id.
+           */
+          key={p.id}
           participant={p}
           position={idx + 1}
           isMe={!!currentUserId && p.user_id === currentUserId}

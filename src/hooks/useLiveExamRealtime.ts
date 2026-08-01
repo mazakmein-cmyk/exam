@@ -196,15 +196,20 @@ export function useLiveExamRealtime(
           status === "CLOSED"
         ) {
           dropPending = true;
-          // A channel that has never once subscribed is not a blip — it is a
-          // client that cannot have a push lane at all (connection cap, proxy
-          // blocking websockets). Say so, so the caller can start polling.
-          if (!hadSubscribed) {
-            consecutiveFailures += 1;
-            if (consecutiveFailures >= FAILURES_BEFORE_FALLBACK && !fallbackAnnounced) {
-              fallbackAnnounced = true;
-              callbacksRef.current.onSubscribeFailure?.();
-            }
+          // Report the loss whether or not this channel ever worked.
+          //
+          // The original version only reported a channel that had NEVER
+          // subscribed, on the theory that an established channel would
+          // reconnect. But a socket killed mid-session (laptop sleeps, wifi
+          // switches, the connection cap is reached by later joiners) leaves the
+          // caller still believing it is on the push lane — so it keeps polling
+          // at the slow keep-alive and the student silently stops learning about
+          // unlocks. Downgrading on any drop costs one extra sync if the channel
+          // comes straight back, and rescues the session if it does not.
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= FAILURES_BEFORE_FALLBACK && !fallbackAnnounced) {
+            fallbackAnnounced = true;
+            callbacksRef.current.onSubscribeFailure?.();
           }
           scheduleResubscribe();
         }

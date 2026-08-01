@@ -249,6 +249,10 @@ export default function LiveExamStudent() {
   // Realtime Data — both maps are keyed by question ORDINAL (array index /
   // question_ordinal), NOT question id, so they survive language switches.
   const [analytics, setAnalytics] = useState<Map<number, LiveQuestionAnalytics>>(new Map());
+  // Read by the timer-expiry fallback, which is memoised with an empty dep list
+  // and so cannot see the state value.
+  const analyticsRef = useRef<Map<number, LiveQuestionAnalytics>>(new Map());
+  analyticsRef.current = analytics;
   const [responses, setResponses] = useState<Map<number, LiveResponse>>(new Map());
   // Revealed correct answers, keyed by live_question_id (all languages included).
   const [revealedAnswers, setRevealedAnswers] = useState<Map<string, any>>(new Map());
@@ -483,11 +487,17 @@ export default function LiveExamStudent() {
       setMobilePane("question");
       playUnlockDing();
       toast({ title: "New Question Unlocked!" });
-      // The previous question's timer is definitively over — pull its
-      // reveal and server grade. Twice, because the server holds the answer
-      // back through a 2s grace window.
+      // The previous question's timer is definitively over — pull its reveal and
+      // server grade. Twice, because the server holds the answer back through a
+      // 2s grace window.
+      //
+      // The retry is jittered rather than a flat 2500ms: every student in the
+      // room is triggered by the same unlock at the same instant, so a fixed
+      // delay keeps the whole class synchronised and turns the second fetch into
+      // the same spike as the first. refreshReveal is two requests, so an
+      // unjittered class of 500 is 1000 simultaneous ones.
       refreshReveal();
-      window.setTimeout(refreshReveal, 2500);
+      window.setTimeout(refreshReveal, 2500 + Math.random() * LEADERBOARD_SPREAD_MS);
     },
     onRewind: (index) => {
       // The creator took an unlock back. Anything this page had already
@@ -554,10 +564,34 @@ export default function LiveExamStudent() {
 
   // Stable across renders: refreshReveal reads the exam through a ref, so a
   // handler captured on the first render is still correct on the twentieth.
-  const handleTimerExpired = useCallback(() => {
-    // Server reveals at +2s grace, so retry shortly after the first attempt.
+  const handleTimerExpired = useCallback((expiredIndex: number) => {
+    // Server reveals at +2s grace, so retry shortly after. Jittered: the whole
+    // room's timers expire on the same tick.
     refreshReveal();
-    window.setTimeout(refreshReveal, 2500);
+    window.setTimeout(refreshReveal, 2500 + Math.random() * LEADERBOARD_SPREAD_MS);
+
+    /**
+     * Analytics fallback for the pull lane.
+     *
+     * `onAnalytics` fires from the realtime binding only. A student who could not
+     * hold a websocket — the exact population the poll lane exists for, past the
+     * plan's concurrent-connection cap — therefore never received a class
+     * distribution and watched a frozen leaderboard for the whole session.
+     *
+     * Written as a late fallback rather than an unconditional fetch: a push-lane
+     * student already has the row within ~2.5s, so this only fires for the
+     * students who genuinely missed it. Jittered for the same reason the
+     * leaderboard refresh is — every student's timer expires on the same tick.
+     */
+    window.setTimeout(() => {
+      const ex = examRef.current;
+      if (!ex) return;
+      if (analyticsRef.current.has(expiredIndex)) return; // push lane already delivered it
+      void fetchAllAnalytics(ex.id)
+        .then((rows) => setAnalytics(toOrdinalAnalyticsMap(rows)))
+        .catch(() => {});
+      scheduleLeaderboardRefresh(ex.id);
+    }, 4000 + Math.random() * LEADERBOARD_SPREAD_MS);
   }, []);
 
   useLiveTimerExpiry(handleTimerExpired);
@@ -923,7 +957,15 @@ export default function LiveExamStudent() {
     [questions, currentQuestionIndex, responses, revealedAnswers, isLive, sectionNameById]
   );
 
-  const handleChipClick = (item: RailItem) => {
+  /**
+   * Stable, so QuestionRail's memo survives.
+   *
+   * The Phase 0 render pass stabilised the control room's rail callback and the
+   * student's `self` object but missed this one, which is a plain function body
+   * and therefore a new prop identity on every render — defeating the memo for
+   * every chip in the exam.
+   */
+  const handleChipClick = useCallback((item: RailItem) => {
     const idx = item.index;
     const st = item.status;
     if (st === "locked") {
@@ -942,7 +984,7 @@ export default function LiveExamStudent() {
     window.setTimeout(() => {
       document.getElementById(`live-prev-q-${q.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 80);
-  };
+  }, [questions, toast]);
 
   // ─── Render: Loading & Errors ──────────────────────────────
 

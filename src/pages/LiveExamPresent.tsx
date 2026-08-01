@@ -138,12 +138,44 @@ export default function LiveExamPresent() {
   // ─── Q2: reopen the cockpit from the wall ──────────────────
 
   const controlUrl = `/live-exam/${creatorId}/${liveExamId}/control`;
+
+  /**
+   * Optimistic settings preview.
+   *
+   * The control room posts a `config` intent when a projector toggle changes, so
+   * the wall reacts on the same keystroke rather than a round trip later. The
+   * database row is still the source of truth — the next sync overwrites this —
+   * but without it a creator flicking a switch while casting sees nothing happen
+   * for a beat and reaches for it again.
+   *
+   * Until now nothing consumed the intent, so the instant preview the control
+   * room's comment described did not exist.
+   */
+  const [configPreview, setConfigPreview] = useState<{
+    showLeaderboard?: boolean;
+    showRiver?: boolean;
+  }>({});
+
   const { peerOpen, openPeer } = usePeerWindow(
     liveExamId,
     "present",
     controlUrl,
-    controlWindowName(liveExamId || "")
+    controlWindowName(liveExamId || ""),
+    (intent) => {
+      if (intent.t === "config") {
+        setConfigPreview((cur) => ({
+          showLeaderboard: intent.showLeaderboard ?? cur.showLeaderboard,
+          showRiver: intent.showRiver ?? cur.showRiver,
+        }));
+      }
+    }
   );
+
+  // Once the row itself arrives, the preview has served its purpose. Clearing it
+  // keeps a stale optimistic value from outliving a change made elsewhere.
+  useEffect(() => {
+    setConfigPreview({});
+  }, [session.presentShowLeaderboard, session.presentShowRiver]);
 
   // Show the rescue affordance on any movement, then let it fade. A creator can
   // always find it; a photograph of the wall almost never contains it.
@@ -173,7 +205,9 @@ export default function LiveExamPresent() {
 
   const optionCount = Array.isArray(question?.options) ? question!.options.length : 0;
   const showLeaderboard =
-    session.presentShowLeaderboard &&
+    (configPreview.showLeaderboard ?? session.presentShowLeaderboard) &&
+    // The projector is what the room sees, so it obeys the leaderboard-visibility
+    // setting exactly as a student would: 'private' hides it here too.
     session.leaderboardVisibility === "full" &&
     (isRevealing || isEnded) &&
     leaderboard.length > 0;
@@ -319,7 +353,10 @@ export default function LiveExamPresent() {
               </p>
               <ol className="mt-3 space-y-1.5">
                 {leaderboard.slice(0, 8).map((p, i) => (
-                  <li key={p.user_id} className="flex items-center gap-3 text-white/85">
+                  // p.id, not p.user_id: this screen authenticates as the creator,
+                  // who is not a participant, so under privacy mode every row's
+                  // user_id comes back NULL and every key would collide.
+                  <li key={p.id} className="flex items-center gap-3 text-white/85">
                     <span className="w-7 shrink-0 text-right text-lg font-bold tabular-nums text-white/40">
                       {p.rank ?? i + 1}
                     </span>

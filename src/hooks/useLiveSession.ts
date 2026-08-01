@@ -84,6 +84,16 @@ export type LiveSessionState = {
   loading: boolean;
 };
 
+/**
+ * Which lane an observation arrived on.
+ *
+ * Push events are delivered in order on a single channel and are current by
+ * definition, so they are always applied. Poll replies are not: `refresh()`
+ * deliberately bypasses the in-flight guard, so several syncs are routinely
+ * outstanding and can land out of order.
+ */
+type ObservationLane = "push" | "poll";
+
 const INITIAL_STATE: LiveSessionState = {
   status: null,
   currentQuestionIndex: -1,
@@ -174,6 +184,25 @@ export function useLiveSession(
   // `scheduleNext` exists below. The sync loop reaches its scheduler through
   // this ref so a memoised callback can never hold a stale one.
   const scheduleNextRef = useRef<() => void>(() => {});
+  /**
+   * Server timestamp of the newest observation applied so far.
+   *
+   * Several syncs are routinely outstanding at once, by design: `refresh()`
+   * deliberately bypasses the in-flight guard (`!opts?.immediate`) so an action
+   * whose result must be reflected now is never queued behind a keep-alive. The
+   * cost is that replies can land out of order.
+   *
+   * Without a watermark, a late reply is applied as though it were the present.
+   * The damaging case is a sync dispatched just before an unlock and replying
+   * just after one has been applied: it carries the OLD index, so the spine reads
+   * it as an index decrease and fires onRewind — whose student handler clears the
+   * selected answer and purges the reveal it fetched moments earlier.
+   *
+   * The guard keys on TIME, not on direction. Suppressing decreases outright
+   * would have been simpler and would have broken A10, where an index going
+   * backwards is the entire feature.
+   */
+  const observedAtRef = useRef<number>(0);
 
   /**
    * Fold an observation into state and fire whatever transitions it implies.
@@ -203,8 +232,18 @@ export function useLiveSession(
       myTotalCorrect?: number | null;
       confusionCount?: number | null;
       openResponseCount?: number | null;
-    }) => {
+      /**
+       * False when the server withheld rank/score because a question is still
+       * open. The previous values are kept rather than nulled, so the student
+       * sees a stale score instead of a dash appearing mid-question.
+       */
+      scoreVisible?: boolean;
+    }, lane: ObservationLane, stampMs: number) => {
       if (cleanedUpRef.current) return;
+
+      // Stale poll reply: a newer observation has already been applied.
+      if (lane === "poll" && stampMs > 0 && stampMs < observedAtRef.current) return;
+      if (stampMs > observedAtRef.current) observedAtRef.current = stampMs;
 
       const prev = prevRef.current;
       const cb = optionsRef.current;
@@ -256,9 +295,17 @@ export function useLiveSession(
           totalQuestions: next.totalQuestions,
           onlineCount: next.onlineCount ?? cur.onlineCount,
           joinedCount: next.joinedCount ?? cur.joinedCount,
-          myRank: next.myRank !== undefined ? next.myRank : cur.myRank,
+          // Only overwritten when the server says the score is releasable. While
+          // a question is open it withholds both, and keeping the last known
+          // values is the honest render — a score that blanks out mid-question
+          // reads as "you lost your points".
+          myRank: next.scoreVisible === false ? cur.myRank : next.myRank !== undefined ? next.myRank : cur.myRank,
           myTotalCorrect:
-            next.myTotalCorrect !== undefined ? next.myTotalCorrect : cur.myTotalCorrect,
+            next.scoreVisible === false
+              ? cur.myTotalCorrect
+              : next.myTotalCorrect !== undefined
+                ? next.myTotalCorrect
+                : cur.myTotalCorrect,
           confusionCount:
             next.confusionCount !== undefined ? next.confusionCount : cur.confusionCount,
           openResponseCount:
@@ -314,7 +361,8 @@ export function useLiveSession(
           myTotalCorrect: sync.my_total_correct ?? null,
           confusionCount: sync.confusion_count ?? null,
           openResponseCount: sync.open_response_count ?? null,
-        });
+          scoreVisible: sync.score_visible !== false,
+        }, "poll", new Date(sync.server_now).getTime() || 0);
       } catch {
         // Transient by assumption: the next attempt backs off. A hard failure
         // (deleted exam, revoked access) shows up to the user through the
@@ -404,7 +452,7 @@ export function useLiveSession(
         presentShowRiver: exam.present_show_river !== false,
         celebrateSeq: exam.celebrate_seq ?? 0,
         totalQuestions: exam.total_questions ?? 0,
-      });
+      }, "push", clockRef.current.serverNow());
       // An unlock changes what the creator's counters mean; get fresh ones
       // without waiting out the idle interval.
       if (role === "creator") refresh();

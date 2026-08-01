@@ -246,16 +246,27 @@ export default function LiveExamControl() {
       allAnalytics.forEach(a => analyticsMap.set(a.live_question_id, a));
       setAnalytics(analyticsMap);
 
-      // Load leaderboard if exam is live or ended. The BASE table, not the
-      // masked view: this is the one screen allowed to show real names.
+      // The BASE table, not the masked view: this is the one screen allowed to
+      // show real names.
       if (examData.status === "live" || examData.status === "ended") {
-        const [lb, names] = await Promise.all([
-          fetchLeaderboard(liveExamId, 20),
-          fetchParticipantNames(liveExamId).catch(() => new Map<string, string>()),
-        ]);
+        const lb = await fetchLeaderboard(liveExamId, 20);
         setLeaderboard(lb);
-        setParticipantNames(names);
       }
+
+      /**
+       * The name map is loaded for EVERY status, not only live/ended.
+       *
+       * It used to sit inside the live/ended branch, and `loadData` runs once on
+       * mount — but the normal route into this page is editor → control room
+       * while the exam is still `published`. So on the path a creator actually
+       * takes, the map was never populated, and privacy mode showed the creator
+       * pseudonyms on their own private deck: the exact opposite of the design,
+       * which is that the wall is anonymous and the cockpit is not.
+       */
+      const names = await fetchParticipantNames(liveExamId).catch(
+        () => new Map<string, string>()
+      );
+      setParticipantNames(names);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -292,10 +303,13 @@ export default function LiveExamControl() {
   const session = useLiveSession(liveExamId, {
     role: "creator",
     onUnlock: () => {
-      // A second control tab, or the projector, learns about the unlock here
-      // rather than from its own click. Nothing to do beyond letting the
-      // derived state below recompute — but the preview must snap back to the
-      // live question, which the currentQuestionIndex effect handles.
+      // A late joiner answering fastest would otherwise show as a pseudonym on
+      // the creator's own deck, because the map is only fetched on mount.
+      if (liveExamId) {
+        void fetchParticipantNames(liveExamId)
+          .then(setParticipantNames)
+          .catch(() => {});
+      }
     },
     onEnded: () => {
       void refreshLeaderboard();
