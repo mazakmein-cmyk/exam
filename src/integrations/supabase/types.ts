@@ -989,6 +989,14 @@ export type Database = {
         Args: { p_live_exam_id: string }
         Returns: number
       }
+      reorder_live_section_questions: {
+        Args: { p_section_id: string; p_ordered_ids: string[] }
+        Returns: undefined
+      }
+      renumber_live_global_indexes: {
+        Args: { p_live_exam_id: string }
+        Returns: undefined
+      }
       live_refresh_fastest_names: {
         Args: { p_live_exam_id: string }
         Returns: undefined

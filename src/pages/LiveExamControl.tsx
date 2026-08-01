@@ -72,6 +72,7 @@ import {
   CheckCircle2,
   ListChecks,
   MonitorPlay,
+  FlaskConical,
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import SEO from "@/components/SEO";
@@ -134,6 +135,9 @@ import {
 } from "@/hooks/useOpenQuestionTally";
 import { useLiveTimerExpiry, useLiveTimerPhase, useLiveTimerTarget } from "@/lib/live/timerStore";
 import { usePeerWindow } from "@/hooks/usePeerWindow";
+import { useRehearsal, REHEARSAL_COHORT, type RehearsalSpeed } from "@/hooks/useRehearsal";
+import ScheduledCountdown from "@/components/live/ScheduledCountdown";
+import ScheduleControl from "@/components/live/ScheduleControl";
 import { presentWindowName } from "@/lib/live/presentChannel";
 
 /** Is this option (index) part of the stored correct answer? */
@@ -355,9 +359,34 @@ export default function LiveExamControl() {
     },
   });
 
+  // ─── Rehearsal (C1) ───────────────────────────────────────
+
+  /**
+   * A dress rehearsal in an empty theatre.
+   *
+   * The driver presents the same shape as the live session, and every value the
+   * deck below reads is taken from whichever source is active. That is deliberate:
+   * a rehearsal-specific rendering path would defeat the point, because what a
+   * creator practises has to be the thing they will later use.
+   *
+   * The driver reaches no network at all — see hooks/useRehearsal.ts.
+   */
+  const rehearsal = useRehearsal(
+    useMemo(
+      () =>
+        questions.map((q) => ({
+          id: q.id,
+          time_seconds: q.time_seconds,
+          options: q.options,
+          correct_answer: q.correct_answer,
+        })),
+      [questions]
+    )
+  );
+
   // ─── Derived state ────────────────────────────────────────
 
-  const status = session.status ?? exam?.status ?? null;
+  const status = rehearsal.active ? "live" : session.status ?? exam?.status ?? null;
   /**
    * Who is actually here, from the presence heartbeat.
    *
@@ -366,22 +395,31 @@ export default function LiveExamControl() {
    * are in the room". (The old `is_active` column looked like this number but
    * was never written by any client, so it always meant "ever joined".)
    */
-  const inRoom = session.onlineCount;
-  const currentQuestionIndex = session.currentQuestionIndex;
+  const inRoom = rehearsal.active ? rehearsal.onlineCount : session.onlineCount;
+  const currentQuestionIndex = rehearsal.active
+    ? rehearsal.index
+    : session.currentQuestionIndex;
+  /** The open question's unlock instant, from whichever source is driving. */
+  const deckUnlockedAt = rehearsal.active ? rehearsal.unlockedAt : session.unlockedAt;
+  const deckExtraSeconds = rehearsal.active ? 0 : session.extraSeconds;
   const currentQuestion = currentQuestionIndex >= 0 ? questions[currentQuestionIndex] : null;
   const isLive = status === "live";
   const isEnded = status === "ended";
   const hasStarted = currentQuestionIndex >= 0;
-  const hasOpenQuestion = isLive && hasStarted && !!session.unlockedAt;
+  const hasOpenQuestion = isLive && hasStarted && !!deckUnlockedAt;
 
   // Point the shared countdown at the open question. The arithmetic lives in
   // lib/live/deadline.js, shared with the SQL function of the same name, so
   // this page never spells out a deadline.
   useLiveTimerTarget({
     index: currentQuestionIndex,
-    unlockedAt: session.unlockedAt,
-    extraSeconds: session.extraSeconds,
-    timeSeconds: currentQuestion?.time_seconds ?? null,
+    unlockedAt: deckUnlockedAt,
+    extraSeconds: deckExtraSeconds,
+    // A rehearsal at 10x compresses the clock, which is the whole point of a
+    // speed control: a twenty-question run rehearses in three minutes.
+    timeSeconds: rehearsal.active
+      ? rehearsal.scaledSeconds
+      : currentQuestion?.time_seconds ?? null,
     active: isLive,
   });
 
@@ -402,18 +440,41 @@ export default function LiveExamControl() {
     !collectingFinal &&
     currentQuestionIndex < questions.length - 1;
 
-  const currentAnalytics = currentQuestion ? analytics.get(currentQuestion.id) : null;
+  const currentAnalytics = rehearsal.active
+    ? (rehearsal.analytics.get(currentQuestionIndex) as any) ?? null
+    : currentQuestion
+      ? analytics.get(currentQuestion.id)
+      : null;
 
   // One poll carries the answered count, the option tally and the confusion
   // count. It replaced a realtime subscription that sent this single browser one
   // message per student per question. Fast while answers can still arrive
   // (including through the grace window), slow once the numbers are settled and
   // the creator is discussing the reveal.
-  const { tally, refresh: refreshTally } = useOpenQuestionTally(
+  const { tally: liveTallyRaw, refresh: refreshTally } = useOpenQuestionTally(
     liveExamId,
-    hasOpenQuestion,
+    // Not polled at all during a rehearsal: there is nothing on the server to ask
+    // about, and asking would be the one place a rehearsal touched the network.
+    hasOpenQuestion && !rehearsal.active,
     isTimerActive || collectingFinal ? TALLY_POLL_MS : TALLY_IDLE_POLL_MS
   );
+
+  /** The open question's live numbers, from whichever source is driving. */
+  const tally = useMemo(
+    () =>
+      rehearsal.active
+        ? {
+            live_question_id: currentQuestion?.id ?? null,
+            response_count: rehearsal.answeredCount,
+            confusion_count: rehearsal.confusionCount,
+            option_tally: rehearsal.optionTally,
+            first_response_at: null,
+            server_now: "",
+          }
+        : liveTallyRaw,
+    [rehearsal.active, rehearsal.answeredCount, rehearsal.confusionCount, rehearsal.optionTally, currentQuestion, liveTallyRaw]
+  );
+
   /** Guarded on the id so a just-closed question's count never bleeds forward. */
   const currentResponseCount =
     currentQuestion && tally.live_question_id === currentQuestion.id ? tally.response_count : 0;
@@ -894,6 +955,49 @@ export default function LiveExamControl() {
     }
   }, [liveExamId, controlPending, postToPresent, reportControlError]);
 
+  /** C10. Same save path as the session settings, so both share one pending flag. */
+  const handleScheduleChange = useCallback(
+    async (patch: { scheduled_start_at?: string | null; auto_start?: boolean }) => {
+      if (!liveExamId) return;
+      setSavingSettings(true);
+      try {
+        await updateLiveExam(liveExamId, patch);
+        session.refresh();
+      } catch (error: any) {
+        toast({
+          title: "Couldn't save the start time",
+          description: error.message,
+          variant: "destructive",
+        });
+      } finally {
+        setSavingSettings(false);
+      }
+    },
+    [liveExamId, session, toast]
+  );
+
+  /**
+   * C10 auto-start.
+   *
+   * Deliberately driven from the creator's own control room rather than a cron or
+   * an edge function. That is partly a plan constraint, but it is also the honest
+   * semantic: a session should not begin while the person running it is still
+   * plugging in the projector. The guard chain matters — published, scheduled,
+   * opted in, time reached, and not already starting.
+   */
+  const autoStartFiredRef = useRef(false);
+  useEffect(() => {
+    if (autoStartFiredRef.current) return;
+    if (!session.autoStart || !session.scheduledStartAt) return;
+    if (session.status !== "published") return;
+    if (session.serverNow() < new Date(session.scheduledStartAt).getTime()) return;
+
+    autoStartFiredRef.current = true;
+    void handleStartLive();
+    // handleStartLive is stable enough for this one-shot; the ref is the real guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.autoStart, session.scheduledStartAt, session.status, session.onlineCount]);
+
   /**
    * Stable so the memoised rail is not re-rendered by the answered-count poll.
    * An inline arrow here would give QuestionRail a new prop identity roughly
@@ -928,6 +1032,12 @@ export default function LiveExamControl() {
   const unlockingRef = useRef(false);
 
   const handleUnlockNext = async () => {
+    // In a rehearsal the same button drives the simulated cohort, so the creator
+    // practises the control they will actually use rather than a mock of it.
+    if (rehearsal.active) {
+      rehearsal.unlockNext();
+      return;
+    }
     if (!liveExamId || !exam) return;
     // The space bar makes a double-fire cheap to trigger; the server would
     // happily advance twice and skip a question in front of the whole class.
@@ -1142,19 +1252,60 @@ export default function LiveExamControl() {
             </div>
           </div>
 
+          {/* C10 — the decision belongs here, on the "am I about to run this?"
+              screen, not buried in the question editor. */}
+          <ScheduleControl
+            scheduledStartAt={session.scheduledStartAt}
+            autoStart={session.autoStart}
+            onChange={handleScheduleChange}
+            saving={savingSettings}
+          />
+
+          {/* A9 — only when a start time was actually set. */}
+          {session.scheduledStartAt && (
+            <ScheduledCountdown
+              scheduledStartAt={session.scheduledStartAt}
+              serverNow={session.serverNow}
+            />
+          )}
+
           <div className="rounded-2xl border border-primary/25 bg-primary/[0.05] p-5">
             <p className="text-sm text-muted-foreground">
               Going live opens the waiting room. Nothing is shown to students until you unlock the first question — you
               control the pace throughout.
             </p>
-            <Button
-              onClick={() => setShowStartDialog(true)}
-              size="lg"
-              className="mt-4 h-12 w-full bg-rose-500 text-white shadow-lg shadow-rose-500/25 hover:bg-rose-600 sm:w-auto sm:px-10"
-            >
-              <Play className="mr-2 h-5 w-5" />
-              Go Live
-            </Button>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Button
+                onClick={() => setShowStartDialog(true)}
+                size="lg"
+                className="h-12 bg-rose-500 text-white shadow-lg shadow-rose-500/25 hover:bg-rose-600 sm:px-10"
+              >
+                <Play className="mr-2 h-5 w-5" />
+                Go Live
+              </Button>
+
+              {/*
+                C1. Beside Go Live, not buried in a menu — its entire purpose is to
+                be the thing a nervous creator reaches for INSTEAD of going live for
+                the first time in front of a class. It is also the best onboarding
+                available: nobody reads a help page, everybody presses "Rehearse".
+              */}
+              <Button
+                variant="outline"
+                size="lg"
+                className="h-12"
+                disabled={questions.length === 0}
+                onClick={() => rehearsal.start(5)}
+                title="Run the whole exam against a simulated class. Nothing is recorded."
+              >
+                <FlaskConical className="mr-2 h-5 w-5" />
+                Rehearse
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              A rehearsal runs the real control room against {REHEARSAL_COHORT} simulated
+              students. No one is notified, and nothing is saved.
+            </p>
           </div>
 
           <AlertDialog open={showStartDialog} onOpenChange={setShowStartDialog}>
@@ -1283,7 +1434,15 @@ export default function LiveExamControl() {
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            {isLive ? (
+            {rehearsal.active ? (
+              /* Unmistakable, and permanent for the duration. A creator must never
+                 be able to mistake a rehearsal for a live session — or, worse, a
+                 live session for a rehearsal. */
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-amber-600">
+                <FlaskConical className="h-3 w-3" />
+                Rehearsal · nothing is saved
+              </span>
+            ) : isLive ? (
               <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-rose-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-rose-600">
                 <span className="live-dot h-1.5 w-1.5 rounded-full bg-rose-500" />
                 On air
@@ -1344,11 +1503,38 @@ export default function LiveExamControl() {
               saving={savingSettings}
             />
 
-            {isLive && (
-              <Button variant="destructive" size="sm" className="h-8" onClick={() => setShowEndDialog(true)}>
-                <Square className="h-4 w-4 sm:mr-1.5" />
-                <span className="hidden sm:inline">End</span>
-              </Button>
+            {rehearsal.active ? (
+              <>
+                {/* Speed is the difference between rehearsing a 20-question exam
+                    and sitting through one. */}
+                <div className="flex items-center overflow-hidden rounded-lg border border-border/70">
+                  {([1, 5, 10] as RehearsalSpeed[]).map((sp) => (
+                    <button
+                      key={sp}
+                      type="button"
+                      onClick={() => rehearsal.setSpeed(sp)}
+                      className={`px-2 py-1 text-[11px] font-bold tabular-nums transition-colors ${
+                        rehearsal.speed === sp
+                          ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {sp}×
+                    </button>
+                  ))}
+                </div>
+                <Button variant="outline" size="sm" className="h-8" onClick={rehearsal.stop}>
+                  <Square className="h-4 w-4 sm:mr-1.5" />
+                  <span className="hidden sm:inline">Exit rehearsal</span>
+                </Button>
+              </>
+            ) : (
+              isLive && (
+                <Button variant="destructive" size="sm" className="h-8" onClick={() => setShowEndDialog(true)}>
+                  <Square className="h-4 w-4 sm:mr-1.5" />
+                  <span className="hidden sm:inline">End</span>
+                </Button>
+              )
             )}
           </div>
         </div>

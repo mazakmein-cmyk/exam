@@ -513,6 +513,43 @@ export async function syncLiveQuestionSectionLabels(sectionId: string, label: st
  * Each language is walked with the same section-group order and q_no ordering,
  * so sibling questions keep matching global_index values across languages.
  */
+/**
+ * C7: set the order of one section's questions, atomically.
+ *
+ * Replaces the client-side loop below for the reorder path. Play order IS the
+ * exam, so a half-applied renumber is corruption — and the loop version could
+ * fail on request 200 of 400 and leave an order matching neither the old nor the
+ * new. It also propagates to every language sibling in the same transaction:
+ * moving the English Q4 without the Hindi Q4 gives two languages whose ordinal 3
+ * is a different question, and everything keyed on ordinal then attaches to the
+ * wrong one.
+ */
+export async function reorderLiveSectionQuestions(
+  sectionId: string,
+  orderedIds: string[]
+): Promise<void> {
+  const { error } = await supabase.rpc("reorder_live_section_questions", {
+    p_section_id: sectionId,
+    p_ordered_ids: orderedIds,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Re-derive play order after a SECTION move.
+ *
+ * Kept as a client call because it is invoked from the section-reorder path,
+ * which has no ordered-id list to pass — but the work now happens in one
+ * server-side statement rather than one round trip per question.
+ */
+export async function renumberLiveGlobalIndexesRpc(examId: string): Promise<void> {
+  const { error } = await supabase.rpc("renumber_live_global_indexes", {
+    p_live_exam_id: examId,
+  });
+  if (error) throw error;
+}
+
+/** @deprecated Superseded by renumberLiveGlobalIndexesRpc; kept for un-migrated callers. */
 export async function renumberLiveGlobalIndexes(examId: string): Promise<void> {
   const sections = await fetchLiveSections(examId); // ordered by sort_order
   if (sections.length === 0) return;

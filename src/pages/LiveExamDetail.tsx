@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import SortableQuestionRow from "@/components/live/SortableQuestionRow";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ArrowLeft, Play, Save, Trash2, Edit, Plus, Clock, MoreVertical, Share2, Globe, Radio, Check, ChevronDown, ChevronUp, Eye, FileText, Sparkles, Copy, Layers, Lock, FileJson, ListChecks, HelpCircle, AlertCircle, Image as ImageIcon, Upload, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +74,8 @@ import {
   updateLiveSection,
   syncLiveQuestionSectionLabels,
   renumberLiveGlobalIndexes,
+  renumberLiveGlobalIndexesRpc,
+  reorderLiveSectionQuestions,
   fetchLiveQuestionGroupIds,
   deleteLiveQuestionsInSections,
   deleteLiveQuestionsByGroupIds,
@@ -357,6 +360,52 @@ export default function LiveExamDetail() {
       handleLocalUpdateSection(sectionId, { name });
     } catch (error: any) {
       toast({ title: "Error renaming section", description: error.message, variant: "destructive" });
+    }
+  };
+
+  /**
+   * C7. Reorder questions inside one section.
+   *
+   * Optimistic, then atomic. The old client-side renumber issued one UPDATE per
+   * question — up to 400 sequential round trips on a large bilingual exam — and a
+   * failure halfway left an order matching neither the old nor the new. Play order
+   * IS the exam, so a half-applied reorder is corruption. The RPC does the q_no
+   * rewrite, the language-sibling propagation and the global renumber in one
+   * transaction.
+   */
+  const canReorder = exam?.status !== "live" && exam?.status !== "ended";
+
+  const handleQuestionDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !activeSection) return;
+    if (!canReorder) {
+      toast({
+        title: "Cannot reorder",
+        description: "Questions can't be reordered once the exam has gone live.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const oldIndex = questions.findIndex((q) => q.id === active.id);
+    const newIndex = questions.findIndex((q) => q.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const previous = questions;
+    const next = arrayMove(questions, oldIndex, newIndex);
+    // Renumber locally so the list does not visibly snap back before the save.
+    setQuestions(next.map((q, i) => ({ ...q, q_no: i + 1 })));
+
+    try {
+      await reorderLiveSectionQuestions(activeSection.id, next.map((q) => q.id));
+    } catch (error: any) {
+      // Rollback: a wrong order shown as if saved is worse than a visible failure.
+      setQuestions(previous);
+      toast({
+        title: "Couldn't save the new order",
+        description: error.message,
+        variant: "destructive",
+      });
     }
   };
 
@@ -1847,7 +1896,17 @@ export default function LiveExamDetail() {
                     <p className="text-xs text-muted-foreground mt-1">{activeSection ? "Snip from a PDF or add one manually below." : "Please create a section first to start adding questions."}</p>
                   </div>
                 ) : (
-                  questions.map((q) => {
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleQuestionDragEnd}
+                  >
+                    <SortableContext
+                      items={questions.map((q) => q.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="group/qlist space-y-3">
+                        {questions.map((q) => {
                     const isExpanded = expandedQuestionId === q.id;
                     const isBeingEdited = editingQuestionId === q.id;
                     const questionErrors = getQuestionErrors(q);
@@ -1858,9 +1917,10 @@ export default function LiveExamDetail() {
                     const hasImage = questionImages.length > 0 || /<img\b/i.test(q.text || "");
                     const plainText = (q.text || "").replace(/<img[^>]*>/g, "").replace(/<[^>]+>/g, " ").trim();
                     return (
-                      <div
+                      <SortableQuestionRow
                         key={q.id}
                         id={q.id}
+                        disabled={!canReorder}
                         className={`border rounded-xl bg-card transition-all hover:shadow-sm ${
                           hasError
                             ? "border-destructive/40 bg-destructive/[0.02]"
@@ -2045,9 +2105,12 @@ export default function LiveExamDetail() {
                             </div>
                           </div>
                         )}
-                      </div>
+                      </SortableQuestionRow>
                     );
-                  })
+                  })}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
                 )}
               </CardContent>
             )}

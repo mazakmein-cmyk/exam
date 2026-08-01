@@ -53,6 +53,7 @@ import LiveQuestionBody, { questionPreviewText } from "@/components/live/LiveQue
 import LiveOption, { optionLetter, type OptionVisual } from "@/components/live/LiveOption";
 import LiveLeaderboard from "@/components/live/LiveLeaderboard";
 import ConfusionButton from "@/components/live/ConfusionButton";
+import ScheduledCountdown from "@/components/live/ScheduledCountdown";
 import { fireCelebration, shouldCelebrate } from "@/lib/live/celebrate";
 import QuestionRail, { RailLegend, type ChipStatus, type RailItem } from "@/components/live/QuestionRail";
 import { LiveTimerBar, LiveTimerChip } from "@/components/live/LiveTimer";
@@ -1221,13 +1222,31 @@ export default function LiveExamStudent() {
             </div>
           )}
 
+          {/*
+            A9. Only when a start time was actually set — otherwise the honest
+            answer really is "we don't know when". An open-ended wait is what makes
+            students ask out loud, repeatedly; a number they can watch settles the
+            room and turns waiting into anticipation.
+          */}
+          {session.scheduledStartAt && (
+            <ScheduledCountdown
+              scheduledStartAt={session.scheduledStartAt}
+              serverNow={session.serverNow}
+              className="w-full"
+            />
+          )}
+
           <div className="flex flex-col items-center gap-3 pt-2">
             <div className="flex gap-1.5">
               <span className="h-2 w-2 animate-bounce rounded-full bg-primary" style={{ animationDelay: "0ms" }} />
               <span className="h-2 w-2 animate-bounce rounded-full bg-primary" style={{ animationDelay: "150ms" }} />
               <span className="h-2 w-2 animate-bounce rounded-full bg-primary" style={{ animationDelay: "300ms" }} />
             </div>
-            <p className="text-sm text-muted-foreground">Waiting for your teacher to start…</p>
+            <p className="text-sm text-muted-foreground">
+              {session.scheduledStartAt
+                ? "You're in — keep this tab open."
+                : "Waiting for your teacher to start…"}
+            </p>
           </div>
         </div>
       </div>

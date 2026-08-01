@@ -40,6 +40,7 @@ import AnswerRiver from "@/components/live/AnswerRiver";
 import { useOpenQuestionTally, TALLY_POLL_MS } from "@/hooks/useOpenQuestionTally";
 import { tallyOptions } from "@/lib/live/optionTally.js";
 import { MomentBanner } from "@/components/live/MomentCard";
+import ScheduledCountdown from "@/components/live/ScheduledCountdown";
 import { selectMoment } from "@/lib/live/moments.js";
 import { fireCelebration, shouldCelebrate } from "@/lib/live/celebrate";
 import { fetchLiveMoments, type LiveMoment } from "@/services/liveExamService";
@@ -361,6 +362,8 @@ export default function LiveExamPresent() {
               shareUrl={shareUrl}
               shareCode={exam.share_code}
               inRoom={session.onlineCount}
+              scheduledStartAt={session.scheduledStartAt}
+              serverNow={session.serverNow}
             />
           ) : (
             <>
@@ -597,20 +600,33 @@ function PresentLobby({
   shareUrl,
   shareCode,
   inRoom,
+  scheduledStartAt,
+  serverNow,
 }: {
   isEnded: boolean;
   shareUrl: string;
   shareCode: string;
   inRoom: number;
+  scheduledStartAt: string | null;
+  serverNow: () => number;
 }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-8 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-white/[0.06]">
         <Radio className="h-10 w-10 text-white/50" />
       </div>
-      <p className="max-w-2xl text-4xl font-semibold leading-snug text-white/80">
-        {isEnded ? "That's the end — well done." : "Waiting for the first question"}
-      </p>
+      {/* A9 on the wall: a cinema countdown. Nobody has to ask whether it is on. */}
+      {!isEnded && scheduledStartAt ? (
+        <ScheduledCountdown
+          scheduledStartAt={scheduledStartAt}
+          serverNow={serverNow}
+          display
+        />
+      ) : (
+        <p className="max-w-2xl text-4xl font-semibold leading-snug text-white/80">
+          {isEnded ? "That's the end — well done." : "Waiting for the first question"}
+        </p>
+      )}
       {!isEnded && (
         <PresenterHud
           shareUrl={shareUrl}
