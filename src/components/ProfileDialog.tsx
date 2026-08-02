@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
-import { User } from "lucide-react";
+import { User, GraduationCap, PenLine } from "lucide-react";
 import { VerifiedSeal } from "@/components/VerifiedBadge";
 import { getVerificationTier } from "@/lib/verification";
 
@@ -26,6 +26,9 @@ const ProfileDialog = ({
     const [loading, setLoading] = useState(true);
     const [profile, setProfile] = useState<any>(null);
     const [email, setEmail] = useState<string | undefined>("");
+    // Legacy accounts carry no user_type — the rest of the app reads those as
+    // creators (use-user-role.ts, examAccess.ts), so this must match.
+    const [userType, setUserType] = useState<"student" | "creator">("creator");
     const [isEditing, setIsEditing] = useState(false);
     const [editedProfile, setEditedProfile] = useState({ full_name: "", phone_number: "" });
     const [saving, setSaving] = useState(false);
@@ -43,6 +46,7 @@ const ProfileDialog = ({
 
         if (user) {
             setEmail(user.email);
+            setUserType(user.user_metadata?.user_type === "student" ? "student" : "creator");
 
             const { data } = await supabase
                 .from('profiles')
@@ -115,6 +119,23 @@ const ProfileDialog = ({
                             ) : (
                                 <span className="text-sm font-semibold col-span-3">{profile?.full_name || "N/A"}</span>
                             )}
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <span className="text-sm font-medium text-muted-foreground col-span-1">Role:</span>
+                            <div className="col-span-3 flex items-center gap-2">
+                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset ${userType === "student"
+                                    ? "bg-blue-50 text-blue-700 ring-blue-600/20"
+                                    : "bg-purple-50 text-purple-700 ring-purple-600/20"
+                                    }`}>
+                                    {userType === "student"
+                                        ? <GraduationCap className="h-3.5 w-3.5" />
+                                        : <PenLine className="h-3.5 w-3.5" />}
+                                    {userType === "student" ? "Student" : "Creator"}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                    {userType === "student" ? "Takes exams" : "Creates exams"}
+                                </span>
+                            </div>
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
                             <span className="text-sm font-medium text-muted-foreground col-span-1">User ID:</span>

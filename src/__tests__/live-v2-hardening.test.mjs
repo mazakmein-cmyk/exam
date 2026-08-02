@@ -129,6 +129,39 @@ test("anon loses access to the leaderboard view entirely", () => {
   );
 });
 
+test("students can still read their OWN participant row", () => {
+  // Regression, found in production: dropping "Participants can view leaderboard"
+  // removed the only SELECT policy students had, and joinLiveExam does
+  // `.upsert(..., { onConflict }).select()`. INSERT ... ON CONFLICT DO UPDATE has
+  // to READ the conflicting row to decide whether to update it, and PostgreSQL
+  // applies SELECT policies to that read — so every RETURNING student got
+  // "new row violates row-level security policy". A first join worked; a reload
+  // did not.
+  //
+  // Dropping a policy changes every statement that touches the table, not just the
+  // query you had in mind. An upsert reads.
+  const fix = readMigration("20260803040000_live_v2_fix_participant_self_select.sql");
+  assert(
+    /CREATE POLICY "Users can view own participant record"[\s\S]{0,200}FOR SELECT[\s\S]{0,120}USING \(auth\.uid\(\) = user_id\)/.test(
+      fix
+    ),
+    "a student must be able to select their own row, and only their own"
+  );
+  assert(
+    !/live_exam_id IN/.test(fix),
+    "it must NOT be scoped by exam — that was the old policy, which exposed every participant and made privacy mode cosmetic"
+  );
+});
+
+test("the join path's other two policies are asserted, not assumed", () => {
+  const fix = readMigration("20260803040000_live_v2_fix_participant_self_select.sql");
+  assert(
+    /Authenticated users can join live exams/.test(fix) &&
+      /Users can update own participant record/.test(fix),
+    "the upsert needs INSERT, UPDATE and SELECT; losing any one fails the same confusing way"
+  );
+});
+
 test("nothing keys a React list off the now-nullable user_id", () => {
   assert(/key=\{p\.id\}/.test(LEADERBOARD), "LiveLeaderboard must key on the participant row id");
   assert(!/key=\{p\.user_id\}/.test(LEADERBOARD), "user_id is NULL for other rows under privacy mode");
