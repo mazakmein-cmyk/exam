@@ -12,7 +12,10 @@
  * database error on a projector.
  *
  * A test asserts that every `RAISE EXCEPTION '<CODE>` literal in
- * supabase/migrations/20260804000000_live_v2_controls.sql has an entry here.
+ * supabase/migrations/20260804000000_live_v2_controls.sql has an entry here, and
+ * live-v2-flush-time.test.mjs asserts the same for A3b's migration
+ * (20260811000000). Any later migration that raises a code belongs in that list
+ * too — a code with no entry here is a Postgres string in front of a class.
  *
  * How PostgREST delivers these
  * ---------------------------
@@ -71,6 +74,45 @@ const CODES: Record<string, LiveErrorCopy> = {
       arg
         ? `You've already added ${arg} seconds to this question.`
         : "You've reached the limit for this question.",
+    tone: "warn",
+    expected: true,
+  },
+
+  // ─── A3b end the question's time ─────────────────────────
+  //
+  // The same control pointing the other way, so it borrows A3's words on purpose
+  // for the two guards they share: a creator who has already read "You can't
+  // change this exam" from +30s must not be left wondering whether the flush
+  // button failed for some different reason. NOT_CREATOR stays unflagged here for
+  // the same reason it is unflagged there — being refused ownership is not a
+  // normal outcome of pressing a button on your own session, and marking it
+  // `expected` would quieten the one case actually worth looking into.
+  ENDTIME_NOT_CREATOR: {
+    title: "You can't change this exam",
+    tone: "error",
+  },
+  ENDTIME_NOT_LIVE: {
+    title: "The session isn't live",
+    tone: "warn",
+    expected: true,
+  },
+  ENDTIME_NO_OPEN_QUESTION: {
+    title: "No question is open",
+    description: () => "Time can only be removed while a question is running.",
+    tone: "warn",
+    expected: true,
+  },
+  // The button leaves the screen the moment the visual countdown ends, so this
+  // code only ever arrives from a race — a second control tab that pressed first,
+  // or one tab's clock sitting a beat behind the server's. Nothing failed: the
+  // room got exactly the outcome the creator asked for, just not from this tab.
+  // It carries a description where NOT_LIVE does not, because the title alone
+  // beside a button that appeared to do nothing reads as a broken control, and a
+  // creator mid-class will press it again to find out.
+  ENDTIME_ALREADY_OVER: {
+    title: "The clock already ran out",
+    description: () =>
+      "This question's time had already reached zero, so there was nothing left to remove.",
     tone: "warn",
     expected: true,
   },

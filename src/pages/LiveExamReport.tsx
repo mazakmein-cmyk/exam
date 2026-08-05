@@ -209,7 +209,30 @@ export default function LiveExamReport() {
           )
         )
       : null;
-  const grantedSeconds = report.pacing.reduce((s, p) => s + (p.extra_seconds || 0), 0);
+  /**
+   * Pacing arithmetic, and why the SIGN of extra_seconds is the information.
+   *
+   * A3b ("time's up") does not close a question through a flow of its own — it
+   * writes a NEGATIVE current_question_extra_seconds so the visual deadline, which
+   * is unlocked_at + time_seconds + extra_seconds, lands on now(). That is the
+   * whole mechanism, and it means a flush and a granted extension are the same
+   * column of the same unlock log with opposite signs.
+   *
+   * So a raw sum cancels the two against each other. A session where the creator
+   * granted 90s and then flushed two questions reports less extra time than it
+   * actually gave — and on an unlucky arrangement of numbers, none at all, which
+   * reads as "the add-time button did nothing" to the one person in the room who
+   * knows they pressed it three times. Clamping each row at zero is what keeps the
+   * granted total a report of what was granted.
+   *
+   * The flushes are not noise to be clamped away, though — they are the other half
+   * of the same story about how this room was paced, and a creator who cut four
+   * questions short learns more from that than from any total. Hence a sibling
+   * count rather than a subtraction: opposite decisions about the same clock, both
+   * kept, neither summing the other away.
+   */
+  const grantedSeconds = report.pacing.reduce((s, p) => s + Math.max(0, p.extra_seconds || 0), 0);
+  const flushedCount = report.pacing.filter((p) => (p.extra_seconds || 0) < 0).length;
   const undos = report.pacing.reduce((s, p) => s + (p.undo_count || 0), 0);
 
   return (
@@ -392,6 +415,13 @@ export default function LiveExamReport() {
           <p className="mt-1 text-sm text-muted-foreground">
             {durationMin !== null ? `${durationMin} minutes` : "Duration unknown"}
             {grantedSeconds > 0 && ` · ${grantedSeconds}s of extra time granted`}
+            {/*
+              Beside the granted time rather than folded into it, because the pair
+              is the point: "90s of extra time granted · 4 closed early" describes a
+              creator reading the room, and neither clause says that on its own.
+            */}
+            {flushedCount > 0 &&
+              ` · ${flushedCount} question${flushedCount === 1 ? "" : "s"} closed early`}
             {undos > 0 && ` · ${undos} unlock${undos === 1 ? "" : "s"} taken back`}
           </p>
         </section>

@@ -41,6 +41,7 @@ import {
   type LiveSessionSync,
 } from "@/services/liveExamService";
 import { useLiveExamRealtime } from "./useLiveExamRealtime";
+import { isStageTheme, type StageTheme } from "@/lib/live/stageTheme";
 import { createClockOffset } from "@/lib/live/clock.js";
 import { BEAT_INTERVAL_MS, clientPollDelayMs, shouldBeat, STOP } from "@/lib/live/cadence.js";
 import { liveTimerStore } from "@/lib/live/timerStore";
@@ -67,6 +68,12 @@ export type LiveSessionState = {
   leaderboardVisibility: LeaderboardVisibility;
   presentShowLeaderboard: boolean;
   presentShowRiver: boolean;
+  /** Q15. Whether the wall draws the answer choices at all. */
+  presentShowOptions: boolean;
+  /** Q15b. Whether the wall marks the correct choice once answers lock. */
+  presentRevealAnswer: boolean;
+  /** Q16. The projector's frame — a broadcast decision, not a viewer preference. */
+  presentTheme: StageTheme;
   celebrateSeq: number;
   totalQuestions: number;
   /** Present within the last 45s. */
@@ -105,6 +112,12 @@ const INITIAL_STATE: LiveSessionState = {
   leaderboardVisibility: "full",
   presentShowLeaderboard: true,
   presentShowRiver: true,
+  presentShowOptions: true,
+  // An answer key on a projector is never a default, so this one starts off
+  // while the other two start on. That asymmetry is the whole reason the
+  // readers below cannot guess at a missing key.
+  presentRevealAnswer: false,
+  presentTheme: "dark",
   celebrateSeq: 0,
   totalQuestions: 0,
   onlineCount: 0,
@@ -116,6 +129,56 @@ const INITIAL_STATE: LiveSessionState = {
   transport: "connecting",
   loading: true,
 };
+
+/**
+ * Read one projector setting off whichever payload delivered it.
+ *
+ * Why a function, and why `key in row` rather than a comparison at the call site.
+ *
+ * Both lanes used to spell this inline, against a literal. That is the bug that
+ * shipped: the creator flips a projector switch, updateLiveExam writes it, the
+ * row in the database is correct and STAYS correct — and then Supabase Realtime
+ * echoes the UPDATE back, built from a column list it caches, which had not yet
+ * caught up with the freshly added column. So the echo of the creator's own
+ * write arrives with the key simply ABSENT. Compared against a literal, that
+ * absence collapsed into a concrete answer; the push lane always applies; and
+ * the switch turned itself back off a beat after being turned on. Nothing threw,
+ * no request failed, and the database was right the entire time — which is why
+ * it read as "the toggle doesn't work" rather than as an error.
+ *
+ * The same hole had been open for the two older settings the whole time and
+ * nobody reported it, because comparing against `false` happens to guess RIGHT
+ * for a column that defaults true: a stale payload forced those settings on
+ * instead of off, which looks like nothing happening.
+ *
+ * The rule: undefined means "this payload says nothing about that setting", and
+ * never "that setting is off". Turning undefined back into a value is the
+ * merge's job in applyObservation, which keeps whatever it already had.
+ */
+function payloadBool(row: Record<string, unknown> | null | undefined, key: string): boolean | undefined {
+  if (!row || !(key in row)) return undefined;
+  const value = (row as Record<string, unknown>)[key];
+  // Present-but-null counts as silence too — a column added by a migration that
+  // has not finished backfilling reads null, which is not the creator saying no.
+  return value === null || value === undefined ? undefined : value !== false;
+}
+
+/**
+ * The same rule for the one projector setting that is not a boolean.
+ *
+ * Absence matters more here than anywhere else: a theme that drops to its
+ * default for a beat because a payload was assembled before the column existed
+ * is the wall flashing black in front of the room, on camera.
+ */
+function payloadTheme(row: Record<string, unknown> | null | undefined, key: string): StageTheme | undefined {
+  if (!row || !(key in row)) return undefined;
+  const value = (row as Record<string, unknown>)[key];
+  // Present-but-rubbish is a different failure from absent and is worth
+  // correcting rather than passing on. The column has a CHECK constraint, so
+  // getting here at all means something wrote around it — and a wall is not the
+  // place to render a theme called "Dark".
+  return isStageTheme(value) ? value : "dark";
+}
 
 export type LiveSessionCallbacks = {
   /** A later question became the open one. Fires for every forward step. */
@@ -130,6 +193,17 @@ export type LiveSessionCallbacks = {
   onReconnect?: () => void;
   /** celebrate_seq advanced (B14). Never fires on the first observation. */
   onCelebrate?: (seq: number) => void;
+  /**
+   * privacy_mode or leaderboard_visibility changed (E1 / E3). Never fires on the
+   * first observation.
+   *
+   * Both settings change what an already-fetched NAME or POSITION is allowed to
+   * say, and nothing in the exam row tells those fetches to run again. Standings,
+   * moment banners and the student's own leaderboard all keep the values they
+   * loaded before the flip, so without this the toggle appears to do nothing
+   * until the next reveal — on exactly the surfaces it exists to protect.
+   */
+  onSettings?: () => void;
 };
 
 export type UseLiveSessionOptions = LiveSessionCallbacks & {
@@ -174,11 +248,25 @@ export function useLiveSession(
   const transportRef = useRef<LiveTransport>("connecting");
   const serverNextPollRef = useRef<number>(1_500);
   const cleanedUpRef = useRef(false);
-  /** Previous observations, for transition detection on both lanes. */
-  const prevRef = useRef<{ index: number; status: LiveExamStatus | null; celebrate: number | null }>({
+  /**
+   * Previous observations, for transition detection on both lanes.
+   *
+   * `privacy` and `visibility` are nullable for the same reason `celebrate` is:
+   * null is the "we have not seen this exam yet" baseline, and a transition out
+   * of it is not a change anybody made.
+   */
+  const prevRef = useRef<{
+    index: number;
+    status: LiveExamStatus | null;
+    celebrate: number | null;
+    privacy: boolean | null;
+    visibility: LeaderboardVisibility | null;
+  }>({
     index: -1,
     status: null,
     celebrate: null,
+    privacy: null,
+    visibility: null,
   });
   // Declared up here with the rest of the loop state, and assigned once
   // `scheduleNext` exists below. The sync loop reaches its scheduler through
@@ -222,8 +310,18 @@ export function useLiveSession(
       autoStart: boolean;
       privacyMode: boolean;
       leaderboardVisibility: LeaderboardVisibility;
-      presentShowLeaderboard: boolean;
-      presentShowRiver: boolean;
+      /**
+       * The five projector settings are optional, and that is load-bearing
+       * rather than lenient: payloadBool/payloadTheme return undefined for a
+       * payload that never mentioned the key, and the merge below then keeps
+       * whatever the previous observation established. Making these required
+       * would force each lane to invent a value, which is the bug.
+       */
+      presentShowLeaderboard?: boolean;
+      presentShowRiver?: boolean;
+      presentShowOptions?: boolean;
+      presentRevealAnswer?: boolean;
+      presentTheme?: StageTheme;
       celebrateSeq: number;
       totalQuestions: number;
       onlineCount?: number;
@@ -272,11 +370,33 @@ export function useLiveSession(
         cb.onCelebrate?.(next.celebrateSeq);
       }
 
+      // E1 / E3. Same baseline discipline as the celebration above, and for a
+      // sharper reason: firing on the first observation would make every page
+      // load refetch its standings, its moments and its leaderboard on mount,
+      // for a "change" that is just the session arriving.
+      if (
+        prev.privacy !== null &&
+        (next.privacyMode !== prev.privacy ||
+          next.leaderboardVisibility !== prev.visibility)
+      ) {
+        cb.onSettings?.();
+      }
+
       prevRef.current = {
         index: next.currentQuestionIndex,
         status: next.status,
         celebrate: next.celebrateSeq,
+        privacy: next.privacyMode,
+        visibility: next.leaderboardVisibility,
       };
+
+      // E3: 'off' means off, and it has to be decided BEFORE the score_visible
+      // rule inside the merge. That rule deliberately keeps the previous rank so
+      // a student's score never blanks out mid-question — correct for its own
+      // purpose, and exactly wrong here. Checked in the other order, a creator
+      // who switches the leaderboard off while a question is open leaves the
+      // last known position pinned to every phone until that question closes.
+      const rankHidden = next.leaderboardVisibility === "off";
 
       setState((cur) => {
         const merged: LiveSessionState = {
@@ -289,8 +409,14 @@ export function useLiveSession(
           autoStart: next.autoStart,
           privacyMode: next.privacyMode,
           leaderboardVisibility: next.leaderboardVisibility,
-          presentShowLeaderboard: next.presentShowLeaderboard,
-          presentShowRiver: next.presentShowRiver,
+          // `??`, not a plain assignment: undefined here means the payload was
+          // silent about that setting, and keeping what we had is the only
+          // answer that cannot flip a projector switch nobody touched.
+          presentShowLeaderboard: next.presentShowLeaderboard ?? cur.presentShowLeaderboard,
+          presentShowRiver: next.presentShowRiver ?? cur.presentShowRiver,
+          presentShowOptions: next.presentShowOptions ?? cur.presentShowOptions,
+          presentRevealAnswer: next.presentRevealAnswer ?? cur.presentRevealAnswer,
+          presentTheme: next.presentTheme ?? cur.presentTheme,
           celebrateSeq: next.celebrateSeq,
           totalQuestions: next.totalQuestions,
           onlineCount: next.onlineCount ?? cur.onlineCount,
@@ -299,7 +425,9 @@ export function useLiveSession(
           // a question is open it withholds both, and keeping the last known
           // values is the honest render — a score that blanks out mid-question
           // reads as "you lost your points".
-          myRank: next.scoreVisible === false ? cur.myRank : next.myRank !== undefined ? next.myRank : cur.myRank,
+          myRank: rankHidden
+            ? null
+            : next.scoreVisible === false ? cur.myRank : next.myRank !== undefined ? next.myRank : cur.myRank,
           myTotalCorrect:
             next.scoreVisible === false
               ? cur.myTotalCorrect
@@ -351,8 +479,16 @@ export function useLiveSession(
           autoStart: !!sync.auto_start,
           privacyMode: !!sync.privacy_mode,
           leaderboardVisibility: sync.leaderboard_visibility ?? "full",
-          presentShowLeaderboard: sync.present_show_leaderboard !== false,
-          presentShowRiver: sync.present_show_river !== false,
+          // Through payloadBool even though this lane never showed the bug: a
+          // live_session_sync deployed before one of these columns existed omits
+          // the key just as surely as a stale Realtime payload does, and having
+          // one lane read them differently from the other is how the next one of
+          // these takes a week to find.
+          presentShowLeaderboard: payloadBool(sync, "present_show_leaderboard"),
+          presentShowRiver: payloadBool(sync, "present_show_river"),
+          presentShowOptions: payloadBool(sync, "present_show_options"),
+          presentRevealAnswer: payloadBool(sync, "present_reveal_answer"),
+          presentTheme: payloadTheme(sync, "present_theme"),
           celebrateSeq: sync.celebrate_seq ?? 0,
           totalQuestions: sync.total_questions ?? 0,
           onlineCount: sync.online_count ?? 0,
@@ -448,8 +584,14 @@ export function useLiveSession(
         autoStart: !!exam.auto_start,
         privacyMode: !!exam.privacy_mode,
         leaderboardVisibility: (exam.leaderboard_visibility as LeaderboardVisibility) ?? "full",
-        presentShowLeaderboard: exam.present_show_leaderboard !== false,
-        presentShowRiver: exam.present_show_river !== false,
+        // This is the lane that broke — see payloadBool. Realtime's cached
+        // column list is what makes a settings key go missing from the echo of
+        // the creator's own write.
+        presentShowLeaderboard: payloadBool(exam, "present_show_leaderboard"),
+        presentShowRiver: payloadBool(exam, "present_show_river"),
+        presentShowOptions: payloadBool(exam, "present_show_options"),
+        presentRevealAnswer: payloadBool(exam, "present_reveal_answer"),
+        presentTheme: payloadTheme(exam, "present_theme"),
         celebrateSeq: exam.celebrate_seq ?? 0,
         totalQuestions: exam.total_questions ?? 0,
       }, "push", clockRef.current.serverNow());
@@ -488,7 +630,17 @@ export function useLiveSession(
   // clobbered by the reset — and worse, lets the previous exam's index survive
   // long enough to be compared against the new one's, which reads as an unlock.
   useEffect(() => {
-    prevRef.current = { index: -1, status: null, celebrate: null };
+    // Back to the null baseline, not to the new exam's values — which are not
+    // known yet anyway. A privacy flag carried across exams gets compared
+    // against a different session's, fires onSettings on arrival, and refetches
+    // every name on the page for a change nobody made.
+    prevRef.current = {
+      index: -1,
+      status: null,
+      celebrate: null,
+      privacy: null,
+      visibility: null,
+    };
     lastBeatAtRef.current = null;
     errorStreakRef.current = 0;
     serverNextPollRef.current = 1_500;
@@ -548,6 +700,9 @@ function shallowEqualState(a: LiveSessionState, b: LiveSessionState): boolean {
     a.leaderboardVisibility === b.leaderboardVisibility &&
     a.presentShowLeaderboard === b.presentShowLeaderboard &&
     a.presentShowRiver === b.presentShowRiver &&
+    a.presentShowOptions === b.presentShowOptions &&
+    a.presentRevealAnswer === b.presentRevealAnswer &&
+    a.presentTheme === b.presentTheme &&
     a.celebrateSeq === b.celebrateSeq &&
     a.totalQuestions === b.totalQuestions &&
     a.onlineCount === b.onlineCount &&

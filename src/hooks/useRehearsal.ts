@@ -66,6 +66,17 @@ export type UseRehearsalResult = RehearsalState & {
   start: (speed?: RehearsalSpeed) => void;
   stop: () => void;
   unlockNext: () => void;
+  /**
+   * A3b in the rehearsal: take the seconds still on the clock away.
+   *
+   * The control room's "time's up" button must do something here rather than
+   * nothing, and it must not reach the network to do it — a rehearsal that wrote
+   * to a real exam row would be worse than having no rehearsal at all. So this is
+   * the simulation's own copy of the flush, and it ends the question the same way
+   * an expiry does: by moving the deadline onto now, not by inventing a second
+   * way for a question to be over.
+   */
+  endNow: () => void;
   setSpeed: (speed: RehearsalSpeed) => void;
   /** Total seconds for the open question, already scaled by speed. */
   scaledSeconds: number;
@@ -84,6 +95,20 @@ export function useRehearsal(questions: RehearsalQuestion[]): UseRehearsalResult
   const cohortRef = useRef(makeCohort(REHEARSAL_COHORT, makeRng(1)));
   /** Pending answer-release timers for the open question. */
   const timersRef = useRef<number[]>([]);
+  /**
+   * The simulated answers for the open question, kept so a flush can re-fold them.
+   *
+   * unlockNext closes over its own `events` and schedules one timer per answer;
+   * that is enough while a question runs to completion. A flush has to decide what
+   * the analytics say at an instant nobody planned for, which means reading the
+   * event list back out — so it lives in a ref rather than only in a closure.
+   */
+  const simRef = useRef<{
+    index: number;
+    events: ReturnType<typeof simulateQuestion>;
+    windowMs: number;
+    totalSeconds: number;
+  } | null>(null);
   const questionsRef = useRef(questions);
   questionsRef.current = questions;
 
@@ -142,6 +167,8 @@ export function useRehearsal(questions: RehearsalQuestion[]): UseRehearsalResult
         rngRef.current
       );
 
+      simRef.current = { index: nextIndex, events, windowMs, totalSeconds: q.time_seconds };
+
       // Release each answer at its simulated moment, compressed by the speed
       // multiplier. This is what makes a rehearsal feel like a session rather than
       // a report: the counter climbs, the river fills, the coach line changes.
@@ -186,10 +213,72 @@ export function useRehearsal(questions: RehearsalQuestion[]): UseRehearsalResult
     });
   }, [clearTimers]);
 
+  /**
+   * The rehearsal's flush.
+   *
+   * Two things have to be true for this to be a rehearsal of the real control
+   * rather than a different control that happens to share a button.
+   *
+   * The clock has to stop the same way. Live, the RPC writes a negative
+   * extra_seconds so the visual end lands on now, and every countdown then
+   * expires through its ordinary path. There is no extra_seconds here, but the
+   * countdown is derived from unlockedAt plus the question's scaled seconds — so
+   * winding unlockedAt back until that sum reaches now produces exactly the same
+   * thing: an earlier deadline on the same question, and the same single expiry.
+   *
+   * And the numbers have to stop moving. A student who had not answered by the
+   * instant the creator called time does not get to answer, so every pending
+   * release is cancelled and the analytics are folded from the answers that had
+   * actually landed by the cutoff — not from the full simulation, which would
+   * report a participation rate the room never reached.
+   */
+  const endNow = useCallback(() => {
+    setState((prev) => {
+      if (!prev.active || prev.index < 0 || !prev.unlockedAt) return prev;
+      const sim = simRef.current;
+      if (!sim || sim.index !== prev.index) return prev;
+
+      clearTimers();
+
+      // Wall-clock elapsed, put back onto the simulation's own timeline — the
+      // releases were compressed by the speed multiplier on the way out, so they
+      // have to be expanded by it on the way back in.
+      const elapsedMs = Math.max(0, Date.now() - new Date(prev.unlockedAt).getTime());
+      const cutoffMs = Math.min(sim.windowMs, elapsedMs * prev.speed);
+      const landed = sim.events.filter((e) => e.atMs <= cutoffMs);
+
+      const analytics = new Map(prev.analytics);
+      analytics.set(
+        prev.index,
+        // GREATEST-style floor on the window: eventsToAnalytics divides by it, and
+        // a creator who flushes the instant they unlock would otherwise divide by
+        // zero and put NaN across every insight surface at once.
+        eventsToAnalytics(landed, cohortRef.current.length, Math.max(1, cutoffMs))
+      );
+
+      const optionTally: Record<string, number> = {};
+      landed.forEach((e) => {
+        const key = `"${e.optionIndex}"`;
+        optionTally[key] = (optionTally[key] || 0) + 1;
+      });
+
+      const scaled = Math.max(1, Math.round(sim.totalSeconds / prev.speed));
+
+      return {
+        ...prev,
+        unlockedAt: new Date(Date.now() - scaled * 1000).toISOString(),
+        answeredCount: landed.length,
+        confusionCount: landed.filter((e) => e.confused).length,
+        optionTally,
+        analytics,
+      };
+    });
+  }, [clearTimers]);
+
   const scaledSeconds = useMemo(() => {
     const q = state.index >= 0 ? questions[state.index] : null;
     return q ? Math.max(1, Math.round(q.time_seconds / state.speed)) : 0;
   }, [questions, state.index, state.speed]);
 
-  return { ...state, start, stop, unlockNext, setSpeed, scaledSeconds };
+  return { ...state, start, stop, unlockNext, endNow, setSpeed, scaledSeconds };
 }

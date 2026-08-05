@@ -900,6 +900,10 @@ export type Database = {
         Args: { p_live_exam_id: string }
         Returns: undefined
       }
+      end_live_question_time: {
+        Args: { p_live_exam_id: string }
+        Returns: Database["public"]["Tables"]["live_exams"]["Row"]
+      }
       end_live_session: {
         Args: { p_live_exam_id: string }
         Returns: {

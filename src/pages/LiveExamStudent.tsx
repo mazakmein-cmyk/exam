@@ -554,6 +554,25 @@ export default function LiveExamStudent() {
       void refetchSessionData();
     },
     /**
+     * The creator moved a privacy or leaderboard switch mid-session.
+     *
+     * Everything name-bearing on this phone was fetched under the OLD setting and
+     * will not correct itself: the standings rows are a cached array, and each
+     * revealed question renders analytics.fastest_user_name from another. A
+     * push-lane student gets the rewritten rows over realtime; a poll-lane student
+     * has no path to them at all, so without this the class goes on reading
+     * classmates' real names under "Fastest" for the rest of the session — after
+     * the creator has watched the control room switch to nicknames and believed it.
+     *
+     * refetchSessionData rather than fetchPublicLeaderboard alone, for exactly that
+     * second cache. It is the same "everything we could have missed" refetch the
+     * reconnect path uses, and a settings flip invalidates the same things a
+     * dropped connection does.
+     */
+    onSettings: () => {
+      void refetchSessionData();
+    },
+    /**
      * B14 layer 2. The creator pressed Celebrate, so the whole room joins in.
      *
      * Gated on a monotonic sequence rather than an event, so a reconnect — which
@@ -848,6 +867,22 @@ export default function LiveExamStudent() {
 
   /** Server-assigned rank, refreshed by every sync. */
   const myRank = session.myRank;
+  /**
+   * E3. The Leaderboard control offers three choices and shipped with two
+   * behaviours: this page never read the setting, so "Off" — captioned "No ranking
+   * shown to anyone" — drew the standings card, the header chip and both Rank
+   * tiles exactly as "Just me" does, and the class kept a live "#14" pinned to the
+   * top of every phone.
+   *
+   * This one line is the entire difference between 'private' and 'off'. 'private'
+   * still means "your own position, nobody else's" — the number stays, the room's
+   * ranking goes. 'off' means no position anywhere, including this student's own.
+   *
+   * The rank VALUE is withheld by live_session_sync and nulled again in the session
+   * spine, so nothing here has to defend against a leak; this flag is about layout,
+   * so a switched-off feature does not leave holes that read as a broken page.
+   */
+  const rankingHidden = session.leaderboardVisibility === "off";
   /** Server-graded correct count — never derived from local answers. */
   const myTotalCorrect = session.myTotalCorrect ?? 0;
   /**
@@ -912,6 +947,11 @@ export default function LiveExamStudent() {
   // ─── Rank movement badge ───────────────────────────────────
 
   useEffect(() => {
+    // A null rank is "there is no position to have moved", not "position zero".
+    // Under 'off' that is every sync, so this bails before prevRankRef is touched
+    // — otherwise a creator flipping the setting back to Everyone mid-session would
+    // greet the room with a fabricated swing measured from whatever number each
+    // phone happened to be holding when the ranking went away.
     if (myRank === null) return;
     const prev = prevRankRef.current;
     prevRankRef.current = myRank;
@@ -1620,6 +1660,12 @@ export default function LiveExamStudent() {
                   <Trophy className="h-3.5 w-3.5 text-amber-500" />
                   {myTotalCorrect}
                 </span>
+                {/* No rankingHidden gate here, deliberately. The chip and its
+                    climb/fall badge are already keyed on myRank, and under 'off'
+                    the server withholds the rank and the session spine nulls it —
+                    so they disappear from the value rather than from a second copy
+                    of the setting. One flag read in two places is how one of them
+                    gets missed the next time the rule changes. */}
                 {myRank !== null && (
                   <>
                     <span className="h-3 w-px bg-border" />
@@ -1707,7 +1753,11 @@ export default function LiveExamStudent() {
           {([
             { key: "question", label: isEnded ? "Results" : "Question" },
             { key: "review", label: `Review${previousQuestions.length ? ` (${previousQuestions.length})` : ""}` },
-            { key: "ranks", label: "Ranks" },
+            // The pane keeps its key and its score card under 'off' — only the
+            // ranking leaves it. A tab labelled "Ranks" that opens onto a page with
+            // no rank on it reads as a load that failed, so it takes the honest
+            // name of what is actually still in there.
+            { key: "ranks", label: rankingHidden ? "Your run" : "Ranks" },
           ] as const).map((t) => (
             <button
               key={t.key}
@@ -1737,7 +1787,15 @@ export default function LiveExamStudent() {
                     <p className="mt-1 text-sm text-muted-foreground">Here's how you finished</p>
                   </div>
 
-                  <div className="grid grid-cols-3 divide-x divide-border/60 border-t border-border/60">
+                  {/* The column count follows the setting rather than the tile
+                      being blanked in place: a "—" sitting in a three-across grid
+                      between two real numbers reads as a stat that failed to load,
+                      and a student who thinks their rank is broken asks about it
+                      instead of reading their score. Two across is a finished
+                      layout; three-with-a-hole is not. */}
+                  <div
+                    className={`grid ${rankingHidden ? "grid-cols-2" : "grid-cols-3"} divide-x divide-border/60 border-t border-border/60`}
+                  >
                     <div className="px-3 py-4 text-center">
                       <p className="text-2xl font-bold tabular-nums text-emerald-600">
                         {myTotalCorrect}
@@ -1745,10 +1803,12 @@ export default function LiveExamStudent() {
                       </p>
                       <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Correct</p>
                     </div>
-                    <div className="px-3 py-4 text-center">
-                      <p className="text-2xl font-bold tabular-nums">#{myRank ?? "—"}</p>
-                      <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Rank</p>
-                    </div>
+                    {!rankingHidden && (
+                      <div className="px-3 py-4 text-center">
+                        <p className="text-2xl font-bold tabular-nums">#{myRank ?? "—"}</p>
+                        <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Rank</p>
+                      </div>
+                    )}
                     <div className="px-3 py-4 text-center">
                       <p className="text-2xl font-bold tabular-nums text-primary">
                         {myAccuracy !== null ? `${Math.round(myAccuracy * 100)}%` : "—"}
@@ -1978,15 +2038,20 @@ export default function LiveExamStudent() {
                   </span>
                 )}
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              {/* Same rule as the result hero: the tile is removed and the grid
+                  closes up behind it, because an empty third column is a rendering
+                  fault to everyone who did not choose the setting. */}
+              <div className={`mt-3 grid ${rankingHidden ? "grid-cols-2" : "grid-cols-3"} gap-2 text-center`}>
                 <div>
                   <p className="text-xl font-bold tabular-nums text-emerald-600">{myTotalCorrect}</p>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Correct</p>
                 </div>
-                <div>
-                  <p className="text-xl font-bold tabular-nums">{myRank !== null ? `#${myRank}` : "—"}</p>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Rank</p>
-                </div>
+                {!rankingHidden && (
+                  <div>
+                    <p className="text-xl font-bold tabular-nums">{myRank !== null ? `#${myRank}` : "—"}</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Rank</p>
+                  </div>
+                )}
                 <div>
                   <p className="text-xl font-bold tabular-nums text-primary">
                     {myAccuracy !== null ? `${Math.round(myAccuracy * 100)}%` : "—"}
@@ -2005,29 +2070,38 @@ export default function LiveExamStudent() {
               </div>
             </div>
 
-            {/* Leaderboard */}
-            <div className="rounded-2xl border border-border/60 bg-card">
-              <div className="flex items-center gap-2 border-b border-border/50 px-4 py-3">
-                <Trophy className="h-4 w-4 text-amber-500" />
-                <h3 className="text-sm font-bold">Leaderboard</h3>
-                {isLive && (
-                  <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    <span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    live
-                  </span>
-                )}
+            {/* Leaderboard.
+                Gated as a whole card, not fed an empty list. live_participants_public
+                returns the caller's own row under both 'private' and 'off', so an
+                un-gated card under 'off' does not go blank — it renders a box headed
+                "Leaderboard · live" containing exactly one crowned row, this student
+                at #1. That is the standings the creator switched off, in a smaller
+                box and now also wrong about who is winning. There is no version of
+                this card that honours "No ranking shown to anyone", so it leaves. */}
+            {!rankingHidden && (
+              <div className="rounded-2xl border border-border/60 bg-card">
+                <div className="flex items-center gap-2 border-b border-border/50 px-4 py-3">
+                  <Trophy className="h-4 w-4 text-amber-500" />
+                  <h3 className="text-sm font-bold">Leaderboard</h3>
+                  {isLive && (
+                    <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      live
+                    </span>
+                  )}
+                </div>
+                <div className="max-h-[46vh] overflow-y-auto p-2">
+                  <LiveLeaderboard
+                    entries={leaderboard}
+                    currentUserId={user?.id}
+                    self={mySelf && mySelf.rank !== null && mySelf.rank > 20 ? mySelf : null}
+                    emptyLabel={
+                      isLive ? "Standings appear once the first question closes." : "No standings for this session."
+                    }
+                  />
+                </div>
               </div>
-              <div className="max-h-[46vh] overflow-y-auto p-2">
-                <LiveLeaderboard
-                  entries={leaderboard}
-                  currentUserId={user?.id}
-                  self={mySelf && mySelf.rank !== null && mySelf.rank > 20 ? mySelf : null}
-                  emptyLabel={
-                    isLive ? "Standings appear once the first question closes." : "No standings for this session."
-                  }
-                />
-              </div>
-            </div>
+            )}
 
             {/* Rail legend so chip colours are self-explanatory */}
             {questions.length > 0 && (

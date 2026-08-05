@@ -6,6 +6,8 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { SHARE_CODE_LENGTH, normalizeShareCode } from "@/lib/live/shareCode";
+import type { StageTheme } from "@/lib/live/stageTheme";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -33,6 +35,33 @@ export type LiveExam = {
   leaderboard_visibility: LeaderboardVisibility;
   present_show_leaderboard: boolean;
   present_show_river: boolean;
+  /**
+   * Q15/Q15b/Q16 — the focus-screen switches, and the only OPTIONAL fields on
+   * this type.
+   *
+   * Optional is not about the columns: all three are NOT NULL with defaults, so
+   * a row read with select("*") always carries them. It is about the WIRE.
+   * Supabase Realtime builds its UPDATE payloads from a cached column list, and
+   * that cache lags a freshly added column — so the echo of the creator's own
+   * write arrives with the new key simply ABSENT. Typing these as required
+   * booleans would have TypeScript promise the key is always there, and the
+   * readers in useLiveSession would go on collapsing "this payload says nothing
+   * about that setting" into "that setting is off". That is exactly the bug that
+   * made the answer-reveal switch turn itself back off a beat after it was
+   * flipped, with a correct row in the database the whole time. `?` is what lets
+   * payloadBool tell absent from false instead of guessing.
+   */
+  present_show_options?: boolean;
+  present_reveal_answer?: boolean;
+  /**
+   * TEXT with a CHECK, not a Postgres enum — so the wire can hand back a string
+   * that is not a StageTheme (a row written before the constraint landed, or a
+   * value some later migration adds and this client has never heard of). Widened
+   * on purpose: payloadTheme is the one place that decides what to do about an
+   * unrecognised theme, and narrowing here would take that decision away from it
+   * by casting the problem out of existence.
+   */
+  present_theme?: StageTheme | string;
   celebrate_seq: number;
   report_share_token: string | null;
   report_public: boolean;
@@ -232,6 +261,38 @@ export async function fetchLiveExamByShareCode(shareCode: string): Promise<LiveE
   return data as unknown as LiveExam;
 }
 
+/**
+ * Same lookup, for the case where "no such code" is an ANSWER rather than a fault.
+ *
+ * `fetchLiveExamByShareCode` is the join path: it is handed a code from the URL
+ * that is presumed good, so PostgREST's "0 rows" (PGRST116) is correctly a thrown
+ * error there. A student typing a code into a box is the opposite situation —
+ * a mistyped character is the single most likely outcome, and it has to render as
+ * "check that code", not as a database message.
+ *
+ * Returns null for both "no such code" and "a code the caller may not see". RLS
+ * only exposes published/live/ended exams, so a draft exam's code is invisible to
+ * everyone but its creator — and the two cases must stay indistinguishable to a
+ * student, or the box becomes a probe for which codes exist.
+ *
+ * Still throws on real failures (offline, RLS misconfiguration), because "we
+ * could not check" and "that code is wrong" are different things to say.
+ */
+export async function lookupLiveExamByShareCode(shareCode: string): Promise<LiveExam | null> {
+  const code = normalizeShareCode(shareCode);
+  // Never spend a round trip on something that cannot be a code.
+  if (code.length !== SHARE_CODE_LENGTH) return null;
+
+  const { data, error } = await supabase
+    .from("live_exams")
+    .select("*")
+    .eq("share_code", code)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data as unknown as LiveExam) ?? null;
+}
+
 // ─── Update Live Exam ────────────────────────────────────────
 
 export async function updateLiveExam(
@@ -245,6 +306,10 @@ export async function updateLiveExam(
     | "scheduled_start_at" | "auto_start"
     | "privacy_mode" | "leaderboard_visibility"
     | "present_show_leaderboard" | "present_show_river"
+    // The focus-screen switches, for the same reason as the row above: they are
+    // adjusted while the room is watching, which is the only time anyone can
+    // tell whether the wall needs the choices, the answer or the other theme.
+    | "present_show_options" | "present_reveal_answer" | "present_theme"
     | "report_public"
   >>
 ): Promise<LiveExam> {
@@ -856,6 +921,21 @@ export type LiveSessionSync = {
   leaderboard_visibility: LeaderboardVisibility;
   present_show_leaderboard: boolean;
   present_show_river: boolean;
+  /**
+   * The same three, optional for a different reason than on LiveExam.
+   *
+   * live_session_sync() is redefined wholesale by every migration that adds a
+   * setting, so its payload is only as new as the last migration the creator
+   * actually pasted — and migrations here are applied by hand. A client running
+   * against a database one migration behind gets a sync object with these keys
+   * missing, and the honest thing for it to do is keep the setting it already
+   * has rather than announce that the projector is now in its default state.
+   * payloadBool/payloadTheme in useLiveSession do exactly that; this `?` is what
+   * makes the type agree with them.
+   */
+  present_show_options?: boolean;
+  present_reveal_answer?: boolean;
+  present_theme?: StageTheme | string;
   celebrate_seq: number;
   total_questions: number;
   /** DB clock at the moment of the reply — the anchor for every countdown. */
@@ -1076,6 +1156,43 @@ export async function addLiveQuestionTime(
 }
 
 /**
+ * The other direction: declare time up on the open question.
+ *
+ * The room has finished, every hand is down, and nobody wants to watch the last
+ * forty seconds drain — before this, the creator's only options were to wait it
+ * out or to unlock the next question over the top of a still-running one.
+ *
+ * The server does it by REWRITING current_question_extra_seconds so the visual
+ * end lands on now(), which is the whole design: no client is told anything new,
+ * every screen simply reaches zero through the countdown path it was already
+ * running, and a student mid-submit is refused by the same deadline check as any
+ * other late answer. There is no "flushed" state to reconcile on reconnect.
+ *
+ * Asks for exactly one thing, deliberately. The ordinary expiry path already
+ * computes analytics and rankings when a countdown reaches zero, and a flush IS
+ * an early zero — so pairing this with computeQuestionAnalytics/computeRankings
+ * would be a second copy of that orchestration, free to drift from the first and
+ * to run twice against the same question.
+ *
+ * Refuses once the visual countdown has already reached zero
+ * (ENDTIME_ALREADY_OVER), on the same terms addLiveQuestionTime refuses: past
+ * zero the room has been told the question is closed, and moving the end again
+ * would contradict what it was told. The four ENDTIME_* codes are
+ * machine-parseable — see lib/live/liveErrors.ts.
+ *
+ * The RPC returns the updated exam row and this discards it: the control room
+ * learns the new extra_seconds through the same push/poll lanes as everyone
+ * else, and a local setState here would be a second source of truth that the
+ * next echo overwrites a moment later anyway.
+ */
+export async function endLiveQuestionTime(examId: string): Promise<void> {
+  const { error } = await supabase
+    .rpc("end_live_question_time", { p_live_exam_id: examId });
+
+  if (error) throw error;
+}
+
+/**
  * A10: take back the last unlock.
  *
  * Never deletes a response — if anyone has answered, the unlock stands and the
@@ -1272,6 +1389,48 @@ export async function fetchParticipantNames(examId: string): Promise<Map<string,
   const map = new Map<string, string>();
   ((data || []) as { user_id: string; display_name: string }[]).forEach((r) => {
     map.set(r.user_id, r.display_name);
+  });
+  return map;
+}
+
+/**
+ * participant id → the nickname the ROOM is currently seeing for that person.
+ *
+ * The mirror image of fetchParticipantNames. The creator's leaderboard panel
+ * shows real names by design — that is the point of the control room — but with
+ * privacy mode on it becomes the one screen that cannot answer "who is Brave
+ * Badger?", which is precisely the question a creator gets asked while the wall
+ * is up. This is the second column for that panel: the real name, and beside it
+ * the alias the room has been reading all session.
+ *
+ * Read from live_participants_public rather than re-derived here. The masking
+ * rule is deliberately server-side (a name hidden only in the client is one
+ * devtools request away from being visible), and a client-side reimplementation
+ * of live_anon_name + the join-order ordinal would hand the cockpit a SECOND
+ * opinion about what the wall says. That is worse than having no second column:
+ * the creator would confidently answer using a nickname nobody in the room can
+ * see, and would have no way to notice.
+ *
+ * Keyed on the participant id, not user_id — the view nulls everyone else's
+ * user_id under privacy mode (that was the E1 hardening), so id is the only
+ * column that survives masking and still joins to a leaderboard row.
+ *
+ * The view is also gated on leaderboard_visibility = 'full', so with the
+ * standings set to "Just me" or "Off" this comes back all but empty. That is
+ * consistent rather than broken: when no standings are on the wall, there are no
+ * aliases the room has seen, and LiveLeaderboard prints nothing for a row it has
+ * no alias for.
+ */
+export async function fetchRoomAliases(examId: string): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from("live_participants_public")
+    .select("id, display_name")
+    .eq("live_exam_id", examId);
+
+  if (error) throw error;
+  const map = new Map<string, string>();
+  ((data || []) as { id: string; display_name: string }[]).forEach((r) => {
+    map.set(r.id, r.display_name);
   });
   return map;
 }

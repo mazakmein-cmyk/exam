@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, BookOpen, Store, Search, ArrowLeft, Share2, MoreVertical, Radio } from "lucide-react";
+import { FileText, BookOpen, Store, Search, ArrowLeft, Share2, MoreVertical, Radio, Plus } from "lucide-react";
 import VerifiedBadge from "@/components/VerifiedBadge";
 import { getVerificationTier } from "@/lib/verification";
 import Navbar from "@/components/Navbar";
@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/components/ui/use-toast";
 import OnboardingModal from "@/components/OnboardingModal";
+import JoinLiveExamDialog from "@/components/live/JoinLiveExamDialog";
 import { fetchMyParticipatedLiveExams } from "@/services/liveExamService";
 
 type Exam = {
@@ -48,7 +49,15 @@ const Marketplace = () => {
     const [activeTab, setActiveTab] = useState<"mock" | "live">("mock");
     const [liveExams, setLiveExams] = useState<any[]>([]);
     const [loadingLive, setLoadingLive] = useState(false);
+    const [joinOpen, setJoinOpen] = useState(false);
     const navigate = useNavigate();
+
+    // Joining by code is a student action. Creators are bounced off this page by
+    // use-user-role anyway, and a creator account cannot sit an exam at all
+    // (see examAccess.ts) — so the button never offers them a dead end. `null`
+    // is a visitor who hasn't signed in yet: they get the button, and the live
+    // exam screen sends them through student auth and back to the room.
+    const canJoinLive = role !== "creator";
 
     // Only show categories that actually have a published exam — no dead filter
     // options. (Creators still pick from the full admin list when tagging exams.)
@@ -182,6 +191,7 @@ const Marketplace = () => {
                 isOpen={showOnboardingModal}
                 onComplete={() => setShowOnboardingModal(false)}
             />
+            <JoinLiveExamDialog open={joinOpen} onOpenChange={setJoinOpen} />
 
             <main className="container mx-auto max-w-7xl px-6 py-8">
                 {/* Back Button */}
@@ -206,29 +216,45 @@ const Marketplace = () => {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit mb-6 border border-border/50">
-                    <button
-                        onClick={() => setActiveTab("mock")}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                            activeTab === "mock"
-                                ? "bg-background text-foreground shadow-sm border border-border/60"
-                                : "text-muted-foreground hover:text-foreground"
-                        }`}
-                    >
-                        <FileText className="h-4 w-4" />
-                        Mock Exams
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("live")}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                            activeTab === "live"
-                                ? "bg-background text-foreground shadow-sm border border-border/60"
-                                : "text-muted-foreground hover:text-foreground"
-                        }`}
-                    >
-                        <Radio className="h-4 w-4" />
-                        My Live Exams
-                    </button>
+                {/* Tabs and the join action share one line. The join button is
+                    NOT scoped to the live tab: a student arriving while a room is
+                    already waiting for them shouldn't have to discover a tab
+                    first, and it is the one time-critical action on this page. */}
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                    <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit border border-border/50">
+                        <button
+                            onClick={() => setActiveTab("mock")}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                                activeTab === "mock"
+                                    ? "bg-background text-foreground shadow-sm border border-border/60"
+                                    : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            <FileText className="h-4 w-4" />
+                            Mock Exams
+                        </button>
+                        <button
+                            onClick={() => setActiveTab("live")}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                                activeTab === "live"
+                                    ? "bg-background text-foreground shadow-sm border border-border/60"
+                                    : "text-muted-foreground hover:text-foreground"
+                            }`}
+                        >
+                            <Radio className="h-4 w-4" />
+                            My Live Exams
+                        </button>
+                    </div>
+
+                    {canJoinLive && (
+                        <Button
+                            onClick={() => setJoinOpen(true)}
+                            className="h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-md shadow-emerald-600/20 hover:shadow-emerald-600/30 hover:-translate-y-px transition-all duration-200"
+                        >
+                            <Plus className="h-4 w-4" />
+                            Join with code
+                        </Button>
+                    )}
                 </div>
 
                 {activeTab === "mock" && (
@@ -332,11 +358,26 @@ const Marketplace = () => {
                                 <p className="text-muted-foreground">Loading live exams...</p>
                             </div>
                         ) : liveExams.length === 0 ? (
+                            // The list is empty for every student until their first
+                            // join — which is exactly the moment a code is in hand,
+                            // so the way in belongs here rather than only up in the
+                            // header.
                             <Card>
-                                <CardContent className="flex flex-col items-center justify-center py-12">
+                                <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                                     <Radio className="h-16 w-16 text-muted-foreground mb-4" />
-                                    <h3 className="text-lg font-semibold mb-2">No live exams found</h3>
-                                    <p className="text-muted-foreground mb-4">You haven't participated in any live exams yet.</p>
+                                    <h3 className="text-lg font-semibold mb-2">No live exams yet</h3>
+                                    <p className="text-muted-foreground mb-5 max-w-sm text-sm">
+                                        Rooms you join show up here. Got a code from your teacher? Enter it and you're in.
+                                    </p>
+                                    {canJoinLive && (
+                                        <Button
+                                            onClick={() => setJoinOpen(true)}
+                                            className="h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-md shadow-emerald-600/20 hover:shadow-emerald-600/30 hover:-translate-y-px transition-all duration-200"
+                                        >
+                                            <Plus className="h-4 w-4" />
+                                            Join with code
+                                        </Button>
+                                    )}
                                 </CardContent>
                             </Card>
                         ) : (

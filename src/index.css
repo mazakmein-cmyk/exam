@@ -542,6 +542,448 @@ div[class*="Suggestions"] {
   padding-bottom: 2px;
 }
 
+/*
+  ── Passage questions ───────────────────────────────────────────────────────
+  A passage question is two blocks of text with different jobs, and the layout
+  has to say so before either is read. See the header of LiveQuestionBody.tsx for
+  the reasoning; this is where the shape lives, because the decision depends on
+  the frame (and on the stage, on its aspect ratio) rather than on any prop.
+
+  Stacked by default — the phone case, and the honest fallback for any frame too
+  narrow to hold two readable columns.
+*/
+.live-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+}
+
+.live-split-passage,
+.live-split-question {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/*
+  The passage as a block rather than a column with a rule beside it.
+
+  A hairline divider only reads as a division when both sides are the same kind of
+  thing, and it disappears entirely when the two panes stack — which is the phone
+  layout, and therefore most of the traffic. A tinted surface with an accent rule
+  down its edge survives stacking, distance and a bad projector, and it is one
+  idiom instead of two.
+*/
+.live-split-passage {
+  border-left: 3px solid hsl(var(--primary) / 0.35);
+  border-radius: 0.25rem 0.75rem 0.75rem 0.25rem;
+  background: hsl(var(--muted) / 0.4);
+  padding: 0.85rem 1rem;
+}
+
+.live-split-compact {
+  gap: 0.85rem;
+}
+
+.live-split-compact .live-split-passage,
+.live-split-compact .live-split-question {
+  gap: 0.4rem;
+}
+
+.live-split-compact .live-split-passage {
+  padding: 0.6rem 0.75rem;
+}
+
+/*
+  Side by side once there is room — and asymmetric, because the two panes hold
+  wildly different amounts of text. An even split left the question side
+  permanently half empty while the passage, which is what actually constrains the
+  type size, was squeezed into the other half.
+*/
+@media (min-width: 64rem) {
+  .live-split {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+.live-eyebrow {
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.live-passage-figure {
+  display: flex;
+  justify-content: center;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 0.75rem;
+  background: hsl(var(--background) / 0.6);
+  padding: 0.5rem;
+}
+
+/*
+  ── The focus screen ────────────────────────────────────────────────────────
+  The projector / livestream frame, whose theme is a broadcast decision made by
+  the creator rather than a preference expressed by the viewer. Everything below
+  reads from the `--stage-*` custom properties that lib/live/stageTheme.ts puts
+  on the shell, so one attribute swap re-themes the whole frame.
+
+  These live in CSS rather than in the components because they reach INTO
+  author-supplied HTML: a question body arrives as a blob with its own tables and
+  images, and `.live-prose` styles it against the app's tokens. On the stage those
+  tokens are the wrong ones — `hsl(var(--muted))` is a pale grey that disappears
+  on the dark frame and a table border in `hsl(var(--border))` disappears on the
+  light one. There is no prop that can reach a <th> inside a dangerouslySetInnerHTML.
+*/
+.live-stage {
+  color: var(--stage-fg);
+  background-color: var(--stage-bg);
+}
+
+.stage-card {
+  border: 1px solid var(--stage-line);
+  background: var(--stage-surface);
+  border-radius: 1.25rem;
+}
+
+/*
+  ── Stage layout ────────────────────────────────────────────────────────────
+  Written as CSS rather than utilities because the rules that matter here are
+  about the SHAPE of the frame, not its width, and Tailwind's breakpoints are
+  width-only. A focus screen has to hold up on at least four shapes that a normal
+  page never sees:
+
+    16:9 projector       the design target
+    16:10 / 4:3 beamer   older lecture halls, still everywhere
+    ultrawide, short     a browser window on a laptop, dragged wide — the one that
+                         broke, because vertical space is the scarce resource and
+                         a width-only breakpoint cannot know that
+    portrait            a vertical stream (9:16) or a rotated monitor
+
+  So the single structural decision — is there room for a rail BESIDE the question,
+  or does it go under it — is gated on width AND aspect ratio together. Height
+  alone drives the density tiers below it.
+*/
+.stage-frame {
+  display: flex;
+  flex-direction: column;
+  /* vh first as the fallback: where dvh is unsupported the frame must still be
+     viewport-height, because an auto-height frame lets the question measure
+     itself against infinity and overflow every screen after it. */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  /*
+    The safe margin. Both ends of the clamp are load-bearing: a 1024×768 beamer
+    cannot spare 4rem a side, and a 4K wall with 1rem of it reads as a webpage
+    rather than a broadcast. The middle term is what a stream needs — roughly 3%
+    per side, clear of the chat overlays and lower thirds that get composited over
+    the edges of a capture.
+  */
+  --stage-pad-x: clamp(1rem, 3.2vw, 4rem);
+  --stage-gap: clamp(0.75rem, 2vh, 1.5rem);
+}
+
+.stage-pad {
+  padding-left: var(--stage-pad-x);
+  padding-right: var(--stage-pad-x);
+}
+
+.stage-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(1rem, 2vw, 2rem);
+  padding-top: clamp(0.6rem, 2.4vh, 2rem);
+}
+
+.stage-main {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--stage-gap);
+  padding-top: clamp(0.5rem, 1.6vh, 1.5rem);
+  padding-bottom: 0.5rem;
+}
+
+.stage-body {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+}
+
+/* Stacked by default — a row under the question. */
+.stage-rail {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--stage-gap);
+}
+
+.stage-rail > * {
+  min-width: 0;
+}
+
+/* Whatever wants the leftover space in the rail: standings, or the moment card. */
+.stage-rail-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* The far end of the rail: the right in a row, the bottom in a column. */
+.stage-rail-push {
+  margin-left: auto;
+}
+
+/*
+  Stacked, the clock is sized off viewport HEIGHT: on a short ultrawide window the
+  scarce axis is vertical, and a clock sized off width would eat the question.
+*/
+.stage-clock {
+  flex-shrink: 0;
+  width: clamp(5.5rem, 17vh, 11rem);
+}
+
+.stage-foot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: clamp(0.4rem, 1.2vh, 1rem);
+  padding-bottom: clamp(0.5rem, 2vh, 1.5rem);
+}
+
+/* Answer choices. minmax(0, 1fr) rather than 1fr: a long unbroken option string
+   in an `auto`-floored track widens the grid past its frame instead of wrapping,
+   which is the other way this screen used to overflow. */
+.stage-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.45em;
+  margin-top: 0.8em;
+  /* The question is the hero; the choices are the answer to it. At parity they
+     compete, and four sentence-length options at the question's own size is also
+     what makes a frame overflow in the first place. */
+  font-size: 0.85em;
+}
+
+/* ── Wide enough, and landscape: the rail moves beside the question ── */
+@media (min-width: 60rem) and (min-aspect-ratio: 1/1) {
+  .stage-main {
+    flex-direction: row;
+  }
+
+  .stage-rail {
+    flex-direction: column;
+    width: clamp(15rem, 21vw, 22rem);
+  }
+
+  /*
+    `margin-block: auto` alongside the push below is what stops the rail looking
+    abandoned. While a question is running the rail holds two things — the clock and
+    the join panel — and the panel is pinned to the bottom, so the clock sat hard
+    against the top of a 4K column with a metre of nothing under it. Three auto
+    margins share the slack instead, which lands the clock in the upper third,
+    roughly on the question's own optical centre. When standings or a moment card
+    are present they take the space (they grow) and every auto here resolves to
+    zero, so this costs nothing in the states that already had content.
+  */
+  .stage-clock {
+    width: 100%;
+    max-width: 15rem;
+    margin-inline: auto;
+    margin-block: auto;
+  }
+
+  .stage-rail-push {
+    margin-left: 0;
+    margin-top: auto;
+  }
+
+  .stage-options[data-multi="true"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* ── Short frames: density, not reflow ── */
+@media (max-height: 46rem) {
+  .stage-frame {
+    --stage-gap: 0.5rem;
+  }
+
+  .stage-head {
+    padding-top: 0.5rem;
+  }
+
+  .stage-clock {
+    max-width: 9.5rem;
+  }
+}
+
+/* ── Very short: the rail keeps only what a room still needs ── */
+@media (max-height: 32rem) {
+  .stage-clock {
+    max-width: 7rem;
+  }
+
+  .stage-rail-optional {
+    display: none;
+  }
+}
+
+/* Chrome labels are for the creator standing at the laptop, and are the first
+   thing to go when the footer runs out of room. */
+@media (max-width: 60rem), (max-aspect-ratio: 1/1) {
+  .stage-chrome-label {
+    display: none;
+  }
+}
+
+.live-stage .live-prose th,
+.live-stage .live-prose td {
+  border-color: var(--stage-line);
+}
+
+.live-stage .live-prose th {
+  background: var(--stage-surface-2);
+}
+
+/* Em-based, so an image inside a projected question scales with the text. */
+.live-stage .live-prose img {
+  border-radius: 0.35em;
+  margin: 0.35em 0;
+}
+
+/*
+  ── A passage question on the wall ──────────────────────────────────────────
+  Every length here is in ems, because this whole subtree sits inside the box
+  useFitText measured: a rem or a px would ignore the size the frame chose, which
+  is how a projected passage ends up as a caption under 80px type.
+*/
+.live-stage .live-split {
+  gap: 1em;
+}
+
+.live-stage .live-split-passage {
+  gap: 0.45em;
+  /* The app rule is 3px — invisible on a 4K wall, a slab on a 1024px beamer. */
+  border-left: 0.1em solid var(--stage-accent);
+  border-radius: 0.1em 0.4em 0.4em 0.1em;
+  background: var(--stage-surface);
+  padding: 0.6em 0.75em;
+}
+
+.live-stage .live-split-question {
+  gap: 0.4em;
+}
+
+.live-stage .live-eyebrow {
+  color: var(--stage-faint);
+}
+
+.live-stage .live-passage-figure {
+  border-color: var(--stage-line);
+  border-width: max(1px, 0.02em);
+  border-radius: 0.35em;
+  background: var(--stage-surface-2);
+  padding: 0.3em;
+}
+
+/*
+  The passage's ink and size, and the bug that dictates both.
+
+  It used to carry `text-foreground/90` — one of the APP's tokens. The focus
+  screen renders outside the app's theme wrapper, so that resolved to the light
+  theme's near-black ink and the passage was drawn black on the #08080f frame:
+  present, and completely unreadable, in front of a room. The question beside it
+  came out white for the giveaway reason that it had no colour class at all and
+  inherited the stage's. It is the same failure LiveOption.tsx documents for
+  white-on-white choices, and the rule it implies is absolute — nothing in this
+  subtree may borrow a viewer-themed token, because the viewer is a room and the
+  theme is a broadcast decision.
+
+  So: the frame's own ink, at full strength. The passage is set SMALLER than the
+  ask, never fainter. Opacity is a hierarchy tool a laptop can afford; on a
+  projector in a lit hall, and on a stream that has spent its bitrate on the
+  question, 64% white is not de-emphasised — it is gone.
+*/
+.live-stage .live-passage-text {
+  color: var(--stage-fg);
+  font-size: 0.86em;
+}
+
+/* ── Wide enough, and landscape: the two panes go side by side ── */
+@media (min-width: 60rem) and (min-aspect-ratio: 1/1) {
+  /*
+    Slightly wider than the app's split. The choices live in the question pane on
+    this screen (see LiveQuestionBody's `children`), so the right side is carrying
+    the ask AND four cards, and the passage can afford less of the extra.
+  */
+  .live-stage .live-split {
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+    gap: 1.15em;
+  }
+
+  /*
+    A one-line question against a twelve-line passage, top-aligned, is the void
+    that made the wall look broken — half the frame empty with a sentence
+    stranded in the corner of it. Centred, the ask reads as the counterpart to the
+    passage rather than an afterthought above nothing.
+  */
+  .live-stage .live-split-question {
+    justify-content: center;
+  }
+
+  /*
+    Two columns of choices inside a half-width pane is not a grid, it is two
+    columns of wrapped sentences. The full-frame rule (.stage-options) still
+    applies to every question without a passage.
+  */
+  .live-stage .live-split-question .stage-options[data-multi="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/*
+  A question arriving on screen.
+
+  Deliberately a transform-and-opacity animation on an INNER element: the fit-text
+  container gates its own opacity inline while it measures, and a CSS animation
+  outranks an inline declaration. Animating the same element would flash the
+  question at its unmeasured size — the exact artefact the measuring exists to
+  prevent — so the two concerns are kept on separate elements.
+*/
+@keyframes stage-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.3em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.stage-rise {
+  animation: stage-rise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-rise {
+    animation: none;
+  }
+}
+
 /* Breathing "on air" dot for the LIVE badge. */
 @keyframes live-pulse-ring {
   0%   { box-shadow: 0 0 0 0 hsl(0 84% 60% / 0.55); }

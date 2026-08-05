@@ -3,9 +3,21 @@
 --
 -- Paste this whole file into the Supabase SQL editor and run it once.
 --
--- Order is load-bearing: the moments and report migrations redefine functions
--- that the controls migration establishes. Running them out of order would leave
--- an older definition in place with no error to tell you.
+-- Order is load-bearing, and more so than when this file had five sections. The
+-- moments and report migrations redefine functions that the controls migration
+-- establishes; on top of that, THREE of the sections below rewrite
+-- live_session_sync whole — the focus screen (20260808), the answer reveal
+-- (20260810) and "off" means off (20260812). CREATE OR REPLACE does not merge
+-- bodies, so whichever of the three runs LAST is the definition the database
+-- keeps and the other two are discarded without a word. 20260812 is last on
+-- purpose: its body is the only one carrying all of present_show_leaderboard,
+-- present_show_river, present_show_options, present_reveal_answer,
+-- present_theme AND the score_visible gate at once.
+--
+-- Run them out of order and the RPC still exists, still returns JSON, and still
+-- looks healthy — it just answers in an older shape. What you get instead is a
+-- projector that has quietly lost a setting, or the mid-question correctness
+-- leak reopened, and nothing anywhere that says so.
 --
 -- Every statement is idempotent, so re-running this file is safe.
 --
@@ -16,7 +28,24 @@
 --   20260803020000  privacy re-mask trigger
 --   20260803030000  security hardening
 --
--- After this, run supabase/tests/verify_phase2.sql — 36 checks.
+-- In this file, in the order they must run:
+--   20260803040000  HOTFIX — a student can SELECT their own participant row
+--   20260804000000  A3 add time, A10 undo unlock
+--   20260805000000  B14 moments and celebration
+--   20260806000000  C7 drag reorder
+--   20260807000000  D1 session report
+--   20260808000000  Q15 show the choices, Q16 stage theme   [live_session_sync]
+--   20260809000000  privacy mode made visible — nickname derivation
+--   20260810000000  Q15b reveal the answer when time is up  [live_session_sync]
+--   20260811000000  A3b end the clock now
+--   20260812000000  E3 "off" means off             [live_session_sync — LAST]
+--
+-- After this, run supabase/tests/verify_phase2.sql — 36 checks. It predates the
+-- last five sections and asserts nothing about them, so it is no longer the whole
+-- verification. Each of those five ends in its own DO block that raises if its
+-- columns, functions or JSON keys did not land, which means the paste itself is
+-- the check: a half-applied section stops the run with an exception here, rather
+-- than being discovered a week later on a projector in front of a class.
 -- ============================================================================
 
 
@@ -2066,3 +2095,1537 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.end_live_session(UUID) TO authenticated;
+
+
+
+
+-- ##########################################################################
+-- FOCUS SCREEN — STAGING CONTROLS (Q15 options, Q16 theme)
+-- source: supabase/migrations/20260808000000_live_v2_focus_screen.sql
+-- ##########################################################################
+
+-- ============================================================================
+-- LIVE EXAM v2 — THE FOCUS SCREEN: STAGING CONTROLS (Q15, Q16)
+--
+-- Two settings for the projector / livestream view, both of them the creator's
+-- call rather than the viewer's, and both of them display-only.
+--
+--   present_show_options  Q15. Are the answer choices drawn on the wall at all?
+--                         Off is how you read the options aloud, hold a
+--                         discussion on the question before anyone has seen them,
+--                         or keep an answer set off camera on a public stream.
+--                         Students always receive every choice on their own
+--                         device — this changes one screen, never the exam.
+--
+--   present_theme         Q16. 'dark' | 'light'. A theme is normally the viewer's
+--                         preference; here nobody looking at the screen can reach
+--                         the setting. A weak projector in a daylit room cannot
+--                         render black — it renders grey — and the creator is the
+--                         only party in the building who can see that.
+--
+-- Why they belong on live_exams next to the other present_* columns
+-- ----------------------------------------------------------------
+-- The focus screen reads the session from the database itself rather than
+-- mirroring the control room, which is what lets it keep counting down when the
+-- creator closes the cockpit. A setting held only in the control room's memory
+-- would be lost by exactly the accident the split was designed to survive, and
+-- would not be there at all when the projector window is reloaded mid-session.
+--
+-- The BroadcastChannel `config` intent still exists, but only as an optimistic
+-- preview so a toggle lands on the same keystroke. The row remains the truth.
+--
+-- Idempotent: safe to re-run.
+-- ============================================================================
+
+
+-- ============================================================
+-- 1. Columns
+--
+--    Defaults chosen so that an exam created before this migration behaves
+--    exactly as it did before it: choices shown, dark frame.
+-- ============================================================
+ALTER TABLE public.live_exams
+  ADD COLUMN IF NOT EXISTS present_show_options BOOLEAN NOT NULL DEFAULT true,   -- Q15
+  ADD COLUMN IF NOT EXISTS present_theme        TEXT    NOT NULL DEFAULT 'dark'; -- Q16
+
+-- A CHECK rather than an enum: the set is small, unlikely to grow, and a text
+-- column with a constraint can be widened in one statement where a Postgres enum
+-- needs a type migration. ADD CONSTRAINT has no IF NOT EXISTS, hence the guard.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'live_exams_present_theme_check'
+      AND conrelid = 'public.live_exams'::regclass
+  ) THEN
+    ALTER TABLE public.live_exams
+      ADD CONSTRAINT live_exams_present_theme_check
+      CHECK (present_theme IN ('dark', 'light'));
+  END IF;
+END $$;
+
+COMMENT ON COLUMN public.live_exams.present_show_options IS
+  'Q15. Display-only: whether the focus screen draws the answer choices. Students always receive them.';
+COMMENT ON COLUMN public.live_exams.present_theme IS
+  'Q16. Focus screen frame: dark or light. A broadcast decision, not a viewer preference.';
+
+
+-- ============================================================
+-- 2. live_session_sync — carry the two new settings
+--
+--    Redefined verbatim from 20260804000000 with two keys added to the returned
+--    object and nothing else touched. In particular §3 of 20260803030000 (the
+--    score_visible gate) is preserved below: dropping it would reopen the
+--    mid-question correctness leak, which is exactly how it was nearly lost once
+--    already.
+--
+--    Clients tolerate the keys being absent (they read `!== false` and validate
+--    the theme string), so an app deployed ahead of this migration degrades to the
+--    defaults rather than failing. This function is what makes them real.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.live_session_sync(
+  p_live_exam_id UUID,
+  p_beat BOOLEAN DEFAULT false
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid            UUID := auth.uid();
+  v_exam           public.live_exams;
+  v_is_creator     BOOLEAN := false;
+  v_is_participant BOOLEAN := false;
+  v_online         INTEGER := 0;
+  v_joined         INTEGER := 0;
+  v_time_seconds   INTEGER;
+  v_deadline       TIMESTAMPTZ;
+  v_visual_end     TIMESTAMPTZ;
+  v_ms_to_deadline BIGINT;
+  v_ms_to_visual   BIGINT;
+  v_open           BOOLEAN := false;
+  v_wait_ms        INTEGER;
+  v_open_ms        INTEGER;
+  v_next_ms        INTEGER;
+  v_my_rank        INTEGER;
+  v_my_correct     INTEGER;
+  v_confusion      INTEGER;
+  v_open_responses INTEGER;
+  v_canonical_id   UUID;
+  v_score_visible  BOOLEAN := false;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT * INTO v_exam FROM public.live_exams WHERE id = p_live_exam_id;
+  IF v_exam.id IS NULL THEN
+    RAISE EXCEPTION 'Live exam not found';
+  END IF;
+
+  v_is_creator := (v_exam.user_id = v_uid);
+
+  IF NOT v_is_creator AND v_exam.status NOT IN ('published', 'live', 'ended') THEN
+    RAISE EXCEPTION 'Live exam not available';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM public.live_participants
+    WHERE live_exam_id = p_live_exam_id AND user_id = v_uid
+  ) INTO v_is_participant;
+
+  IF p_beat AND v_is_participant THEN
+    INSERT INTO public.live_presence (live_exam_id, user_id, last_seen_at)
+    VALUES (p_live_exam_id, v_uid, now())
+    ON CONFLICT (live_exam_id, user_id) DO UPDATE SET last_seen_at = now();
+  END IF;
+
+  SELECT COUNT(*) INTO v_online
+  FROM public.live_presence
+  WHERE live_exam_id = p_live_exam_id
+    AND last_seen_at > now() - interval '45 seconds';
+
+  SELECT COUNT(*) INTO v_joined
+  FROM public.live_participants
+  WHERE live_exam_id = p_live_exam_id;
+
+  IF v_exam.status = 'live'
+     AND v_exam.current_question_index >= 0
+     AND v_exam.current_question_unlocked_at IS NOT NULL THEN
+    SELECT t.id, t.time_seconds INTO v_canonical_id, v_time_seconds
+    FROM (
+      SELECT lq.id, lq.time_seconds,
+             ROW_NUMBER() OVER (ORDER BY lq.global_index, lq.q_no, lq.id) - 1 AS ordinal
+      FROM public.live_questions lq
+      JOIN public.live_sections ls ON lq.live_section_id = ls.id
+      WHERE ls.live_exam_id = p_live_exam_id AND ls.language = v_exam.primary_language
+    ) t
+    WHERE t.ordinal = v_exam.current_question_index;
+
+    IF v_time_seconds IS NOT NULL THEN
+      v_visual_end := public.live_question_visual_end(
+        v_exam.current_question_unlocked_at, v_time_seconds,
+        v_exam.current_question_extra_seconds
+      );
+      v_deadline := public.live_question_deadline(
+        v_exam.current_question_unlocked_at, v_time_seconds,
+        v_exam.current_question_extra_seconds
+      );
+      v_ms_to_visual   := (extract(epoch from (v_visual_end - now())) * 1000)::bigint;
+      v_ms_to_deadline := (extract(epoch from (v_deadline - now())) * 1000)::bigint;
+      v_open := v_ms_to_deadline > 0;
+    END IF;
+  END IF;
+
+  v_wait_ms := CASE WHEN v_online > 600 THEN 4000 WHEN v_online > 200 THEN 2500 ELSE 1500 END;
+  v_open_ms := CASE WHEN v_online > 600 THEN 8000 WHEN v_online > 200 THEN 6000 ELSE 5000 END;
+
+  IF v_exam.status IN ('ended', 'draft') THEN
+    v_next_ms := 0;
+  ELSIF v_open THEN
+    IF v_ms_to_visual > 0 THEN
+      -- Land just BEFORE the visual end. That is the last instant A3 can be used,
+      -- so it is the one a poll-lane client must not sleep through.
+      v_next_ms := GREATEST(750, LEAST(v_open_ms, (v_ms_to_visual - 500)::integer));
+    ELSE
+      -- Inside the grace: the close is imminent and no extension is possible.
+      v_next_ms := GREATEST(750, (v_ms_to_deadline + 1000)::integer);
+    END IF;
+  ELSE
+    v_next_ms := v_wait_ms;
+  END IF;
+
+  IF v_is_creator THEN
+    IF v_canonical_id IS NOT NULL THEN
+      SELECT COUNT(*) INTO v_open_responses
+      FROM public.live_responses
+      WHERE live_exam_id = p_live_exam_id AND live_question_id = v_canonical_id;
+
+      SELECT COUNT(*) INTO v_confusion
+      FROM public.live_confusion_signals
+      WHERE live_exam_id = p_live_exam_id AND live_question_id = v_canonical_id;
+    END IF;
+  ELSE
+    -- Preserved from 20260803030000 §3. A score that moves is the same
+    -- information as an is_correct flag, so it is withheld on the same terms.
+    v_score_visible := (
+      v_exam.status = 'ended'
+      OR v_exam.current_question_index < 0
+      OR NOT v_open
+    );
+
+    IF v_score_visible THEN
+      SELECT rank, total_correct INTO v_my_rank, v_my_correct
+      FROM public.live_participants
+      WHERE live_exam_id = p_live_exam_id AND user_id = v_uid;
+    END IF;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'status',                         v_exam.status,
+    'current_question_index',         v_exam.current_question_index,
+    'current_question_unlocked_at',   v_exam.current_question_unlocked_at,
+    'current_question_extra_seconds', v_exam.current_question_extra_seconds,
+    'scheduled_start_at',             v_exam.scheduled_start_at,
+    'auto_start',                     v_exam.auto_start,
+    'privacy_mode',                   v_exam.privacy_mode,
+    'leaderboard_visibility',         v_exam.leaderboard_visibility,
+    'present_show_leaderboard',       v_exam.present_show_leaderboard,
+    'present_show_river',             v_exam.present_show_river,
+    'present_show_options',           v_exam.present_show_options,
+    'present_theme',                  v_exam.present_theme,
+    'celebrate_seq',                  v_exam.celebrate_seq,
+    'total_questions',                v_exam.total_questions,
+    'server_now',                     now(),
+    'next_poll_ms',                   v_next_ms,
+    'online_count',                   v_online,
+    'joined_count',                   v_joined,
+    'is_creator',                     v_is_creator,
+    'my_rank',                        v_my_rank,
+    'my_total_correct',               v_my_correct,
+    'score_visible',                  (v_is_creator OR v_score_visible),
+    'confusion_count',                v_confusion,
+    'open_response_count',            v_open_responses
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.live_session_sync(UUID, BOOLEAN) TO authenticated;
+
+
+-- ============================================================
+-- 3. Self-check
+--
+--    A migration whose whole job is "two columns and one key each in a JSON blob"
+--    is exactly the kind that gets half-applied and noticed a week later on a
+--    projector in front of a class.
+-- ============================================================
+DO $$
+DECLARE
+  v_missing TEXT[] := ARRAY[]::TEXT[];
+  v_src     TEXT;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'live_exams'
+      AND column_name = 'present_show_options'
+  ) THEN
+    v_missing := v_missing || 'live_exams.present_show_options';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'live_exams'
+      AND column_name = 'present_theme'
+  ) THEN
+    v_missing := v_missing || 'live_exams.present_theme';
+  END IF;
+
+  SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
+  IF v_src IS NULL OR v_src NOT LIKE '%present_show_options%' THEN
+    v_missing := v_missing || 'live_session_sync does not return present_show_options';
+  END IF;
+  IF v_src IS NULL OR v_src NOT LIKE '%present_theme%' THEN
+    v_missing := v_missing || 'live_session_sync does not return present_theme';
+  END IF;
+
+  IF array_length(v_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'Focus screen migration incomplete: %', array_to_string(v_missing, ', ');
+  END IF;
+
+  RAISE NOTICE 'Focus screen staging controls ready (Q15 options, Q16 theme).';
+END $$;
+
+
+
+
+-- ##########################################################################
+-- PRIVACY MODE VISIBILITY FIXES
+-- source: supabase/migrations/20260809000000_live_v2_privacy_visible.sql
+-- ##########################################################################
+
+-- ============================================================================
+-- LIVE EXAM v2 — PRIVACY MODE: MAKE IT LOOK LIKE IT WORKS
+--
+-- "Hide student names is not working at all."
+--
+-- It was working. Every masking path was intact and the database was doing its
+-- job: the masked view, the analytics compute, the re-mask trigger and the report
+-- token path all keyed correctly off live_exams.privacy_mode. What the feature
+-- did not do was produce any evidence of itself, and two of the three names it
+-- generated were the same name.
+--
+-- Three defects, all in the derivation of the pseudonym rather than in the
+-- decision to use one:
+--
+--   1. live_anon_name gave EVERY participant in a class of 48 or fewer the same
+--      adjective, 'Anonymous' — so a real session read "Anonymous Aardvark",
+--      "Anonymous Badger", "Anonymous Beaver". The integer division that picks the
+--      adjective only advances once per 48 joiners, so in every session anyone
+--      will ever run it never advanced at all. The UI promises "Brave Badger";
+--      what the room got looked like a placeholder that had failed to fill in,
+--      which is precisely how a working feature gets reported as broken.
+--
+--   2. get_live_moments computed its ordinal with a ROW_NUMBER() over a subquery
+--      already filtered to one participant, so it was always 1 and the ordinal
+--      always 0. Every moment of the session was therefore attributed to
+--      live_anon_name(0) — one pseudonym for the whole class, and not the same one
+--      the leaderboard gave that student.
+--
+--   3. Consequence of fixing (1): stored analytics names must be re-derived, or
+--      fastest_user_name keeps yesterday's pseudonym while the leaderboard shows
+--      today's. live_refresh_fastest_names already exists for exactly this and is
+--      reused rather than reimplemented.
+--
+-- Idempotent: safe to re-run.
+-- ============================================================================
+
+
+-- ============================================================
+-- 1. live_anon_name — vary the adjective within the first class
+--
+--    Same 48 x 48 = 2304 name space, still IMMUTABLE, still collision-free.
+--    The only change is which of the 2304 a given ordinal maps to.
+--
+--    The animal continues to come from ordinal % 48, so consecutive joiners get
+--    visibly different animals. The adjective now advances with the ordinal too:
+--
+--      adjective_index = (ordinal / 48 + ordinal) % 48
+--
+--    Still a bijection over 0..2303. Given a name, the animal fixes a = ordinal
+--    % 48 and the adjective then fixes ordinal / 48 uniquely, so no two ordinals
+--    below 2304 can collide — the property the old expression had and the reason
+--    there are no numeric suffixes anywhere in this feature.
+--
+--    'Anonymous' is GONE from the adjective list, replaced by 'Agile'.
+--
+--    That word was the actual source of the complaint, and offsetting the index
+--    to dodge it was the wrong fix: an offset only moves which ordinal lands on
+--    it. The first attempt here added + 2, which pushed the placeholder from the
+--    1st joiner to the 47th — still an ordinary class size, and now harder to
+--    find. A name space for anonymising people should not contain the word
+--    "Anonymous" at any index; every one of the 2304 names should read like a
+--    nickname. Deleting it makes that unconditional instead of arithmetic.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.live_anon_name(p_ordinal INTEGER)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT adjectives[((GREATEST(COALESCE(p_ordinal, 0), 0) / 48)
+                     + GREATEST(COALESCE(p_ordinal, 0), 0)) % 48 + 1]
+         || ' ' ||
+         animals[GREATEST(COALESCE(p_ordinal, 0), 0) % 48 + 1]
+  FROM (
+    SELECT
+      ARRAY[
+        'Agile','Bold','Brave','Bright','Calm','Cheerful','Clever','Curious',
+        'Daring','Eager','Fearless','Gentle','Graceful','Happy','Honest','Jolly',
+        'Keen','Kind','Lively','Loyal','Merry','Mighty','Nimble','Noble',
+        'Patient','Playful','Plucky','Polite','Proud','Quick','Quiet','Ready',
+        'Regal','Sharp','Silent','Sleek','Smart','Snappy','Steady','Sunny',
+        'Swift','Tidy','Upbeat','Valiant','Vivid','Warm','Wise','Witty'
+      ] AS adjectives,
+      ARRAY[
+        'Aardvark','Badger','Beaver','Bison','Cheetah','Cobra','Condor','Coyote',
+        'Crane','Dingo','Dolphin','Eagle','Falcon','Ferret','Finch','Gecko',
+        'Gibbon','Giraffe','Gopher','Heron','Ibex','Impala','Jackal','Jaguar',
+        'Kestrel','Koala','Lemur','Leopard','Lynx','Macaw','Magpie','Marmot',
+        'Meerkat','Mongoose','Narwhal','Ocelot','Osprey','Otter','Panda',
+        'Pelican','Puffin','Quail','Raccoon','Raven','Salmon','Tapir','Toucan',
+        'Walrus'
+      ] AS animals
+  ) lists;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.live_anon_name(INTEGER) TO authenticated, anon;
+
+
+-- ============================================================
+-- 2. get_live_moments — rank the whole room, not one row
+--
+--    The ordinal has to be the participant's position among ALL participants of
+--    the exam, because that is what live_participants_public uses. The old
+--    LATERAL filtered to p.user_id = lm.user_id BEFORE the window function ran,
+--    so ROW_NUMBER() counted to one every time.
+--
+--    Redefined verbatim apart from that: the creator-only user_id projection
+--    (§ the masked view withholds the join key for the same reason) and the
+--    privacy_mode branch are preserved exactly.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.get_live_moments(p_live_exam_id UUID)
+RETURNS TABLE (
+  question_ordinal INTEGER,
+  kind TEXT,
+  user_id UUID,
+  display_name TEXT,
+  value INTEGER,
+  priority INTEGER
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_exam public.live_exams;
+BEGIN
+  SELECT * INTO v_exam FROM public.live_exams WHERE id = p_live_exam_id;
+  IF v_exam.id IS NULL OR v_exam.status NOT IN ('live', 'ended') THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  WITH ordinals AS (
+    -- Join order across the whole exam, 0-based — identical to the expression in
+    -- live_participants_public, so a student's moment pseudonym and their
+    -- leaderboard pseudonym are the same string.
+    SELECT
+      p.user_id AS uid,
+      p.display_name AS real_name,
+      (ROW_NUMBER() OVER (ORDER BY p.joined_at, p.id) - 1)::INTEGER AS ord
+    FROM public.live_participants p
+    WHERE p.live_exam_id = p_live_exam_id
+  )
+  SELECT
+    lm.question_ordinal,
+    lm.kind,
+    -- The id is withheld from everyone but the creator, for the same reason the
+    -- masked participant view withholds it: it maps back to a real person.
+    CASE WHEN v_exam.user_id = auth.uid() THEN lm.user_id ELSE NULL END,
+    CASE
+      WHEN lm.user_id IS NULL THEN NULL
+      WHEN v_exam.privacy_mode THEN public.live_anon_name(o.ord)
+      ELSE o.real_name
+    END,
+    lm.value,
+    lm.priority
+  FROM public.live_moments lm
+  LEFT JOIN ordinals o ON o.uid = lm.user_id
+  WHERE lm.live_exam_id = p_live_exam_id
+  ORDER BY lm.question_ordinal, lm.priority;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_live_moments(UUID) TO authenticated;
+
+
+-- ============================================================
+-- 3. Re-derive every stored pseudonym
+--
+--    live_anon_name changed, so every fastest_user_name written by the old
+--    expression is now inconsistent with what the view returns for the same
+--    student. live_refresh_fastest_names is the one place that derivation lives;
+--    it skips rows already correct, so this is cheap and fires no needless
+--    realtime UPDATE.
+--
+--    Run for every exam with a resolvable fastest answer, not only the
+--    privacy-mode ones — an exam toggled on and then off is the same bug pointing
+--    the other way.
+--
+--    The function is re-declared here rather than assumed.
+--
+--    It is created by 20260803020000, which APPLY_REMAINING.sql omits on the
+--    stated assumption that it "was applied earlier" — an assumption nothing
+--    verifies. The first draft of this migration guarded on the function existing
+--    and raised a WARNING if it did not, which was the wrong shape twice over:
+--    the Supabase SQL editor is this project's actual deployment channel and it
+--    renders result sets, not NOTICE/WARNING traffic, so the "loud" signal was
+--    invisible — and it left the one section that could silently do nothing as
+--    the one section with no assertion behind it.
+--
+--    CREATE OR REPLACE is idempotent and the body is copied verbatim, so this is
+--    safe whether or not 20260803020000 ran. Its only dependency is
+--    live_anon_name, which §1 has just redefined. The trigger that calls it still
+--    lives in 20260803020000 — this section makes the FUNCTION unconditional, not
+--    the trigger, so if that file was skipped the re-mask-on-toggle invariant is
+--    still missing and §4 now says so out loud.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.live_refresh_fastest_names(p_live_exam_id UUID)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_privacy BOOLEAN;
+BEGIN
+  SELECT privacy_mode INTO v_privacy
+  FROM public.live_exams
+  WHERE id = p_live_exam_id;
+
+  IF v_privacy IS NULL THEN
+    RETURN; -- unknown exam; nothing to do
+  END IF;
+
+  UPDATE public.live_question_analytics a
+  SET fastest_user_name = CASE
+        WHEN v_privacy THEN public.live_anon_name(o.ord)
+        ELSE o.display_name
+      END
+  FROM (
+    SELECT
+      lp.user_id,
+      lp.display_name,
+      (ROW_NUMBER() OVER (ORDER BY lp.joined_at, lp.id) - 1)::INTEGER AS ord
+    FROM public.live_participants lp
+    WHERE lp.live_exam_id = p_live_exam_id
+  ) o
+  WHERE a.live_exam_id = p_live_exam_id
+    AND a.fastest_user_id = o.user_id
+    -- Skip rows that are already correct, so a no-op toggle does not fire a
+    -- realtime UPDATE per question to every student in the room.
+    AND a.fastest_user_name IS DISTINCT FROM (
+      CASE WHEN v_privacy THEN public.live_anon_name(o.ord) ELSE o.display_name END
+    );
+
+  -- A row whose fastest participant no longer exists cannot be re-derived. Under
+  -- privacy mode that leaves a name we can no longer prove is safe, so blank it.
+  IF v_privacy THEN
+    UPDATE public.live_question_analytics a
+    SET fastest_user_name = NULL
+    WHERE a.live_exam_id = p_live_exam_id
+      AND a.fastest_user_id IS NOT NULL
+      AND a.fastest_user_name IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM public.live_participants lp
+        WHERE lp.live_exam_id = p_live_exam_id
+          AND lp.user_id = a.fastest_user_id
+      );
+  END IF;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.live_refresh_fastest_names(UUID) TO authenticated;
+
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT DISTINCT a.live_exam_id AS id
+    FROM public.live_question_analytics a
+    WHERE a.fastest_user_id IS NOT NULL
+  LOOP
+    PERFORM public.live_refresh_fastest_names(r.id);
+  END LOOP;
+END $$;
+
+
+-- ============================================================
+-- 4. Self-check
+--
+--    Every assertion is over the WHOLE 2304-name space, not a sample.
+--
+--    The first draft bounded two of these to ordinals 0..45 and both passed while
+--    ordinal 46 still produced "Anonymous Toucan" — a bound chosen, without
+--    meaning to, to stop one short of the surviving bug. A range that happens to
+--    exclude the failing case is worse than no test, because it reports safety.
+-- ============================================================
+DO $$
+DECLARE
+  v_missing TEXT[] := ARRAY[]::TEXT[];
+  v_distinct_adj INTEGER;
+  v_distinct_all INTEGER;
+  v_placeholder TEXT;
+  v_src TEXT;
+BEGIN
+  -- Consecutive joiners must differ in the adjective, not only the animal. 48 is
+  -- the full first block, i.e. every class that does not wrap.
+  SELECT COUNT(DISTINCT split_part(public.live_anon_name(n), ' ', 1))
+  INTO v_distinct_adj
+  FROM generate_series(0, 47) AS n;
+  IF v_distinct_adj <> 48 THEN
+    v_missing := v_missing || format(
+      'live_anon_name repeats adjectives within the first 48 ordinals (%s distinct) — the reported bug',
+      v_distinct_adj
+    );
+  END IF;
+
+  -- The word must not exist at ANY index. Checked across the entire space rather
+  -- than a plausible class size, because an index offset only moves which ordinal
+  -- lands on it.
+  SELECT string_agg(DISTINCT public.live_anon_name(n), ', ')
+  INTO v_placeholder
+  FROM generate_series(0, 2303) AS n
+  WHERE public.live_anon_name(n) ILIKE '%anonymous%';
+  IF v_placeholder IS NOT NULL THEN
+    v_missing := v_missing || format(
+      'live_anon_name still yields the placeholder word: %s', v_placeholder
+    );
+  END IF;
+
+  -- Collision-free across the full name space, which is what lets the feature
+  -- get away with no numeric suffixes.
+  SELECT COUNT(DISTINCT public.live_anon_name(n))
+  INTO v_distinct_all
+  FROM generate_series(0, 2303) AS n;
+  IF v_distinct_all <> 2304 THEN
+    v_missing := v_missing || format('live_anon_name is no longer collision-free (%s of 2304 distinct)', v_distinct_all);
+  END IF;
+
+  -- The moments ordinal must be ranked over the exam, not over one row.
+  SELECT p.prosrc INTO v_src
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = 'get_live_moments';
+  IF v_src IS NULL THEN
+    v_missing := v_missing || 'get_live_moments is missing';
+  ELSIF v_src LIKE '%p.user_id = lm.user_id%' THEN
+    v_missing := v_missing || 'get_live_moments still filters the participant set before ranking it';
+  END IF;
+
+  -- The re-mask-on-toggle invariant lives in 20260803020000, which
+  -- APPLY_REMAINING.sql omits by assumption. §3 makes the function unconditional
+  -- but cannot create the trigger, so check for it and name the remedy.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_live_privacy_mode_changed'
+  ) THEN
+    v_missing := v_missing || 'trigger trg_live_privacy_mode_changed is absent — apply 20260803020000_live_v2_privacy_remask_trigger.sql, or flipping privacy mode will not re-mask already-computed questions';
+  END IF;
+
+  IF array_length(v_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'Privacy-visibility migration incomplete: %', array_to_string(v_missing, ', ');
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- 5. Report the outcome as a ROW
+--
+--    Because the deployment channel is the Supabase SQL editor, which renders
+--    result sets and discards NOTICE/WARNING traffic. A migration whose only
+--    evidence of success is RAISE NOTICE finishes looking identical to one that
+--    silently skipped its middle section — which is the failure mode this whole
+--    file exists to stop happening to a different feature.
+--
+--    drifted_analytics_rows is the direct assertion §3 was missing: the number of
+--    stored fastest names that disagree with what the view would return for the
+--    same student right now. It must be 0.
+-- ============================================================
+SELECT
+  public.live_anon_name(0) AS first_joiner_is_called,
+  public.live_anon_name(1) AS second_joiner_is_called,
+  (
+    SELECT COUNT(*)
+    FROM public.live_question_analytics a
+    JOIN public.live_exams le ON le.id = a.live_exam_id
+    JOIN (
+      SELECT lp.live_exam_id, lp.user_id, lp.display_name,
+             (ROW_NUMBER() OVER (PARTITION BY lp.live_exam_id
+                                 ORDER BY lp.joined_at, lp.id) - 1)::INTEGER AS ord
+      FROM public.live_participants lp
+    ) o ON o.live_exam_id = a.live_exam_id AND o.user_id = a.fastest_user_id
+    WHERE a.fastest_user_name IS DISTINCT FROM (
+      CASE WHEN le.privacy_mode THEN public.live_anon_name(o.ord) ELSE o.display_name END
+    )
+  ) AS drifted_analytics_rows,
+  'expect drifted_analytics_rows = 0' AS note;
+
+
+
+
+-- ##########################################################################
+-- FOCUS SCREEN — REVEAL THE ANSWER WHEN TIME IS UP (Q15b)
+-- source: supabase/migrations/20260810000000_live_v2_present_reveal_answer.sql
+-- ##########################################################################
+
+-- ============================================================================
+-- LIVE EXAM v2 — THE FOCUS SCREEN: REVEAL THE ANSWER WHEN TIME IS UP (Q15b)
+--
+-- A third staging control, and a direct extension of Q15 rather than a new idea:
+--
+--   present_reveal_answer  Once the timer (plus its grace) has run out, mark the
+--                          correct choice on the wall — green, ticked, and named
+--                          in words underneath. Until then the wall looks exactly
+--                          as it does today.
+--
+-- Why it is bound to present_show_options
+-- ---------------------------------------
+-- There is nothing to mark when the choices are not drawn. A creator who hides
+-- the options is reading them aloud or holding the room on the question, and
+-- "the answer is B" on a wall showing no B is worse than silence. So the control
+-- room only offers this setting while the choices are on, and the focus screen
+-- gates the reveal on both.
+--
+-- That relationship is deliberately NOT a CHECK constraint. The two columns are
+-- independent preferences: a creator who turns the choices off mid-question to
+-- discuss it, then turns them back on, must get their reveal setting back — a
+-- constraint would force it to false on the way through and silently lose it.
+--
+-- Why nothing here needs a new security path
+-- ------------------------------------------
+-- This column decides whether the wall DRAWS a key it is allowed to have; it does
+-- not decide what it is allowed to have. That gate already exists and stays where
+-- it is: get_revealed_live_answers returns a question's correct_answer only once
+-- now() has passed live_question_deadline(unlocked_at, time_seconds, extra) — so
+-- extra time granted with A3 moves the reveal with it, and a client bug cannot
+-- pull an answer forward, because the server simply does not return one.
+--
+-- The focus screen still reads live_questions_student, which has no
+-- correct_answer column at all. The key arrives separately, late, and only for
+-- questions the server considers closed.
+--
+-- Default false: showing an answer key on a projector is a change of behaviour
+-- for a room and for a livestream, and every exam that existed before this
+-- migration must keep behaving as its creator last saw it.
+--
+-- Idempotent: safe to re-run.
+-- ============================================================================
+
+
+-- ============================================================
+-- 1. Column
+-- ============================================================
+ALTER TABLE public.live_exams
+  ADD COLUMN IF NOT EXISTS present_reveal_answer BOOLEAN NOT NULL DEFAULT false;  -- Q15b
+
+COMMENT ON COLUMN public.live_exams.present_reveal_answer IS
+  'Q15b. Display-only: whether the focus screen marks the correct choice once the question closes. Meaningful only while present_show_options is true. The answer itself is still gated by get_revealed_live_answers.';
+
+
+-- ============================================================
+-- 2. live_session_sync — carry the new setting
+--
+--    Redefined verbatim from 20260808000000 with one key added to the returned
+--    object and nothing else touched. In particular the score_visible gate from
+--    20260803030000 §3 is preserved below: dropping it would reopen the
+--    mid-question correctness leak, which is how it was nearly lost once already.
+--
+--    Clients tolerate the key being absent (they read `=== true`), so an app
+--    deployed ahead of this migration degrades to "off" — the safe direction for
+--    a setting whose only effect is putting an answer on a wall.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.live_session_sync(
+  p_live_exam_id UUID,
+  p_beat BOOLEAN DEFAULT false
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid            UUID := auth.uid();
+  v_exam           public.live_exams;
+  v_is_creator     BOOLEAN := false;
+  v_is_participant BOOLEAN := false;
+  v_online         INTEGER := 0;
+  v_joined         INTEGER := 0;
+  v_time_seconds   INTEGER;
+  v_deadline       TIMESTAMPTZ;
+  v_visual_end     TIMESTAMPTZ;
+  v_ms_to_deadline BIGINT;
+  v_ms_to_visual   BIGINT;
+  v_open           BOOLEAN := false;
+  v_wait_ms        INTEGER;
+  v_open_ms        INTEGER;
+  v_next_ms        INTEGER;
+  v_my_rank        INTEGER;
+  v_my_correct     INTEGER;
+  v_confusion      INTEGER;
+  v_open_responses INTEGER;
+  v_canonical_id   UUID;
+  v_score_visible  BOOLEAN := false;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT * INTO v_exam FROM public.live_exams WHERE id = p_live_exam_id;
+  IF v_exam.id IS NULL THEN
+    RAISE EXCEPTION 'Live exam not found';
+  END IF;
+
+  v_is_creator := (v_exam.user_id = v_uid);
+
+  IF NOT v_is_creator AND v_exam.status NOT IN ('published', 'live', 'ended') THEN
+    RAISE EXCEPTION 'Live exam not available';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM public.live_participants
+    WHERE live_exam_id = p_live_exam_id AND user_id = v_uid
+  ) INTO v_is_participant;
+
+  IF p_beat AND v_is_participant THEN
+    INSERT INTO public.live_presence (live_exam_id, user_id, last_seen_at)
+    VALUES (p_live_exam_id, v_uid, now())
+    ON CONFLICT (live_exam_id, user_id) DO UPDATE SET last_seen_at = now();
+  END IF;
+
+  SELECT COUNT(*) INTO v_online
+  FROM public.live_presence
+  WHERE live_exam_id = p_live_exam_id
+    AND last_seen_at > now() - interval '45 seconds';
+
+  SELECT COUNT(*) INTO v_joined
+  FROM public.live_participants
+  WHERE live_exam_id = p_live_exam_id;
+
+  IF v_exam.status = 'live'
+     AND v_exam.current_question_index >= 0
+     AND v_exam.current_question_unlocked_at IS NOT NULL THEN
+    SELECT t.id, t.time_seconds INTO v_canonical_id, v_time_seconds
+    FROM (
+      SELECT lq.id, lq.time_seconds,
+             ROW_NUMBER() OVER (ORDER BY lq.global_index, lq.q_no, lq.id) - 1 AS ordinal
+      FROM public.live_questions lq
+      JOIN public.live_sections ls ON lq.live_section_id = ls.id
+      WHERE ls.live_exam_id = p_live_exam_id AND ls.language = v_exam.primary_language
+    ) t
+    WHERE t.ordinal = v_exam.current_question_index;
+
+    IF v_time_seconds IS NOT NULL THEN
+      v_visual_end := public.live_question_visual_end(
+        v_exam.current_question_unlocked_at, v_time_seconds,
+        v_exam.current_question_extra_seconds
+      );
+      v_deadline := public.live_question_deadline(
+        v_exam.current_question_unlocked_at, v_time_seconds,
+        v_exam.current_question_extra_seconds
+      );
+      v_ms_to_visual   := (extract(epoch from (v_visual_end - now())) * 1000)::bigint;
+      v_ms_to_deadline := (extract(epoch from (v_deadline - now())) * 1000)::bigint;
+      v_open := v_ms_to_deadline > 0;
+    END IF;
+  END IF;
+
+  v_wait_ms := CASE WHEN v_online > 600 THEN 4000 WHEN v_online > 200 THEN 2500 ELSE 1500 END;
+  v_open_ms := CASE WHEN v_online > 600 THEN 8000 WHEN v_online > 200 THEN 6000 ELSE 5000 END;
+
+  IF v_exam.status IN ('ended', 'draft') THEN
+    v_next_ms := 0;
+  ELSIF v_open THEN
+    IF v_ms_to_visual > 0 THEN
+      -- Land just BEFORE the visual end. That is the last instant A3 can be used,
+      -- so it is the one a poll-lane client must not sleep through.
+      v_next_ms := GREATEST(750, LEAST(v_open_ms, (v_ms_to_visual - 500)::integer));
+    ELSE
+      -- Inside the grace: the close is imminent and no extension is possible.
+      v_next_ms := GREATEST(750, (v_ms_to_deadline + 1000)::integer);
+    END IF;
+  ELSE
+    v_next_ms := v_wait_ms;
+  END IF;
+
+  IF v_is_creator THEN
+    IF v_canonical_id IS NOT NULL THEN
+      SELECT COUNT(*) INTO v_open_responses
+      FROM public.live_responses
+      WHERE live_exam_id = p_live_exam_id AND live_question_id = v_canonical_id;
+
+      SELECT COUNT(*) INTO v_confusion
+      FROM public.live_confusion_signals
+      WHERE live_exam_id = p_live_exam_id AND live_question_id = v_canonical_id;
+    END IF;
+  ELSE
+    -- Preserved from 20260803030000 §3. A score that moves is the same
+    -- information as an is_correct flag, so it is withheld on the same terms.
+    v_score_visible := (
+      v_exam.status = 'ended'
+      OR v_exam.current_question_index < 0
+      OR NOT v_open
+    );
+
+    IF v_score_visible THEN
+      SELECT rank, total_correct INTO v_my_rank, v_my_correct
+      FROM public.live_participants
+      WHERE live_exam_id = p_live_exam_id AND user_id = v_uid;
+    END IF;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'status',                         v_exam.status,
+    'current_question_index',         v_exam.current_question_index,
+    'current_question_unlocked_at',   v_exam.current_question_unlocked_at,
+    'current_question_extra_seconds', v_exam.current_question_extra_seconds,
+    'scheduled_start_at',             v_exam.scheduled_start_at,
+    'auto_start',                     v_exam.auto_start,
+    'privacy_mode',                   v_exam.privacy_mode,
+    'leaderboard_visibility',         v_exam.leaderboard_visibility,
+    'present_show_leaderboard',       v_exam.present_show_leaderboard,
+    'present_show_river',             v_exam.present_show_river,
+    'present_show_options',           v_exam.present_show_options,
+    'present_reveal_answer',          v_exam.present_reveal_answer,
+    'present_theme',                  v_exam.present_theme,
+    'celebrate_seq',                  v_exam.celebrate_seq,
+    'total_questions',                v_exam.total_questions,
+    'server_now',                     now(),
+    'next_poll_ms',                   v_next_ms,
+    'online_count',                   v_online,
+    'joined_count',                   v_joined,
+    'is_creator',                     v_is_creator,
+    'my_rank',                        v_my_rank,
+    'my_total_correct',               v_my_correct,
+    'score_visible',                  (v_is_creator OR v_score_visible),
+    'confusion_count',                v_confusion,
+    'open_response_count',            v_open_responses
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.live_session_sync(UUID, BOOLEAN) TO authenticated;
+
+
+-- ============================================================
+-- 3. Self-check
+--
+--    The last assertion is the one worth having. This feature is only safe
+--    because the answer it draws comes from a function that will not hand one
+--    over early; if that gate were ever relaxed to a bare status check, the wall
+--    would start showing the key to a room mid-question.
+-- ============================================================
+DO $$
+DECLARE
+  v_missing TEXT[] := ARRAY[]::TEXT[];
+  v_src     TEXT;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'live_exams'
+      AND column_name = 'present_reveal_answer'
+  ) THEN
+    v_missing := v_missing || 'live_exams.present_reveal_answer';
+  END IF;
+
+  SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
+  IF v_src IS NULL OR v_src NOT LIKE '%present_reveal_answer%' THEN
+    v_missing := v_missing || 'live_session_sync does not return present_reveal_answer';
+  END IF;
+  -- The keys this migration inherited must still be there: it redefines the
+  -- whole function, so a bad merge here silently un-ships Q15 and Q16.
+  IF v_src IS NULL OR v_src NOT LIKE '%present_show_options%' THEN
+    v_missing := v_missing || 'live_session_sync lost present_show_options';
+  END IF;
+  IF v_src IS NULL OR v_src NOT LIKE '%present_theme%' THEN
+    v_missing := v_missing || 'live_session_sync lost present_theme';
+  END IF;
+  IF v_src IS NULL OR v_src NOT LIKE '%score_visible%' THEN
+    v_missing := v_missing || 'live_session_sync lost the score_visible gate';
+  END IF;
+
+  SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'get_revealed_live_answers' LIMIT 1;
+  IF v_src IS NULL THEN
+    v_missing := v_missing || 'get_revealed_live_answers is missing';
+  ELSIF v_src NOT LIKE '%live_question_deadline%' THEN
+    v_missing := v_missing ||
+      'get_revealed_live_answers no longer honours live_question_deadline — the focus screen would draw the key before the timer is up';
+  END IF;
+
+  IF array_length(v_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'Answer-reveal migration incomplete: %', array_to_string(v_missing, ', ');
+  END IF;
+
+  RAISE NOTICE 'Focus screen can now reveal the answer when time is up (Q15b).';
+END $$;
+
+
+
+
+-- ##########################################################################
+-- A3b — TIME'S UP: FLUSH THE LEFTOVER TIME
+-- source: supabase/migrations/20260811000000_live_v2_flush_remaining_time.sql
+-- ##########################################################################
+
+-- ============================================================
+-- LIVE EXAM v2 — A3b: END THE CLOCK NOW ("flush the leftover time")
+--
+-- A3 gave the creator +30s and +60s. This is the same control pointing the other
+-- way, and a live class needs it more often: the room has finished, every hand is
+-- down, the answer count stopped moving forty seconds ago, and the only thing
+-- still happening is a ring emptying itself in front of thirty bored people.
+--
+-- WHAT IT IS NOT
+-- --------------
+-- It is not a new session state, and it does not skip, close, grade or advance
+-- anything. It removes the seconds that are left and then gets out of the way:
+-- the countdown reaches zero the way it always does, the 2s grace still catches a
+-- submission already in flight, the creator's tab still computes analytics after
+-- that grace, the reveal still publishes on the deadline, and the unlock button
+-- still arms itself when the timer ends. Every downstream flow runs unchanged
+-- because from the outside there is nothing to distinguish "the clock ran out"
+-- from "the clock was made to run out".
+--
+-- HOW — negative extra_seconds
+-- ----------------------------
+-- Every deadline in this system, in SQL and in the client, is the one expression
+--
+--     visual end = unlocked_at + time_seconds + extra_seconds
+--
+-- so the only edit that reaches all of them at once is to extra_seconds. A3 makes
+-- it larger; this makes it small enough that the visual end lands on now(). No new
+-- column, no second definition of "closed", and nothing to keep in step later —
+-- which is the whole reason live_question_visual_end exists.
+--
+-- The column has no non-negative constraint (20260802000000 §1) and every reader
+-- of it either adds it into an interval or clamps the window it derives:
+-- compute_live_question_analytics already takes GREATEST(window, 1), and
+-- submit_live_response's clamp stays positive because time + extra is the elapsed
+-- span by construction. So a negative value is arithmetic here, not a sentinel.
+--
+-- FLOOR, and the LONGEST sibling
+-- ------------------------------
+-- Two details that look like fussiness and are not:
+--
+--   FLOOR of the elapsed seconds, never CEIL. extra_seconds is an INTEGER, so the
+--   visual end can only land on a whole second — and it must land on or BEFORE
+--   now(). Rounding up leaves the room with a straggler second on a clock the
+--   creator has already announced as finished.
+--
+--   live_ordinal_max_seconds, where A3 uses live_ordinal_min_seconds. The two
+--   controls bound in opposite directions for the same reason: a bilingual exam
+--   can carry different time_seconds per translation, and A3 must not extend past
+--   the FASTEST-closing sibling, so this must not stop short of the SLOWEST one.
+--   Bound this at the minimum and a 90s translation keeps running after the
+--   creator has flushed the 60s one — which is the single thing this control
+--   exists to prevent. The cost is that the shorter sibling's deadline lands
+--   further in the past than now(), i.e. it loses its grace window; that is the
+--   correct trade, because the creator has just declared time up for the room.
+--
+-- ERROR CONTRACT: ENDTIME_* codes are defined in src/lib/live/liveErrors.ts,
+-- which is the authoritative list. A test asserts every RAISE literal here has an
+-- entry there.
+--
+-- Idempotent: safe to re-run. Depends on live_question_visual_end and
+-- live_ordinal_min_seconds from 20260804000000, which §3 asserts.
+-- ============================================================
+
+
+-- ============================================================
+-- 1. The longest sibling at an ordinal
+--
+--    The mirror of live_ordinal_min_seconds. Kept as its own function rather than
+--    a MIN/MAX flag on that one: they are read in opposite directions by opposite
+--    controls, and a boolean argument at the call site reads as "the bound", which
+--    is exactly the detail a future edit must not be able to blur.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.live_ordinal_max_seconds(
+  p_live_exam_id UUID,
+  p_ordinal INTEGER
+)
+RETURNS INTEGER
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT MAX(t.time_seconds)::INTEGER
+  FROM (
+    SELECT
+      lq.time_seconds,
+      ROW_NUMBER() OVER (
+        PARTITION BY ls.language
+        ORDER BY lq.global_index, lq.q_no, lq.id
+      ) - 1 AS ordinal
+    FROM public.live_questions lq
+    JOIN public.live_sections ls ON lq.live_section_id = ls.id
+    WHERE ls.live_exam_id = p_live_exam_id
+  ) t
+  WHERE t.ordinal = p_ordinal;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.live_ordinal_max_seconds(UUID, INTEGER) TO authenticated;
+
+
+-- ============================================================
+-- 2. A3b — drop the remaining time on the open question
+--
+--    Guard order copied deliberately from add_live_question_time: ownership and
+--    status BEFORE anything that describes the question, so a stranger probing
+--    this RPC with an arbitrary exam id learns "not the creator" and nothing else.
+--
+--    FOR UPDATE for the same reason A3 takes it: two control tabs, or a creator
+--    clicking twice, must serialise. Without it the second caller reads the
+--    pre-flush extra_seconds and recomputes a value from a now-stale baseline.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.end_live_question_time(p_live_exam_id UUID)
+RETURNS public.live_exams
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_exam        public.live_exams;
+  v_max_seconds INTEGER;
+  v_visual_end  TIMESTAMPTZ;
+  v_elapsed     INTEGER;
+  v_new_extra   INTEGER;
+  v_result      public.live_exams;
+BEGIN
+  SELECT * INTO v_exam
+  FROM public.live_exams
+  WHERE id = p_live_exam_id
+  FOR UPDATE;
+
+  IF v_exam.id IS NULL OR v_exam.user_id <> auth.uid() THEN
+    RAISE EXCEPTION 'ENDTIME_NOT_CREATOR';
+  END IF;
+  IF v_exam.status <> 'live' THEN
+    RAISE EXCEPTION 'ENDTIME_NOT_LIVE';
+  END IF;
+  IF v_exam.current_question_index < 0 OR v_exam.current_question_unlocked_at IS NULL THEN
+    RAISE EXCEPTION 'ENDTIME_NO_OPEN_QUESTION';
+  END IF;
+
+  v_max_seconds := public.live_ordinal_max_seconds(
+    p_live_exam_id, v_exam.current_question_index
+  );
+  IF v_max_seconds IS NULL THEN
+    RAISE EXCEPTION 'ENDTIME_NO_OPEN_QUESTION';
+  END IF;
+
+  -- Already over for every sibling: there is no time left to remove, and writing
+  -- anyway would move a deadline the room has already passed — retracting a
+  -- reveal that students can be looking at right now. Refusing is the honest
+  -- outcome, and the client's button is hidden in this state anyway, so reaching
+  -- here means two tabs raced.
+  v_visual_end := public.live_question_visual_end(
+    v_exam.current_question_unlocked_at,
+    v_max_seconds,
+    v_exam.current_question_extra_seconds
+  );
+  IF now() >= v_visual_end THEN
+    RAISE EXCEPTION 'ENDTIME_ALREADY_OVER';
+  END IF;
+
+  -- Whole seconds since the unlock, rounded DOWN, so the visual end lands on or
+  -- just before now() and never up to a second after it.
+  v_elapsed := FLOOR(
+    extract(epoch from (now() - v_exam.current_question_unlocked_at))
+  )::INTEGER;
+
+  -- LEAST, so this can only ever shorten the question. A stored extra_seconds that
+  -- was somehow already smaller than the computed one (a second flush landing in
+  -- the same second, a hand-edited row) must not be given time back by a control
+  -- whose entire promise is to take it away.
+  v_new_extra := LEAST(
+    COALESCE(v_exam.current_question_extra_seconds, 0),
+    v_elapsed - v_max_seconds
+  );
+
+  UPDATE public.live_exams
+  SET current_question_extra_seconds = v_new_extra
+  WHERE id = p_live_exam_id
+  RETURNING * INTO v_result;
+
+  -- Same pairing A3 documents: compute_live_question_analytics reads the granted
+  -- seconds from the unlock log, not from live_exams, because live_exams only ever
+  -- holds the current question's. Miss this write and B6's "fast answer" threshold
+  -- keeps measuring against the window the question WOULD have had.
+  UPDATE public.live_unlock_log
+  SET extra_seconds = v_new_extra
+  WHERE live_exam_id = p_live_exam_id
+    AND question_ordinal = v_result.current_question_index;
+
+  RETURN v_result;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.end_live_question_time(UUID) TO authenticated;
+
+
+-- ============================================================
+-- 3. Self-check
+--
+--    The Supabase SQL editor renders result sets, not NOTICE traffic, so a
+--    dependency that is missing must RAISE rather than warn.
+-- ============================================================
+DO $$
+DECLARE
+  v_missing TEXT[] := ARRAY[]::TEXT[];
+  v_src     TEXT;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_question_visual_end') THEN
+    v_missing := v_missing ||
+      'live_question_visual_end is missing — apply 20260804000000 (live controls) first';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_ordinal_min_seconds') THEN
+    v_missing := v_missing ||
+      'live_ordinal_min_seconds is missing — apply 20260804000000 (live controls) first';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_ordinal_max_seconds') THEN
+    v_missing := v_missing || 'live_ordinal_max_seconds was not created';
+  END IF;
+
+  SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'end_live_question_time' LIMIT 1;
+  IF v_src IS NULL THEN
+    v_missing := v_missing || 'end_live_question_time was not created';
+  ELSE
+    -- The bound. Flushing against the shortest sibling leaves the longest one
+    -- running, which is the one failure this control cannot have.
+    IF v_src NOT LIKE '%live_ordinal_max_seconds%' THEN
+      v_missing := v_missing || 'end_live_question_time must bound on the LONGEST sibling';
+    END IF;
+    IF v_src NOT LIKE '%FLOOR%' THEN
+      v_missing := v_missing ||
+        'end_live_question_time must round the elapsed seconds DOWN, or it leaves a second on the clock';
+    END IF;
+    IF v_src NOT LIKE '%FOR UPDATE%' THEN
+      v_missing := v_missing || 'end_live_question_time must lock the row it rewrites';
+    END IF;
+    IF v_src NOT LIKE '%live_unlock_log%' THEN
+      v_missing := v_missing ||
+        'end_live_question_time must mirror the write to live_unlock_log, which is where the analytics window is read from';
+    END IF;
+  END IF;
+
+  IF array_length(v_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'Flush-time migration incomplete: %', array_to_string(v_missing, ', ');
+  END IF;
+
+  RAISE NOTICE 'A3b ready: the creator can now drop the remaining time on an open question.';
+END $$;
+
+
+
+
+-- ##########################################################################
+-- E3 — LEADERBOARD OFF (RUN LAST: redefines live_session_sync)
+-- source: supabase/migrations/20260812000000_live_v2_leaderboard_off.sql
+-- ##########################################################################
+
+-- ============================================================================
+-- LIVE EXAM v2 — E3: MAKE "OFF" MEAN OFF
+--
+-- The leaderboard control offers three choices and has only ever had two
+-- behaviours. 'private' and 'off' were collapsed into the same branch at every
+-- layer:
+--
+--   * live_participants_public returns the caller's own row for both — correct,
+--     deliberate, and covered by a test. That is what 'private' means, and it is
+--     the right floor for 'off' too.
+--   * live_session_sync returns my_rank to every participant with no reference to
+--     leaderboard_visibility at all, so the number survives both settings.
+--   * the student page never read the setting, so it rendered the standings card,
+--     the header rank chip and the climb/fall badge identically under all three.
+--
+-- The result: a creator picking "Off" — labelled "No ranking shown to anyone" —
+-- got exactly what "Just me" gives. Students kept a live "#14" pinned to the top
+-- of their screen for the whole session.
+--
+-- This file fixes the server half. Withholding the rank here rather than only in
+-- the client is the same argument the masked view was built on: a ranking hidden
+-- by a component is one devtools request away from being read, and my_rank rides
+-- a payload every student's browser already receives twice a minute.
+--
+-- What 'off' does NOT hide: my_total_correct. A score is not a ranking — the
+-- student can count their own green ticks in the review list either way, and the
+-- setting's own copy promises "scores are always recorded". Hiding it would be a
+-- different feature, and a dishonest one at this altitude.
+--
+-- Redefined verbatim from 20260810000000 with the one gate added. The
+-- score_visible gate from 20260803030000 §3 and every key added since are
+-- preserved below and asserted in §2 — this function has been rebuilt five times
+-- and losing a clause to a copy is its established failure mode.
+--
+-- Idempotent: safe to re-run.
+-- ============================================================================
+
+
+-- ============================================================
+-- 1. live_session_sync — no rank for a room that turned ranking off
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.live_session_sync(
+  p_live_exam_id UUID,
+  p_beat BOOLEAN DEFAULT false
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid            UUID := auth.uid();
+  v_exam           public.live_exams;
+  v_is_creator     BOOLEAN := false;
+  v_is_participant BOOLEAN := false;
+  v_online         INTEGER := 0;
+  v_joined         INTEGER := 0;
+  v_time_seconds   INTEGER;
+  v_deadline       TIMESTAMPTZ;
+  v_visual_end     TIMESTAMPTZ;
+  v_ms_to_deadline BIGINT;
+  v_ms_to_visual   BIGINT;
+  v_open           BOOLEAN := false;
+  v_wait_ms        INTEGER;
+  v_open_ms        INTEGER;
+  v_next_ms        INTEGER;
+  v_my_rank        INTEGER;
+  v_my_correct     INTEGER;
+  v_confusion      INTEGER;
+  v_open_responses INTEGER;
+  v_canonical_id   UUID;
+  v_score_visible  BOOLEAN := false;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT * INTO v_exam FROM public.live_exams WHERE id = p_live_exam_id;
+  IF v_exam.id IS NULL THEN
+    RAISE EXCEPTION 'Live exam not found';
+  END IF;
+
+  v_is_creator := (v_exam.user_id = v_uid);
+
+  IF NOT v_is_creator AND v_exam.status NOT IN ('published', 'live', 'ended') THEN
+    RAISE EXCEPTION 'Live exam not available';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM public.live_participants
+    WHERE live_exam_id = p_live_exam_id AND user_id = v_uid
+  ) INTO v_is_participant;
+
+  IF p_beat AND v_is_participant THEN
+    INSERT INTO public.live_presence (live_exam_id, user_id, last_seen_at)
+    VALUES (p_live_exam_id, v_uid, now())
+    ON CONFLICT (live_exam_id, user_id) DO UPDATE SET last_seen_at = now();
+  END IF;
+
+  SELECT COUNT(*) INTO v_online
+  FROM public.live_presence
+  WHERE live_exam_id = p_live_exam_id
+    AND last_seen_at > now() - interval '45 seconds';
+
+  SELECT COUNT(*) INTO v_joined
+  FROM public.live_participants
+  WHERE live_exam_id = p_live_exam_id;
+
+  IF v_exam.status = 'live'
+     AND v_exam.current_question_index >= 0
+     AND v_exam.current_question_unlocked_at IS NOT NULL THEN
+    SELECT t.id, t.time_seconds INTO v_canonical_id, v_time_seconds
+    FROM (
+      SELECT lq.id, lq.time_seconds,
+             ROW_NUMBER() OVER (ORDER BY lq.global_index, lq.q_no, lq.id) - 1 AS ordinal
+      FROM public.live_questions lq
+      JOIN public.live_sections ls ON lq.live_section_id = ls.id
+      WHERE ls.live_exam_id = p_live_exam_id AND ls.language = v_exam.primary_language
+    ) t
+    WHERE t.ordinal = v_exam.current_question_index;
+
+    IF v_time_seconds IS NOT NULL THEN
+      v_visual_end := public.live_question_visual_end(
+        v_exam.current_question_unlocked_at, v_time_seconds,
+        v_exam.current_question_extra_seconds
+      );
+      v_deadline := public.live_question_deadline(
+        v_exam.current_question_unlocked_at, v_time_seconds,
+        v_exam.current_question_extra_seconds
+      );
+      v_ms_to_visual   := (extract(epoch from (v_visual_end - now())) * 1000)::bigint;
+      v_ms_to_deadline := (extract(epoch from (v_deadline - now())) * 1000)::bigint;
+      v_open := v_ms_to_deadline > 0;
+    END IF;
+  END IF;
+
+  v_wait_ms := CASE WHEN v_online > 600 THEN 4000 WHEN v_online > 200 THEN 2500 ELSE 1500 END;
+  v_open_ms := CASE WHEN v_online > 600 THEN 8000 WHEN v_online > 200 THEN 6000 ELSE 5000 END;
+
+  IF v_exam.status IN ('ended', 'draft') THEN
+    v_next_ms := 0;
+  ELSIF v_open THEN
+    IF v_ms_to_visual > 0 THEN
+      -- Land just BEFORE the visual end. That is the last instant A3 can be used,
+      -- so it is the one a poll-lane client must not sleep through.
+      v_next_ms := GREATEST(750, LEAST(v_open_ms, (v_ms_to_visual - 500)::integer));
+    ELSE
+      -- Inside the grace: the close is imminent and no extension is possible.
+      v_next_ms := GREATEST(750, (v_ms_to_deadline + 1000)::integer);
+    END IF;
+  ELSE
+    v_next_ms := v_wait_ms;
+  END IF;
+
+  IF v_is_creator THEN
+    IF v_canonical_id IS NOT NULL THEN
+      SELECT COUNT(*) INTO v_open_responses
+      FROM public.live_responses
+      WHERE live_exam_id = p_live_exam_id AND live_question_id = v_canonical_id;
+
+      SELECT COUNT(*) INTO v_confusion
+      FROM public.live_confusion_signals
+      WHERE live_exam_id = p_live_exam_id AND live_question_id = v_canonical_id;
+    END IF;
+  ELSE
+    -- Preserved from 20260803030000 §3. A score that moves is the same
+    -- information as an is_correct flag, so it is withheld on the same terms.
+    v_score_visible := (
+      v_exam.status = 'ended'
+      OR v_exam.current_question_index < 0
+      OR NOT v_open
+    );
+
+    IF v_score_visible THEN
+      -- E3. 'off' means no ranking reaches a student, so the rank is dropped on
+      -- the way out rather than trusted to the client that receives it. The score
+      -- is unaffected: it is this student's own result, not a position in a room.
+      --
+      -- The creator branch above never reaches here, which is the point — ranks
+      -- stay computed, the control room keeps them, and D1 still has them.
+      SELECT
+        CASE WHEN v_exam.leaderboard_visibility = 'off' THEN NULL ELSE lp.rank END,
+        lp.total_correct
+      INTO v_my_rank, v_my_correct
+      FROM public.live_participants lp
+      WHERE lp.live_exam_id = p_live_exam_id AND lp.user_id = v_uid;
+    END IF;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'status',                         v_exam.status,
+    'current_question_index',         v_exam.current_question_index,
+    'current_question_unlocked_at',   v_exam.current_question_unlocked_at,
+    'current_question_extra_seconds', v_exam.current_question_extra_seconds,
+    'scheduled_start_at',             v_exam.scheduled_start_at,
+    'auto_start',                     v_exam.auto_start,
+    'privacy_mode',                   v_exam.privacy_mode,
+    'leaderboard_visibility',         v_exam.leaderboard_visibility,
+    'present_show_leaderboard',       v_exam.present_show_leaderboard,
+    'present_show_river',             v_exam.present_show_river,
+    'present_show_options',           v_exam.present_show_options,
+    'present_reveal_answer',          v_exam.present_reveal_answer,
+    'present_theme',                  v_exam.present_theme,
+    'celebrate_seq',                  v_exam.celebrate_seq,
+    'total_questions',                v_exam.total_questions,
+    'server_now',                     now(),
+    'next_poll_ms',                   v_next_ms,
+    'online_count',                   v_online,
+    'joined_count',                   v_joined,
+    'is_creator',                     v_is_creator,
+    -- Null while a question is open, and null for every student when E3 is 'off'.
+    'my_rank',                        v_my_rank,
+    'my_total_correct',               v_my_correct,
+    'score_visible',                  (v_is_creator OR v_score_visible),
+    'confusion_count',                v_confusion,
+    'open_response_count',            v_open_responses
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.live_session_sync(UUID, BOOLEAN) TO authenticated;
+
+
+-- ============================================================
+-- 2. Self-check
+--
+--    The first assertion is this migration. The rest exist because
+--    live_session_sync is redefined wholesale by every feature that adds a
+--    setting, and each rewrite is a chance to drop a clause that no test on the
+--    happy path would notice missing.
+-- ============================================================
+DO $$
+DECLARE
+  v_missing TEXT[] := ARRAY[]::TEXT[];
+  v_src     TEXT;
+  v_view    TEXT;
+BEGIN
+  SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
+
+  IF v_src IS NULL THEN
+    v_missing := v_missing || 'live_session_sync is missing';
+  ELSE
+    -- The fix.
+    IF v_src NOT LIKE '%leaderboard_visibility = ''off''%' THEN
+      v_missing := v_missing ||
+        'live_session_sync still hands every student their rank when E3 is off';
+    END IF;
+
+    -- Everything the rewrite had to carry forward.
+    IF v_src NOT LIKE '%v_score_visible%' THEN
+      v_missing := v_missing ||
+        'live_session_sync lost the score_visible gate — mid-question correctness would leak again';
+    END IF;
+    IF v_src NOT LIKE '%present_reveal_answer%' THEN
+      v_missing := v_missing || 'live_session_sync lost present_reveal_answer (Q15b)';
+    END IF;
+    IF v_src NOT LIKE '%present_show_options%' THEN
+      v_missing := v_missing || 'live_session_sync lost present_show_options (Q15)';
+    END IF;
+    IF v_src NOT LIKE '%present_theme%' THEN
+      v_missing := v_missing || 'live_session_sync lost present_theme (Q16)';
+    END IF;
+    IF v_src NOT LIKE '%live_question_visual_end%' THEN
+      v_missing := v_missing ||
+        'live_session_sync lost the visual-end cadence — poll-lane clients would sleep through the A3 window';
+    END IF;
+  END IF;
+
+  -- 'off' must still inherit the 'private' floor: the room's rows never leave the
+  -- database in the first place. This migration does not touch the view, so this
+  -- is a guard against a future one relaxing it.
+  SELECT pg_get_viewdef('public.live_participants_public'::regclass) INTO v_view;
+  IF v_view IS NULL OR v_view NOT LIKE '%leaderboard_visibility%' THEN
+    v_missing := v_missing ||
+      'live_participants_public no longer applies E3 — the standings are readable directly again';
+  END IF;
+
+  IF array_length(v_missing, 1) > 0 THEN
+    RAISE EXCEPTION 'E3 "off" migration incomplete: %', array_to_string(v_missing, ', ');
+  END IF;
+
+  RAISE NOTICE 'E3 is now three settings: full shows the room, private shows you, off shows nobody a rank.';
+END $$;

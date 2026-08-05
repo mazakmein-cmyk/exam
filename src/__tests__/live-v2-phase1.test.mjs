@@ -55,6 +55,13 @@ function readMigration(filename) {
   return readFileSync(resolve(ROOT, "supabase", "migrations", filename), "utf-8");
 }
 
+/**
+ * Assertions about paths that must not exist have to read code, not prose.
+ * Several comments on these screens name the very identifiers the tests below
+ * forbid — that is what a comment explaining a leak looks like.
+ */
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
 const PRIVACY_SQL = readMigration("20260803000000_live_v2_privacy.sql");
 const STEP2_SQL = readMigration("20260803010000_live_v2_privacy_step3.sql");
 const REMASK_SQL = readMigration("20260803020000_live_v2_privacy_remask_trigger.sql");
@@ -77,21 +84,37 @@ test("it reads questions from the student view, which has no correct_answer colu
   );
 });
 
-test("it never fetches revealed answers", () => {
+test("the only answer key it can reach is one the server has already released", () => {
+  // Until Q15b this read "it never fetches revealed answers", because the wall had
+  // no reason to hold a key at all. The creator can now ask for the answer to be
+  // shown once time is up, so the property is stated where it actually lives: the
+  // page may not touch the raw column, and the one function it may use is the one
+  // that will not return a question's answer before that question's deadline.
+  const code = stripComments(PRESENT);
   assert(
-    !/fetchRevealedAnswers/.test(PRESENT),
-    "the wall must not hold the answer key at all, revealed or not"
+    !/correct_answer/.test(code),
+    "the raw column must never be read here — it is not gated on anything"
+  );
+  assert(
+    /fetchRevealedAnswers/.test(code),
+    "get_revealed_live_answers is the only permitted path to a key"
   );
 });
 
-test("no option can be rendered as correct on the wall", () => {
+test("no option can be rendered as correct while its question is open", () => {
+  const code = stripComments(PRESENT);
   assert(
-    !/correct-picked|correct-missed|wrong-picked/.test(PRESENT),
-    "a correctness visual on the projector would mark the answer mid-question"
+    !/correct-picked|correct-missed|wrong-picked/.test(code),
+    "those visuals describe a key against ONE person's answer; a wall has no answer of its own"
+  );
+  // The neutral pin is now conditional, so what matters is what can lift it.
+  assert(
+    /answerKey !== undefined && isOptionInAnswer\(i, answerKey\)/.test(code),
+    "the only thing that may mark an option is the revealed key"
   );
   assert(
-    /visual=\{"idle" as OptionVisual\}/.test(PRESENT),
-    "options must be pinned to the neutral visual"
+    /revealAnswer && question && \(isRevealing \|\| isEnded\)/.test(code),
+    "and that key must be withheld locally too, unless the question is locked or the session is over"
   );
 });
 

@@ -15,14 +15,25 @@
  * representation and no meaning after the moment they happen:
  *
  *   hello / bye / ping   is the other window open? (drives the rescue buttons)
- *   config               preview a settings toggle before the row round-trips
+ *   config               preview a settings toggle before the row round-trips —
+ *                        the two leaderboard/river switches, plus the stage theme
+ *                        (Q16) and the two reveal switches: show the choices at
+ *                        all (Q15) and turn the correct one green when time is up
+ *                        (Q15b)
  *   celebrate            fire confetti now (Phase 4)
+ *
+ * Note that config does not break the rule. Every one of those settings lives in
+ * a column on live_exams and reaches the projector on its own through the sync;
+ * the intent only buys back the round trip. If the channel is missing entirely
+ * the switches still work, just a beat later.
  *
  * BroadcastChannel is same-origin, same-browser, and sub-millisecond, which is
  * exactly the scope of the chosen design: one laptop, two windows, an HDMI
  * cable. Casting to a second device is a later, larger change and is why the
  * present screen was built to stand on its own from the start.
  */
+
+import type { StageTheme } from "@/lib/live/stageTheme";
 
 export type PresentIntent =
   /** Sent on mount and on an interval; tells the peer this window exists. */
@@ -31,8 +42,33 @@ export type PresentIntent =
   | { t: "bye"; role: PresentRole }
   /** Reply to a hello, so a window that started first learns about a later peer. */
   | { t: "ping"; role: PresentRole }
-  /** Optimistic settings preview; the database row remains the source of truth. */
-  | { t: "config"; showLeaderboard?: boolean; showRiver?: boolean }
+  /**
+   * Optimistic settings preview; the database row remains the source of truth.
+   *
+   * Every field is optional, and an omitted field means UNCHANGED — never "off".
+   * The control room posts one switch at a time (the settings menu hands its
+   * handler a `Partial<SessionSettings>` with exactly the key that moved), and
+   * the wall merges each one with `intent.showOptions ?? cur.showOptions`. Make
+   * any of these required and a creator toggling the theme would post
+   * `showOptions: false` alongside it and blank the choices off the wall
+   * mid-question — a bug that only ever appears in front of a room, because it
+   * needs two settings and a projector to show itself.
+   */
+  | {
+      t: "config";
+      showLeaderboard?: boolean;
+      showRiver?: boolean;
+      /** Q15: are the answer choices on the wall at all. */
+      showOptions?: boolean;
+      /** Q15b: turn the correct choice green the moment answers lock. */
+      revealAnswer?: boolean;
+      /**
+       * Q16. This one is why the preview exists at all: a theme change that waits
+       * for the round trip is a second of the wrong frame on the wall, on camera,
+       * and the creator flicks the switch again thinking it missed.
+       */
+      theme?: StageTheme;
+    }
   /** B14 (Phase 4): fire the celebration now. */
   | { t: "celebrate"; seq: number };
 

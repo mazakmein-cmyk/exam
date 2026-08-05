@@ -74,6 +74,7 @@ import {
   MonitorPlay,
   FlaskConical,
   FileBarChart,
+  UserRoundX,
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import SEO from "@/components/SEO";
@@ -84,7 +85,7 @@ import QuestionRail, { RailLegend, type ChipStatus, type RailItem } from "@/comp
 import { LiveTimerBar, LiveTimerRing } from "@/components/live/LiveTimer";
 import { OutcomeBar, MeterRow } from "@/components/live/LiveStats";
 import PresenterHud from "@/components/live/PresenterHud";
-import SessionSettingsMenu from "@/components/live/SessionSettingsMenu";
+import SessionSettingsMenu, { type SessionSettings } from "@/components/live/SessionSettingsMenu";
 import {
   AddTimeControls,
   UndoPill,
@@ -115,13 +116,14 @@ import {
   fetchLeaderboard,
   fetchAllAnalytics,
   fetchParticipantNames,
+  fetchRoomAliases,
   updateLiveExam,
   addLiveQuestionTime,
+  endLiveQuestionTime,
   undoLastLiveUnlock,
   fetchLiveMoments,
   celebrateLiveExam,
   type LiveMoment,
-  type LeaderboardVisibility,
   type LiveExam,
   type LiveQuestion,
   type LiveSection,
@@ -202,6 +204,25 @@ export default function LiveExamControl() {
    * name from fastest_user_id.
    */
   const [participantNames, setParticipantNames] = useState<Map<string, string>>(new Map());
+  /**
+   * participant.id → the nickname the rest of the room sees. The exact mirror of
+   * `participantNames`, pointing the other way.
+   *
+   * Keyed on the participant row's own id rather than on user_id, because privacy
+   * mode is precisely the state in which live_participants_public nulls everyone
+   * else's user_id — keying on it would build an empty map in the only mode the
+   * map exists for.
+   *
+   * Fetched from that masked view, never re-derived here. The cockpit computing
+   * its own version of the naming rule would give it a second opinion about what
+   * is on the wall, and the whole value of showing the alias is that it is the
+   * same string a student is reading.
+   *
+   * Empty whenever privacy is off, so nothing downstream has to remember to ask
+   * twice: a stale nickname surviving a flip to "real names" is a name from a
+   * previous session state being printed as if it were current.
+   */
+  const [roomAliases, setRoomAliases] = useState<Map<string, string>>(new Map());
   /** B14. Fetched alongside analytics, never polled — a handful of rows per question. */
   const [moments, setMoments] = useState<LiveMoment[]>([]);
 
@@ -319,14 +340,41 @@ export default function LiveExamControl() {
     []
   );
 
+  /**
+   * Privacy mode, readable from a stable callback.
+   *
+   * `refreshLeaderboard` is a dependency of the session spine's callbacks, so
+   * taking `session.privacyMode` as a dep would rebuild it — and with it the whole
+   * options object handed to useLiveSession — on the render that flips the toggle.
+   * A ref keeps the identity stable and the read current, which is the same trade
+   * `questionsRef` and `unlockRef` make elsewhere on this page.
+   */
+  const privacyModeRef = useRef(false);
+
+  const refreshRoomAliases = useCallback(async () => {
+    if (!liveExamId) return;
+    try {
+      setRoomAliases(await fetchRoomAliases(liveExamId));
+    } catch {
+      /* A missing alias costs the panel its annotation, nothing more — the real
+         names it shows were never the thing being hidden. Failing loudly here
+         would put a red toast on the creator's screen for a decoration. */
+    }
+  }, [liveExamId]);
+
   const refreshLeaderboard = useCallback(async () => {
     if (!liveExamId) return;
     try {
       setLeaderboard(await fetchLeaderboard(liveExamId, 20));
+      // A student who has just appeared in the standings for the first time has
+      // no alias in a map fetched before they joined, so their row would be the
+      // one row with no nickname beside it — which reads as "this person is not
+      // being hidden" rather than "this map is a minute old".
+      if (privacyModeRef.current) void refreshRoomAliases();
     } catch {
       /* transient — the next question's compute refreshes it again */
     }
-  }, [liveExamId]);
+  }, [liveExamId, refreshRoomAliases]);
 
   // ─── Live session (transport, clock, deadline) ──────────────
 
@@ -358,7 +406,41 @@ export default function LiveExamControl() {
       // Rehydrate analytics/leaderboard missed while disconnected.
       void loadDataRef.current(true);
     },
+    /**
+     * Privacy mode or the leaderboard setting changed — possibly from a second
+     * control tab, which is why this arrives through the spine rather than being
+     * done inside the save handler.
+     *
+     * Two caches on this page carry names the SERVER rendered, and both are stale
+     * the instant the setting flips. The aliases are the obvious one. The moments
+     * are the quiet one: get_live_moments writes live_anon_name into display_name
+     * while privacy is on, and `withRealNames` can only correct a row whose
+     * user_id is in the name map — anyone joining after the last map fetch would
+     * keep their pre-flip name on the creator's own deck until the next question
+     * computed.
+     */
+    onSettings: () => {
+      void refreshRoomAliases();
+      if (liveExamId) {
+        void fetchLiveMoments(liveExamId).then(setMoments).catch(() => {});
+      }
+    },
   });
+
+  privacyModeRef.current = session.privacyMode;
+
+  /**
+   * The aliases exist only while privacy is on.
+   *
+   * Cleared rather than left to go stale, because the map is what the leaderboard
+   * prints beside a real name: keeping the last set of nicknames after a flip to
+   * "everyone sees real names" would annotate the panel with a claim about the
+   * wall that stopped being true.
+   */
+  useEffect(() => {
+    if (session.privacyMode) void refreshRoomAliases();
+    else setRoomAliases(new Map());
+  }, [session.privacyMode, refreshRoomAliases]);
 
   // ─── Rehearsal (C1) ───────────────────────────────────────
 
@@ -384,6 +466,24 @@ export default function LiveExamControl() {
       [questions]
     )
   );
+
+  /**
+   * The rehearsal driver, read through refs.
+   *
+   * Everything below that has to ask "is this real?" is a deliberately stable
+   * callback — the countdown-expiry listener and the flush button — and taking
+   * `rehearsal.active` as a dependency would rebuild them on the render that
+   * starts or stops a rehearsal. For the expiry listener that means unsubscribing
+   * and resubscribing the store mid-question, which is exactly how an expiry gets
+   * dropped. Same trade as `unlockRef` further down: the handler is stable, the
+   * thing it reads is not.
+   */
+  const rehearsalActiveRef = useRef(false);
+  rehearsalActiveRef.current = rehearsal.active;
+  const rehearsalEndNowRef = useRef(rehearsal.endNow);
+  rehearsalEndNowRef.current = rehearsal.endNow;
+  /** Stable identity over a moving target, so a callback can drive the simulation. */
+  const rehearsalEndNow = useCallback(() => rehearsalEndNowRef.current(), []);
 
   // ─── Derived state ────────────────────────────────────────
 
@@ -484,6 +584,13 @@ export default function LiveExamControl() {
 
   const handleTimerExpired = useCallback(
     (expiredIndex: number) => {
+      // A rehearsal drives the same countdown store, so its questions expire down
+      // the same path — but there is nothing on the server to compute. Left
+      // unguarded this runs compute_live_question_analytics and compute_rankings
+      // against the real question id for a class of thirty people who do not
+      // exist, and writes the result into the leaderboard of a session that has
+      // not happened yet. The rehearsal's own analytics come from the driver.
+      if (rehearsalActiveRef.current) return;
       if (!liveExamId) return;
       const currentQ = questionsRef.current[expiredIndex];
       if (!currentQ) return;
@@ -590,6 +697,52 @@ export default function LiveExamControl() {
     },
     [liveExamId, controlPending, session, toast, reportControlError]
   );
+
+  /**
+   * A3b — drop whatever time is left on the open question.
+   *
+   * The same control as A3 pointing the other way, and a live room needs this one
+   * more often: every hand is down, the answer count stopped moving forty seconds
+   * ago, and the only thing still happening is a ring emptying itself in front of
+   * thirty bored people.
+   *
+   * Note what is NOT here. No compute, no ranking, no unlock, no end, no
+   * `collectingFinal`. The RPC writes a negative extra_seconds so the visual
+   * deadline lands on now(), and from that instant the question is indistinguishable
+   * from one whose clock ran out by itself — the countdown reaches zero, the 2s
+   * grace still catches a submission already in flight, the expiry path computes
+   * analytics after it, the reveal publishes on the deadline, and the unlock button
+   * arms. Every one of those already works. A second copy of that sequence here
+   * would be a second definition of "the question closed", and the two would drift
+   * the first time either one changed. This handler is one call long on purpose.
+   *
+   * `session.refresh()` for the same reason A3 has it: the row is already correct
+   * and realtime will carry it, this just saves the tab that pressed the button
+   * from watching its own clock for a beat longer than the rest of the room.
+   */
+  const handleEndTime = useCallback(async () => {
+    // During a rehearsal the same button drives the simulated cohort. The point of
+    // a rehearsal is that a creator practises the control they will actually use
+    // rather than a mock of it — and there is no server row here to flush.
+    if (rehearsalActiveRef.current) {
+      rehearsalEndNow();
+      return;
+    }
+    if (!liveExamId || controlPending) return;
+    setControlPending(true);
+    try {
+      await endLiveQuestionTime(liveExamId);
+      session.refresh();
+      toast({ title: "Time's up", description: "The clock just ran out for everyone." });
+    } catch (err) {
+      // ENDTIME_ALREADY_OVER means a second tab got there first, which is an
+      // outcome and not a fault — reportControlError is what keeps that out of a
+      // red toast.
+      reportControlError(err);
+    } finally {
+      setControlPending(false);
+    }
+  }, [liveExamId, controlPending, session, toast, reportControlError, rehearsalEndNow]);
 
   const handleUndoUnlock = useCallback(async () => {
     if (!liveExamId || controlPending) return;
@@ -889,15 +1042,19 @@ export default function LiveExamControl() {
    * feeling in control and wondering if the toggle worked.
    */
   const handleSettingsChange = useCallback(
-    async (patch: Partial<{
-      privacyMode: boolean;
-      leaderboardVisibility: LeaderboardVisibility;
-      presentShowLeaderboard: boolean;
-      presentShowRiver: boolean;
-    }>) => {
+    async (patch: Partial<SessionSettings>) => {
       if (!liveExamId) return;
       setSavingSettings(true);
       try {
+        /**
+         * One conditional spread per setting, rather than writing the whole shape.
+         *
+         * The menu sends a patch of exactly what the creator touched, and this has
+         * to stay a patch all the way to the row: sending the other six settings
+         * alongside would make every flip a write of values this tab believes are
+         * current, which is how a second control tab's change gets silently
+         * reverted by whoever toggles something next.
+         */
         await updateLiveExam(liveExamId, {
           ...(patch.privacyMode !== undefined ? { privacy_mode: patch.privacyMode } : {}),
           ...(patch.leaderboardVisibility !== undefined
@@ -909,13 +1066,40 @@ export default function LiveExamControl() {
           ...(patch.presentShowRiver !== undefined
             ? { present_show_river: patch.presentShowRiver }
             : {}),
+          ...(patch.presentShowOptions !== undefined
+            ? { present_show_options: patch.presentShowOptions }
+            : {}),
+          ...(patch.presentRevealAnswer !== undefined
+            ? { present_reveal_answer: patch.presentRevealAnswer }
+            : {}),
+          ...(patch.presentTheme !== undefined ? { present_theme: patch.presentTheme } : {}),
         });
         session.refresh();
-        if (patch.presentShowLeaderboard !== undefined || patch.presentShowRiver !== undefined) {
+        /**
+         * Only the five projector settings are worth a broadcast — privacy and
+         * leaderboard visibility reach the wall through the session sync like every
+         * other student-facing rule, and the wall is not the screen a creator is
+         * watching when they change those.
+         *
+         * Every field of the intent is optional and "omitted means unchanged", so
+         * the untouched four arriving as `undefined` is the message, not a gap in
+         * it: LiveExamPresent merges with `?? cur`, and one switch must not reset
+         * the other four on its way past.
+         */
+        if (
+          patch.presentShowLeaderboard !== undefined ||
+          patch.presentShowRiver !== undefined ||
+          patch.presentShowOptions !== undefined ||
+          patch.presentRevealAnswer !== undefined ||
+          patch.presentTheme !== undefined
+        ) {
           postToPresent({
             t: "config",
             showLeaderboard: patch.presentShowLeaderboard,
             showRiver: patch.presentShowRiver,
+            showOptions: patch.presentShowOptions,
+            revealAnswer: patch.presentRevealAnswer,
+            theme: patch.presentTheme,
           });
         }
       } catch (error: any) {
@@ -1199,12 +1383,20 @@ export default function LiveExamControl() {
               <MonitorPlay className="mr-1.5 h-4 w-4" />
               {presentOpen ? "Focus big screen" : "Open big screen"}
             </Button>
+            {/*
+              Every field comes from the session, never from local state: the menu
+              is a view of the row, and a second control tab (or the creator's phone)
+              changing a setting has to move this one's switches too.
+            */}
             <SessionSettingsMenu
               settings={{
                 privacyMode: session.privacyMode,
                 leaderboardVisibility: session.leaderboardVisibility,
                 presentShowLeaderboard: session.presentShowLeaderboard,
                 presentShowRiver: session.presentShowRiver,
+                presentShowOptions: session.presentShowOptions,
+                presentRevealAnswer: session.presentRevealAnswer,
+                presentTheme: session.presentTheme,
               }}
               onChange={handleSettingsChange}
               saving={savingSettings}
@@ -1512,6 +1704,9 @@ export default function LiveExamControl() {
                 leaderboardVisibility: session.leaderboardVisibility,
                 presentShowLeaderboard: session.presentShowLeaderboard,
                 presentShowRiver: session.presentShowRiver,
+                presentShowOptions: session.presentShowOptions,
+                presentRevealAnswer: session.presentRevealAnswer,
+                presentTheme: session.presentTheme,
               }}
               onChange={handleSettingsChange}
               saving={savingSettings}
@@ -1597,12 +1792,16 @@ export default function LiveExamControl() {
                     tone={responseRatePct >= 80 ? "correct" : "brand"}
                   />
 
-                  {/* A3 — beside the meter, because the decision to grant time is
-                      made by looking at how many have answered. */}
+                  {/* A3 / A3b — beside the meter, because both decisions are made
+                      by looking at how many have answered: 40 of 120 buys the room
+                      another thirty seconds, 119 of 120 ends the wait. The flush
+                      lives in the same row as the extensions rather than beside the
+                      unlock button, so "how long is left" stays one control. */}
                   <AddTimeControls
                     canAddTime={isTimerActive}
                     extraSeconds={session.extraSeconds}
                     onAddTime={handleAddTime}
+                    onEndTime={handleEndTime}
                     pending={controlPending}
                   />
 
@@ -1861,12 +2060,37 @@ export default function LiveExamControl() {
               <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
                 <Trophy className="h-4 w-4 text-amber-500" />
                 <h2 className="text-sm font-bold">Leaderboard</h2>
-                <span className="ml-auto text-[11px] font-medium text-muted-foreground">Top 20</span>
+                {/*
+                  This panel shows real names by design — the cockpit is the one
+                  screen that is never cast, and reading it is how a creator says a
+                  name out loud. Unlabelled, that is indistinguishable from a privacy
+                  toggle that did not take, and a creator who believes the toggle is
+                  broken turns it off again in front of the class.
+
+                  It replaces the "Top 20" count rather than sitting beside it: once
+                  there is something to say about WHOSE names these are, the count is
+                  the less useful of the two, and a header that wraps in a 340px
+                  column is worse than either.
+                */}
+                {session.privacyMode ? (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                    <UserRoundX className="h-3 w-3" />
+                    Room sees nicknames
+                  </span>
+                ) : (
+                  <span className="ml-auto text-[11px] font-medium text-muted-foreground">Top 20</span>
+                )}
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 <LiveLeaderboard
                   entries={leaderboard}
                   outOf={hasStarted ? currentQuestionIndex + 1 : undefined}
+                  // Per-row nicknames only while privacy is on. `undefined` rather
+                  // than an empty map so the board can tell "not applicable" from
+                  // "applicable but not loaded yet" and skip the annotation
+                  // entirely — a row that briefly prints no alias while every other
+                  // row does reads as one student being exempt.
+                  aliasById={session.privacyMode ? roomAliases : undefined}
                   emptyLabel={
                     isLive
                       ? "Rankings appear once the first question's timer ends."

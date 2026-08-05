@@ -4,6 +4,13 @@
  * Rank is carried by position + a medal token, and score by a proportional bar,
  * so the shape of the class ("everyone bunched at 6" vs "one runaway leader")
  * is legible without reading a single number.
+ *
+ * The two screens are looking at two different name sets, deliberately. Students
+ * read the masked `live_participants_public` view; the creator's cockpit reads the
+ * base table and sees real names, because a teacher who cannot tell who is last
+ * cannot go and help them. `aliasById` is the bridge between the two: it lets the
+ * cockpit print the room's nickname beside the real name, so the creator can hold
+ * both halves of the session in one glance without either view lying to them.
  */
 
 import { memo } from "react";
@@ -30,6 +37,7 @@ function LeaderboardRow({
   maxScore,
   outOf,
   dense,
+  alias,
 }: {
   participant: LiveParticipant;
   position: number;
@@ -37,6 +45,12 @@ function LeaderboardRow({
   maxScore: number;
   outOf?: number;
   dense?: boolean;
+  /**
+   * The nickname the room is seeing for this row, when it differs from the name
+   * printed here. Already resolved by the caller — the row never decides whether
+   * an alias is worth showing, it only draws the one it was handed.
+   */
+  alias?: string;
 }) {
   const rank = participant.rank || position;
   const pct = maxScore > 0 ? (participant.total_correct / maxScore) * 100 : 0;
@@ -72,6 +86,21 @@ function LeaderboardRow({
         }`}
       >
         {participant.display_name}
+        {/*
+         * The alias rides beside the real name, never instead of it. This panel is
+         * the creator's cockpit: they are the one person in the building who is
+         * supposed to know who "Brave Badger" actually is, and swapping the name
+         * out would take that away in exchange for nothing. Rendering both is what
+         * lets them answer "who is second?" and "who does the wall say is second?"
+         * from the same row — which is the whole reason privacy mode is bearable
+         * to run a session under.
+         *
+         * Muted and a size down so the scan order stays name-first; the alias is an
+         * annotation on the row, not a competing label.
+         */}
+        {alias && (
+          <span className="ml-1.5 text-[11px] font-medium text-muted-foreground">{alias}</span>
+        )}
         {isMe && <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide">you</span>}
       </p>
 
@@ -91,6 +120,7 @@ function LiveLeaderboard({
   emptyLabel = "Standings appear once the first question closes.",
   dense = false,
   className = "",
+  aliasById,
 }: {
   entries: LiveParticipant[];
   currentUserId?: string;
@@ -100,6 +130,21 @@ function LiveLeaderboard({
   emptyLabel?: string;
   dense?: boolean;
   className?: string;
+  /**
+   * Participant id → the nickname the room is seeing for them, from the masked
+   * `live_participants_public` view.
+   *
+   * Keyed on the participant row id and not on user_id, for the same reason the
+   * row keys below are: privacy mode NULLs everyone else's user_id, so a map
+   * keyed on it would collapse the entire room onto a single `null` entry and
+   * every row would read back whichever nickname landed last.
+   *
+   * Optional, and left undefined by every screen that is already looking at
+   * masked names — a student's board shows nicknames as the names, so annotating
+   * them with the same nicknames would be noise. Only the creator's cockpit
+   * passes it, and only while privacy is on.
+   */
+  aliasById?: Map<string, string>;
 }) {
   if (entries.length === 0) {
     return (
@@ -130,6 +175,20 @@ function LiveLeaderboard({
           maxScore={maxScore}
           outOf={outOf}
           dense={dense}
+          /**
+           * Only annotate when the room's name for this person is actually a
+           * different string.
+           *
+           * With privacy off, the masked view hands back the real name — it masks
+           * nothing because there is nothing to mask. Handing that straight to the
+           * row would print "Priya Nair Priya Nair", which nobody reads as "the
+           * wall agrees with you"; they read it as the leaderboard having
+           * duplicated itself, and start distrusting the panel. The same guard
+           * covers the map being absent entirely: `aliasById?.get(...)` is then
+           * undefined, undefined never equals a display_name, and the row is
+           * handed that same undefined — no annotation, no branch to maintain.
+           */
+          alias={aliasById?.get(p.id) !== p.display_name ? aliasById?.get(p.id) : undefined}
         />
       ))}
 
@@ -143,6 +202,18 @@ function LiveLeaderboard({
             maxScore={maxScore}
             outOf={outOf}
             dense={dense}
+            /**
+             * The pinned row gets the same treatment as the ones above it. No
+             * caller lights both props today — the cockpit passes aliasById and
+             * never a pinned self, the student screens pass a pinned self and
+             * never aliasById — but a row that quietly drops the annotation
+             * depending on which branch drew it is the kind of inconsistency that
+             * gets reported later as "the nickname disappears when I'm off the
+             * bottom of the list", and there is no reason to build that in.
+             */
+            alias={
+              aliasById?.get(self.id) !== self.display_name ? aliasById?.get(self.id) : undefined
+            }
           />
         </>
       )}
@@ -155,5 +226,10 @@ function LiveLeaderboard({
  * while a question is open (the answered count polls at 750ms). Without this,
  * every one of those ticks re-ran all twenty leaderboard rows — and the props that
  * decide its output only change when the question does.
+ *
+ * That makes `aliasById` a prop callers have to hold still: a Map rebuilt inline on
+ * every render is a new reference every render, which defeats this memo entirely
+ * and quietly hands the polling loop back the cost it was added to remove. Callers
+ * keep it in state and refresh it when the roster changes, not per tick.
  */
 export default memo(LiveLeaderboard);

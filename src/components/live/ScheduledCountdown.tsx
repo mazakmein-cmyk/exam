@@ -19,6 +19,21 @@
  * It never shows a negative number. Past zero it reads "Starting shortly",
  * because the creator may still be fixing the projector and `-00:04:12` reads as
  * broken software rather than as a teacher running late.
+ *
+ * Two branches, two colour systems
+ * -------------------------------
+ * The card branch is read by one person holding a phone, so it uses the app's
+ * semantic tokens and follows that person's own light/dark preference. The
+ * `display` branch is projected, so it reads only from the stage custom
+ * properties the focus screen's shell sets — see stageTheme.ts for why the
+ * projected surface is a broadcast decision rather than a viewer preference.
+ *
+ * That split is not tidiness. The display branch used to hard-code white, which
+ * was correct for exactly as long as the focus screen was always dark. The
+ * moment Q16 let a creator pick the light theme, the pre-show became white text
+ * on near-white paper: the room spent the last five minutes before question one
+ * looking at a wall that appeared to be showing nothing, which is precisely the
+ * "is this working?" anxiety the countdown exists to remove.
  */
 
 import { useEffect, useState } from "react";
@@ -74,15 +89,43 @@ export default function ScheduledCountdown({
   if (display) {
     return (
       <div className={`text-center ${className}`}>
-        <p className="text-lg font-bold uppercase tracking-[0.18em] text-white/50">
+        {/*
+          Every colour below is a var(--stage-*) lookup and never a Tailwind
+          colour, because this markup has to render on whichever frame the
+          creator chose from the control room. Custom properties cascade from
+          the stage shell, so this component takes no theme prop and stays
+          identical for the student card branch below, where no stage exists.
+        */}
+        <p
+          className="text-lg font-bold uppercase tracking-[0.18em]"
+          style={{ color: "var(--stage-faint)" }}
+        >
           {started ? "Starting shortly" : "Starts in"}
         </p>
         {!started && (
-          <p className="mt-2 font-mono text-7xl font-black tabular-nums text-white">
+          /*
+            The digits are the one thing a room five metres back and a viewer on
+            a 360p stream both have to read, so they take the full-strength ink
+            tier rather than a dimmed one. tabular-nums is load-bearing here and
+            not typographic taste: proportional digits change width as the count
+            falls, and a 7xl number that jitters sideways once a second is the
+            single most distracting object in a silent room.
+          */
+          <p
+            className="mt-2 font-mono text-7xl font-black tabular-nums"
+            style={{ color: "var(--stage-fg)" }}
+          >
             {formatCountdown(remainingMs)}
           </p>
         )}
-        <p className="mt-2 text-base text-white/40">Scheduled for {local}</p>
+        {/*
+          The wall-clock line is reassurance, not information — the countdown
+          above it already carries the fact — so it sits in the faint tier,
+          which both themes hold at large-text contrast only.
+        */}
+        <p className="mt-2 text-base" style={{ color: "var(--stage-faint)" }}>
+          Scheduled for {local}
+        </p>
       </div>
     );
   }
