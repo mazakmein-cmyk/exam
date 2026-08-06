@@ -1246,7 +1246,7 @@ const ExamSimulator = () => {
             paper-wide Submit, because a candidate who is done should not have to
             walk to the last question to say so. */}
         {showSectionTabs && (
-          <div className="border-t border-border/70 bg-muted/20">
+          <div className="border-t border-border/60 bg-card">
             <div className="container mx-auto max-w-7xl flex items-stretch justify-between gap-2">
               <div className="min-w-0 flex-1 hidden lg:block">
                 <SectionTabs
