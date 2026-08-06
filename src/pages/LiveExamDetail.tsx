@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import SortableQuestionRow from "@/components/live/SortableQuestionRow";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { ArrowLeft, Play, Save, Trash2, Edit, Plus, Clock, MoreVertical, Share2, Globe, Radio, Check, ChevronDown, ChevronUp, Eye, FileText, Sparkles, Copy, Layers, Lock, FileJson, ListChecks, HelpCircle, AlertCircle, Image as ImageIcon, Upload, X } from "lucide-react";
+import { ArrowLeft, Play, Save, Trash2, Edit, Plus, Clock, MoreVertical, Share2, Globe, Radio, Check, ChevronDown, ChevronUp, Eye, FileText, Sparkles, Copy, Layers, Lock, FileJson, ListChecks, HelpCircle, AlertCircle, Image as ImageIcon, Upload, X, BarChart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { TransliterateTextarea } from "@/components/TransliterateTextarea";
@@ -1675,6 +1675,18 @@ export default function LiveExamDetail() {
                     : "Results are final. Duplicate this exam to run the same quiz with a new batch."}
                 </p>
               </div>
+              {/* The one banner every creator of a finished session sees — which
+                  makes it the report's most important doorway. */}
+              {exam.status === "ended" && (
+                <Button
+                  size="sm"
+                  className="ml-auto h-9 shrink-0 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}/report`)}
+                >
+                  <BarChart className="mr-1.5 h-4 w-4" />
+                  View session report
+                </Button>
+              )}
             </div>
           )}
 

@@ -183,6 +183,31 @@ function DeckStat({
   );
 }
 
+/**
+ * What to say in the standings header, given the two settings that change who
+ * can read it.
+ *
+ * A function rather than four nested ternaries in the JSX because the cases
+ * genuinely interact and the wrong one is worse than none: "Room sees nicknames"
+ * under E3 'private' is a true sentence about a list the room cannot see at all,
+ * and a creator reading it goes looking for per-row nicknames that will never
+ * render. Precedence runs from the setting that hides the most.
+ */
+function standingsNote(
+  visibility: SessionSettings["leaderboardVisibility"],
+  privacyMode: boolean,
+  isLive: boolean
+): { text: string; emphasis: boolean } {
+  // The panel body is closed in this state, so the header explains why.
+  if (visibility === "off" && isLive) return { text: "Off while you run it", emphasis: true };
+  if (visibility === "off") return { text: "The room never saw this", emphasis: true };
+  // Under 'private' the room gets no standings, so whether names would have been
+  // masked is moot — who can see the list is the more useful of the two facts.
+  if (visibility === "private") return { text: "Only you see this", emphasis: true };
+  if (privacyMode) return { text: "Room sees nicknames", emphasis: true };
+  return { text: "Top 20", emphasis: false };
+}
+
 // ─── Main Component ──────────────────────────────────────────
 
 export default function LiveExamControl() {
@@ -2072,31 +2097,69 @@ export default function LiveExamControl() {
                   the less useful of the two, and a header that wraps in a 340px
                   column is worse than either.
                 */}
-                {session.privacyMode ? (
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
-                    <UserRoundX className="h-3 w-3" />
-                    Room sees nicknames
-                  </span>
-                ) : (
-                  <span className="ml-auto text-[11px] font-medium text-muted-foreground">Top 20</span>
-                )}
+                {(() => {
+                  const note = standingsNote(session.leaderboardVisibility, session.privacyMode, isLive);
+                  return note.emphasis ? (
+                    <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                      {session.leaderboardVisibility === "full" ? (
+                        <UserRoundX className="h-3 w-3" />
+                      ) : (
+                        <EyeOff className="h-3 w-3" />
+                      )}
+                      {note.text}
+                    </span>
+                  ) : (
+                    <span className="ml-auto text-[11px] font-medium text-muted-foreground">{note.text}</span>
+                  );
+                })()}
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                <LiveLeaderboard
-                  entries={leaderboard}
-                  outOf={hasStarted ? currentQuestionIndex + 1 : undefined}
-                  // Per-row nicknames only while privacy is on. `undefined` rather
-                  // than an empty map so the board can tell "not applicable" from
-                  // "applicable but not loaded yet" and skip the annotation
-                  // entirely — a row that briefly prints no alias while every other
-                  // row does reads as one student being exempt.
-                  aliasById={session.privacyMode ? roomAliases : undefined}
-                  emptyLabel={
-                    isLive
-                      ? "Rankings appear once the first question's timer ends."
-                      : "No participants took part in this session."
-                  }
-                />
+                {/*
+                  E3 'off' — the one setting that also closes this panel, and only
+                  while the session is running.
+
+                  'full' and 'private' both leave the creator their list, because
+                  both are decisions about the ROOM and this screen is never cast.
+                  'off' is a decision about the session itself: a creator turns
+                  ranking off to stop running the lesson as a race, and a live
+                  ranking on the presenter's own screen is how it goes on being one
+                  anyway — they read it out, or pace off it, and the class feels
+                  the standings they were told did not exist.
+
+                  Nothing is lost by closing it. Ranks are still computed on every
+                  reveal, the panel opens again the moment the session ends, and D1
+                  has the whole thing regardless. That is the difference between
+                  "off during the game" and "off", and it is why the copy promises
+                  the list back rather than apologising for its absence.
+                */}
+                {session.leaderboardVisibility === "off" && isLive ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 px-6 py-8 text-center">
+                    <EyeOff className="h-5 w-5 text-muted-foreground/70" />
+                    <p className="text-sm font-semibold">Ranking is off for this session</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Nobody sees a position while you run it — including here, so the
+                      lesson isn't quietly still a race. Scores and ranks are being
+                      recorded as normal: this list returns when you end the session,
+                      and the report has all of it.
+                    </p>
+                  </div>
+                ) : (
+                  <LiveLeaderboard
+                    entries={leaderboard}
+                    outOf={hasStarted ? currentQuestionIndex + 1 : undefined}
+                    // Per-row nicknames only while privacy is on. `undefined` rather
+                    // than an empty map so the board can tell "not applicable" from
+                    // "applicable but not loaded yet" and skip the annotation
+                    // entirely — a row that briefly prints no alias while every other
+                    // row does reads as one student being exempt.
+                    aliasById={session.privacyMode ? roomAliases : undefined}
+                    emptyLabel={
+                      isLive
+                        ? "Rankings appear once the first question's timer ends."
+                        : "No participants took part in this session."
+                    }
+                  />
+                )}
               </div>
             </section>
           </aside>

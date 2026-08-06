@@ -75,9 +75,27 @@ const VISIBILITY_OPTIONS: {
   label: string;
   hint: string;
 }[] = [
+  /*
+   * The distinction these three carry is who keeps a POSITION:
+   *
+   *   full     everyone keeps theirs and sees everyone else's
+   *   private  each student keeps their own and sees no one else's
+   *   off      nobody has one to look at while the session runs — the creator
+   *            included, whose own panel closes, because a ranking read off the
+   *            presenter's screen is still a ranking in the room
+   *
+   * The last caption spells out "while it's running" because that is the whole
+   * difference between 'off' and losing data: ranks never stop being computed,
+   * and both the control room's list and the report have them the moment the
+   * session ends. Without those words, "off" reads as "don't bother scoring".
+   */
   { value: "full", label: "Everyone", hint: "The room sees the standings" },
   { value: "private", label: "Just me", hint: "Students see only their own result" },
-  { value: "off", label: "Off", hint: "No ranking shown to anyone" },
+  {
+    value: "off",
+    label: "Off",
+    hint: "No places shown to anyone while it's running — yours included. Scores keep recording, and your list returns when you end the session",
+  },
 ];
 
 /**

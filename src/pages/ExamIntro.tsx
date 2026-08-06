@@ -3,11 +3,13 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, BookOpen, Globe, Eye } from "lucide-react";
+import { ArrowLeft, BookOpen, ClipboardList, Globe, Eye, ArrowLeftRight, Lock, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatMarks, type ScoringConfig } from "@/services/scoringEngine";
 import { getExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/examAccess";
 import CreatorExamBlocked from "@/components/CreatorExamBlocked";
+import { readNavigationSettings } from "@/lib/examSettings";
+import { sumSectionMinutes, totalExamMinutes } from "@/lib/examNavigation.js";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -21,6 +23,8 @@ type Exam = {
     description_translations?: Record<string, string> | null;
     instruction: string | null;
     instruction_translations?: Record<string, string> | null;
+    exam_instruction?: string | null;
+    exam_instruction_translations?: Record<string, string> | null;
     user_id: string;
     published_languages?: string[];
     supported_languages?: string[];
@@ -59,6 +63,11 @@ const ExamIntro = () => {
     // "blocked" for a creator on someone else's exam.
     const [access, setAccess] = useState<ExamAccessMode>("take");
     const isPreview = access === "preview";
+    // How the paper is timed. A student is entitled to know whether they can
+    // come back to a section BEFORE they start planning their first one.
+    const [allowSectionSwitching, setAllowSectionSwitching] = useState(false);
+    const [paperMinutes, setPaperMinutes] = useState(0);
+    const [sectionCount, setSectionCount] = useState(0);
 
     const fromPage = searchParams.get("from");
 
@@ -113,7 +122,7 @@ const ExamIntro = () => {
             // localized section names for multi-language exams).
             const { data: sections, error: sectionsError } = await supabase
                 .from("sections")
-                .select("id, name, language, sort_order, section_group_id")
+                .select("id, name, language, sort_order, section_group_id, time_minutes")
                 .eq("exam_id", examId)
                 .order("sort_order", { ascending: true })
                 .order("created_at", { ascending: true });
@@ -121,6 +130,22 @@ const ExamIntro = () => {
             if (sectionsError) throw sectionsError;
 
             setAllSections(sections || []);
+
+            // Timing summary, per language variant so the minutes shown are the
+            // ones this student will actually get.
+            const navSettings = readNavigationSettings(examData);
+            const introLang = (requestedLang && pubLangs.includes(requestedLang))
+                ? requestedLang
+                : (pubLangs.length === 1 ? pubLangs[0] : ((examData as any).primary_language || "en"));
+            const langSecs = (sections || []).filter((s: any) => s.language === introLang);
+            const timedSecs = langSecs.length > 0 ? langSecs : (sections || []);
+            setAllowSectionSwitching(navSettings.allow_section_switching);
+            setSectionCount(timedSecs.length);
+            setPaperMinutes(
+                navSettings.allow_section_switching
+                    ? totalExamMinutes(navSettings, timedSecs)
+                    : sumSectionMinutes(timedSecs)
+            );
 
             // Fetch marks config for marking scheme display.
             // Layered lookup: exam default + per-section overrides + per-question overrides.
@@ -325,10 +350,15 @@ const ExamIntro = () => {
         (exam.description_translations && exam.description_translations['en']) || 
         exam.description;
 
-    const displayInstruction = 
-        (exam.instruction_translations && exam.instruction_translations[displayLanguage]) || 
-        (exam.instruction_translations && exam.instruction_translations['en']) || 
+    const displayGeneralInstruction =
+        (exam.instruction_translations && exam.instruction_translations[displayLanguage]) ||
+        (exam.instruction_translations && exam.instruction_translations['en']) ||
         exam.instruction;
+
+    const displayExamInstruction =
+        (exam.exam_instruction_translations && exam.exam_instruction_translations[displayLanguage]) ||
+        (exam.exam_instruction_translations && exam.exam_instruction_translations['en']) ||
+        exam.exam_instruction;
 
     return (
         <div className="min-h-screen relative overflow-hidden flex items-center justify-center p-4 bg-background">
@@ -395,14 +425,78 @@ const ExamIntro = () => {
                             )}
                         </div>
 
-                        {/* Instructions */}
-                        {displayInstruction && (
+                        {/* General Instructions */}
+                        {displayGeneralInstruction && (
                             <div className="rounded-xl border border-[#6C3EF4]/20 bg-[#6C3EF4]/5 p-4 space-y-2">
                                 <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
                                     <BookOpen className="h-4 w-4 text-[#A855F7]" />
-                                    Instructions
+                                    General Instructions
                                 </h3>
-                                <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{displayInstruction}</p>
+                                <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{displayGeneralInstruction}</p>
+                            </div>
+                        )}
+
+                        {/* Exam Instructions */}
+                        {displayExamInstruction && (
+                            <div className="rounded-xl border border-[#6C3EF4]/20 bg-[#6C3EF4]/5 p-4 space-y-2">
+                                <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
+                                    <ClipboardList className="h-4 w-4 text-[#A855F7]" />
+                                    Exam Instructions
+                                </h3>
+                                <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{displayExamInstruction}</p>
+                            </div>
+                        )}
+
+                        {/* Exam format — how the clock works and whether sections
+                            can be revisited. Both are decisions the candidate has
+                            to make before question 1, not after. */}
+                        {sectionCount > 0 && (
+                            <div className={`rounded-xl border p-4 ${
+                                allowSectionSwitching
+                                    ? "border-[#6C3EF4]/25 bg-[#6C3EF4]/[0.06]"
+                                    : "border-border/60 bg-muted/30"
+                            }`}>
+                                <div className="flex items-start gap-3">
+                                    <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                        allowSectionSwitching
+                                            ? "bg-[#6C3EF4]/15 text-[#6C3EF4]"
+                                            : "bg-muted text-muted-foreground"
+                                    }`}>
+                                        {allowSectionSwitching
+                                            ? <ArrowLeftRight className="h-4 w-4" />
+                                            : <Lock className="h-3.5 w-3.5" />}
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                        <h3 className="font-semibold text-foreground text-sm">
+                                            {allowSectionSwitching
+                                                ? "You can switch between sections"
+                                                : "One section at a time"}
+                                        </h3>
+                                        <p className="text-xs text-muted-foreground leading-relaxed">
+                                            {allowSectionSwitching ? (
+                                                <>
+                                                    All {sectionCount} section{sectionCount === 1 ? "" : "s"} share one
+                                                    clock. Move between them in any order and revisit any answer until
+                                                    you submit.
+                                                </>
+                                            ) : (
+                                                <>
+                                                    {sectionCount} section{sectionCount === 1 ? "" : "s"}, each on its own
+                                                    clock, sat in order. A section you submit cannot be reopened.
+                                                </>
+                                            )}
+                                        </p>
+                                        {paperMinutes > 0 && (
+                                            <p className="flex items-center gap-1.5 text-xs text-foreground/80 pt-0.5">
+                                                <Hourglass className="h-3 w-3 text-[#A855F7]" />
+                                                <span className="font-bold tabular-nums">{paperMinutes} min</span>
+                                                <span className="text-muted-foreground">
+                                                    {allowSectionSwitching ? "for the whole paper" : "total across all sections"}
+                                                </span>
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         )}
 

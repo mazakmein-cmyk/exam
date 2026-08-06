@@ -69,10 +69,13 @@ export type Database = {
       }
       exams: {
         Row: {
+          allow_section_switching: boolean
           created_at: string
           description: string | null
           description_translations: Json | null
           exam_category: string | null
+          exam_instruction: string | null
+          exam_instruction_translations: Json | null
           id: string
           instruction: string | null
           instruction_translations: Json | null
@@ -81,14 +84,18 @@ export type Database = {
           primary_language: string
           published_languages: string[]
           supported_languages: string[]
+          total_time_minutes: number | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          allow_section_switching?: boolean
           created_at?: string
           description?: string | null
           description_translations?: Json | null
           exam_category?: string | null
+          exam_instruction?: string | null
+          exam_instruction_translations?: Json | null
           id?: string
           instruction?: string | null
           instruction_translations?: Json | null
@@ -97,14 +104,18 @@ export type Database = {
           primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]
+          total_time_minutes?: number | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          allow_section_switching?: boolean
           created_at?: string
           description?: string | null
           description_translations?: Json | null
           exam_category?: string | null
+          exam_instruction?: string | null
+          exam_instruction_translations?: Json | null
           id?: string
           instruction?: string | null
           instruction_translations?: Json | null
@@ -113,6 +124,7 @@ export type Database = {
           primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]
+          total_time_minutes?: number | null
           updated_at?: string
           user_id?: string
         }

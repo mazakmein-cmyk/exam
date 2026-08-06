@@ -66,6 +66,7 @@ const OFF_SQL = readMigration("20260812000000_live_v2_leaderboard_off.sql");
 const SESSION = readSrc("hooks/useLiveSession.ts");
 const STUDENT = readSrc("pages/LiveExamStudent.tsx");
 const PRESENT = readSrc("pages/LiveExamPresent.tsx");
+const CONTROL = readSrc("pages/LiveExamControl.tsx");
 const MENU = readSrc("components/live/SessionSettingsMenu.tsx");
 
 console.log("\n══ E3 — 'off' means off ══");
@@ -80,14 +81,21 @@ test("the rank is gated on leaderboard_visibility", () => {
   );
 });
 
-test("the gate sits on the student branch, never the creator's", () => {
-  // The creator branch fills confusion/open-response counts and returns before
-  // the rank lookup. If the gate had been applied to the whole function, the
-  // control room would lose the standings it exists to show.
-  const studentBranch = OFF_SQL.split("ELSE")[1] || "";
+test("the gate sits on the student branch, never on the computation", () => {
+  // The rank must be dropped where it is READ for a student, not where it is
+  // written. Gating the compute instead would cost the creator the panel, the
+  // end-of-session list and D1 — the one thing the menu promises never happens.
+  const branch = OFF_SQL.slice(OFF_SQL.indexOf("IF v_is_creator THEN"));
+  const gate = branch.indexOf("leaderboard_visibility = 'off'");
+  const scoreGate = branch.indexOf("v_score_visible := (");
+  assert(gate !== -1, "the gate must live inside the per-caller branch");
   assert(
-    /leaderboard_visibility = 'off'/.test(studentBranch),
-    "ranks are always computed and the creator always sees them — E3 is a display setting"
+    gate > scoreGate && scoreGate !== -1,
+    "the rank gate belongs in the non-creator arm, after the score_visible decision"
+  );
+  assert(
+    !/compute_live_rankings/.test(OFF_SQL),
+    "E3 is a display setting; this migration must not touch how ranks are computed"
   );
 });
 
@@ -196,8 +204,47 @@ test("the header chip and its climb badge need no gate of their own", () => {
   );
 });
 
-// ─── [4] The room ───────────────────────────────────────────────────────────
-console.log("\n[4] the wall and the copy still agree");
+// ─── [4] The creator's own screen ───────────────────────────────────────────
+console.log("\n[4] 'off' closes the control room's list too — but only while live");
+
+test("the panel is replaced while the session runs", () => {
+  assert(
+    /session\.leaderboardVisibility === "off" && isLive \?/.test(CONTROL),
+    "a ranking read aloud off the presenter's screen is still a ranking in the room"
+  );
+});
+
+test("it opens again the moment the session ends", () => {
+  // `&& isLive` is the whole guarantee. Without it the creator loses the list
+  // they were promised back, and 'off' becomes a setting that destroys a view.
+  const gate = CONTROL.match(/session\.leaderboardVisibility === "off" && (\w+) \?/);
+  assert(gate && gate[1] === "isLive", "the close must be scoped to the live session, not to the setting alone");
+});
+
+test("the closed panel says the data survives", () => {
+  assert(
+    /list returns when you end the session/.test(CONTROL),
+    "an empty panel with no explanation reads as lost data, which is the one thing E3 never does"
+  );
+});
+
+test("the header stops claiming a count nobody can see", () => {
+  assert(
+    /function standingsNote\(/.test(CONTROL),
+    "the header's four cases interact; the wrong true sentence is worse than none"
+  );
+  assert(
+    /if \(visibility === "off" && isLive\) return/.test(CONTROL),
+    "precedence must run from the setting that hides the most"
+  );
+  assert(
+    /if \(visibility === "private"\) return \{ text: "Only you see this"/.test(CONTROL),
+    "'Room sees nicknames' under 'private' is a true sentence about a list the room cannot see at all"
+  );
+});
+
+// ─── [5] The room ───────────────────────────────────────────────────────────
+console.log("\n[5] the wall and the copy still agree");
 
 test("the projector shows standings only under 'full'", () => {
   assert(
@@ -206,14 +253,22 @@ test("the projector shows standings only under 'full'", () => {
   );
 });
 
-test("the three options still describe what now happens", () => {
+test("the three captions describe three different sessions", () => {
   assert(
-    /value: "off".*hint: "No ranking shown to anyone"/s.test(MENU),
-    "this caption is the promise the whole suite exists to keep"
+    /Students see only their own result/.test(MENU),
+    "'private' keeps the student's own position — that is exactly what distinguishes it from 'off'"
   );
   assert(
-    /value: "private".*Students see only their own result/s.test(MENU),
-    "'private' keeps the student's own position — that is what distinguishes it from 'off'"
+    /No places shown to anyone while it's running/.test(MENU),
+    "'off' has to promise something 'private' does not, or the third button is decoration again"
+  );
+  assert(
+    /yours included/.test(MENU),
+    "the creator's own panel closes under 'off'; a caption that omits it makes the closed panel look like a fault"
+  );
+  assert(
+    /Scores keep recording/.test(MENU) && /returns when you end the session/.test(MENU),
+    "without this, 'off' reads as 'stop scoring' and no creator will risk it mid-lesson"
   );
 });
 

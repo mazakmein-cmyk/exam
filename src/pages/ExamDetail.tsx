@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
@@ -72,6 +72,9 @@ import MarksConfigPanel from "@/components/marks/MarksConfigPanel";
 import { useMarksModule } from "@/hooks/useMarksModule";
 import { MarksQuestionBadge } from "@/components/marks/MarksQuestionBadge";
 import { formatMarks } from "@/services/scoringEngine";
+import SectionNavigationControl from "@/components/exam/SectionNavigationControl";
+import { navigationCopyPatch, readNavigationSettings, saveNavigationSettings } from "@/lib/examSettings";
+import { sumSectionMinutes } from "@/lib/examNavigation.js";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -85,11 +88,16 @@ type Exam = {
   description_translations?: Record<string, string> | null;
   instruction: string | null;
   instruction_translations?: Record<string, string> | null;
+  exam_instruction?: string | null;
+  exam_instruction_translations?: Record<string, string> | null;
   exam_category: string | null;
   user_id: string;
   is_published: boolean;
   supported_languages?: string[];
   primary_language?: string;
+  /** Section navigation mode — absent means the migration has not been applied. */
+  allow_section_switching?: boolean;
+  total_time_minutes?: number | null;
 };
 
 type Section = {
@@ -141,11 +149,19 @@ export default function ExamDetail() {
   const isMultiLang = supportedLanguages.length > 1;
   const isPrimaryLanguage = activeLanguage === primaryLanguage;
 
+  // Section navigation mode. Exam-level, so it applies to every language
+  // variant at once — a Hindi candidate and an English candidate sit the same
+  // paper under the same rules.
+  const [allowSectionSwitching, setAllowSectionSwitching] = useState(false);
+  const [totalTimeMinutes, setTotalTimeMinutes] = useState<number | null>(null);
+  const [savingNavMode, setSavingNavMode] = useState(false);
+
   // Form State
   const [examTitle, setExamTitle] = useState("");
   const [examCategory, setExamCategory] = useState("");
   const [examDescriptionTrans, setExamDescriptionTrans] = useState<Record<string, string>>({});
-  const [examInstructionTrans, setExamInstructionTrans] = useState<Record<string, string>>({});
+  const [generalInstructionTrans, setGeneralInstructionTrans] = useState<Record<string, string>>({});
+  const [examSpecificInstructionTrans, setExamSpecificInstructionTrans] = useState<Record<string, string>>({});
   const [isPublished, setIsPublished] = useState(false); // Placeholder for now
   
   // Publish Dialog States
@@ -206,7 +222,8 @@ export default function ExamDetail() {
     name: "",
     category: "",
     description_translations: {} as Record<string, string>,
-    instruction_translations: {} as Record<string, string>
+    instruction_translations: {} as Record<string, string>,
+    exam_instruction_translations: {} as Record<string, string>
   });
 
   const [isDirty, setIsDirty] = useState(false);
@@ -220,7 +237,8 @@ export default function ExamDetail() {
       examTitle !== initialExamDataRef.current.name ||
       examCategory !== initialExamDataRef.current.category ||
       JSON.stringify(examDescriptionTrans) !== JSON.stringify(initialExamDataRef.current.description_translations) ||
-      JSON.stringify(examInstructionTrans) !== JSON.stringify(initialExamDataRef.current.instruction_translations);
+      JSON.stringify(generalInstructionTrans) !== JSON.stringify(initialExamDataRef.current.instruction_translations) ||
+      JSON.stringify(examSpecificInstructionTrans) !== JSON.stringify(initialExamDataRef.current.exam_instruction_translations);
 
     // Check if new question is being typed but not empty (ignoring initial empty state)
     const isQuestionFormDirty =
@@ -233,7 +251,7 @@ export default function ExamDetail() {
     const isEditing = editingQuestionId !== null;
 
     setIsDirty(isExamChanged || isEditing || (isQuestionFormDirty && !editingQuestionId));
-  }, [examTitle, examCategory, examDescriptionTrans, examInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImages, newQuestionCorrect]);
+  }, [examTitle, examCategory, examDescriptionTrans, generalInstructionTrans, examSpecificInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImages, newQuestionCorrect]);
 
   // Section Switch Confirmation State
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
@@ -345,18 +363,29 @@ export default function ExamDetail() {
       setExam(examData as unknown as Exam);
       setExamTitle(examData.name);
       setExamCategory((examData as any).exam_category || "");
+
+      // Navigation mode. An absent column (migration not applied yet) reads as
+      // locked, which is exactly what such a database can serve.
+      const navSettings = readNavigationSettings(examData);
+      setAllowSectionSwitching(navSettings.allow_section_switching);
+      setTotalTimeMinutes(navSettings.total_time_minutes);
       const descTrans = (examData as any).description_translations || {};
       const instTrans = (examData as any).instruction_translations || {};
-      
+      const examInstTrans = (examData as any).exam_instruction_translations || {};
+
       if (Object.keys(descTrans).length === 0 && examData.description) {
         descTrans['en'] = examData.description;
       }
       if (Object.keys(instTrans).length === 0 && (examData as any).instruction) {
         instTrans['en'] = (examData as any).instruction;
       }
+      if (Object.keys(examInstTrans).length === 0 && (examData as any).exam_instruction) {
+        examInstTrans['en'] = (examData as any).exam_instruction;
+      }
 
       setExamDescriptionTrans(descTrans);
-      setExamInstructionTrans(instTrans);
+      setGeneralInstructionTrans(instTrans);
+      setExamSpecificInstructionTrans(examInstTrans);
 
       // Set language state
       const examLangs = (examData as any).supported_languages || ["en"];
@@ -373,7 +402,8 @@ export default function ExamDetail() {
         name: examData.name,
         category: (examData as any).exam_category || "",
         description_translations: descTrans,
-        instruction_translations: instTrans
+        instruction_translations: instTrans,
+        exam_instruction_translations: examInstTrans
       };
 
       if (sectionsError) throw sectionsError;
@@ -448,7 +478,7 @@ export default function ExamDetail() {
     }
 
     const currentDesc = examDescriptionTrans[activeLanguage] || "";
-    const currentInst = examInstructionTrans[activeLanguage] || "";
+    const currentInst = generalInstructionTrans[activeLanguage] || "";
 
     if (!currentDesc.trim()) {
       toast({
@@ -462,7 +492,7 @@ export default function ExamDetail() {
     if (!currentInst.trim()) {
       toast({
         title: "Validation Error",
-        description: `Please enter Exam Instructions for ${activeLanguage}`,
+        description: `Please enter a General Instruction for ${activeLanguage}`,
         variant: "destructive",
       });
       return false;
@@ -477,9 +507,11 @@ export default function ExamDetail() {
           name: examTitle,
           exam_category: examCategory,
           description: examDescriptionTrans['en'] || currentDesc,
-          instruction: examInstructionTrans['en'] || currentInst,
+          instruction: generalInstructionTrans['en'] || currentInst,
+          exam_instruction: examSpecificInstructionTrans['en'] || examSpecificInstructionTrans[activeLanguage] || null,
           description_translations: examDescriptionTrans,
-          instruction_translations: examInstructionTrans,
+          instruction_translations: generalInstructionTrans,
+          exam_instruction_translations: examSpecificInstructionTrans,
         })
         .eq("id", exam.id);
 
@@ -505,7 +537,8 @@ export default function ExamDetail() {
       name: examTitle,
       category: examCategory,
       description_translations: examDescriptionTrans,
-      instruction_translations: examInstructionTrans
+      instruction_translations: generalInstructionTrans,
+      exam_instruction_translations: examSpecificInstructionTrans
     };
     setIsDirty(false); // Force reset roughly, though effect will run again
     return true;
@@ -579,15 +612,22 @@ export default function ExamDetail() {
         return;
       }
 
-      // Create a copy of the exam (including multi-language fields)
+      // Create a copy of the exam (including multi-language fields).
+      // The navigation-mode fields come through a gated patch: on a database
+      // without the migration they are simply absent and the copy lands in the
+      // default locked mode.
+      const navPatch = await navigationCopyPatch(exam);
       const { data: newExam, error: examError } = await supabase
         .from("exams")
         .insert({
+          ...navPatch,
           name: `${exam.name} (Copy)`,
           description: exam.description,
           description_translations: exam.description_translations,
           instruction: exam.instruction,
           instruction_translations: exam.instruction_translations,
+          exam_instruction: exam.exam_instruction ?? null,
+          exam_instruction_translations: exam.exam_instruction_translations ?? {},
           exam_category: exam.exam_category,
           user_id: user.id,
           supported_languages: (exam as any).supported_languages || ["en"],
@@ -960,6 +1000,94 @@ export default function ExamDetail() {
         variant: "destructive",
       });
     }
+  };
+
+  /**
+   * Section navigation mode saves on the spot (no Save button), like the
+   * per-section minutes boxes. It is one column on `exams`, so there is
+   * nothing to batch, and a creator who flips it then closes the tab should
+   * find it flipped.
+   *
+   * The columns arrive by hand-pasted migration, so a failed write is a real
+   * possibility rather than a theoretical one: the local state is rolled back
+   * and the creator is told which migration to apply, instead of the switch
+   * appearing to stick and silently reverting on reload.
+   */
+  const handleToggleSectionSwitching = async (next: boolean) => {
+    if (!exam || savingNavMode) return;
+
+    // Turning it on with no total set: seed it from the section clocks, which
+    // is what the creator has already told us the paper is worth. Sent in the
+    // same write so the two settings can never disagree on reload.
+    const seedTotal =
+      next && totalTimeMinutes == null && sumSectionMinutes(sections) > 0
+        ? sumSectionMinutes(sections)
+        : undefined;
+
+    const previous = { allow: allowSectionSwitching, total: totalTimeMinutes };
+    setAllowSectionSwitching(next);
+    if (seedTotal !== undefined) setTotalTimeMinutes(seedTotal);
+    setSavingNavMode(true);
+
+    const result = await saveNavigationSettings(exam.id, {
+      allow_section_switching: next,
+      ...(seedTotal !== undefined ? { total_time_minutes: seedTotal } : {}),
+    });
+    setSavingNavMode(false);
+
+    if (!result.ok) {
+      setAllowSectionSwitching(previous.allow);
+      setTotalTimeMinutes(previous.total);
+      toast({
+        title: "Couldn't save section switching",
+        description:
+          result.reason === "missing-column"
+            ? "Apply migration 20260814000000_add_section_navigation_mode.sql, then reload this page."
+            : result.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setExam((prev) =>
+      prev
+        ? {
+            ...prev,
+            allow_section_switching: next,
+            total_time_minutes: seedTotal !== undefined ? seedTotal : prev.total_time_minutes,
+          }
+        : prev
+    );
+    toast({
+      title: next ? "Section switching on" : "Section switching off",
+      description: next
+        ? "Students get one clock for the paper and can move between sections."
+        : "Students sit one section at a time, each on its own clock.",
+    });
+  };
+
+  const handleTotalTimeChange = async (minutes: number | null) => {
+    if (!exam || savingNavMode) return;
+
+    const previous = totalTimeMinutes;
+    setTotalTimeMinutes(minutes);
+    setSavingNavMode(true);
+    const result = await saveNavigationSettings(exam.id, { total_time_minutes: minutes });
+    setSavingNavMode(false);
+
+    if (!result.ok) {
+      setTotalTimeMinutes(previous);
+      toast({
+        title: "Couldn't save the total time",
+        description:
+          result.reason === "missing-column"
+            ? "Apply migration 20260814000000_add_section_navigation_mode.sql, then reload this page."
+            : result.message,
+        variant: "destructive",
+      });
+      return;
+    }
+    setExam((prev) => (prev ? { ...prev, total_time_minutes: minutes } : prev));
   };
 
   const handleDeleteSectionClick = (sectionId: string) => {
@@ -2932,11 +3060,21 @@ export default function ExamDetail() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Instruction <span className="text-destructive">*</span></Label>
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">General Instruction <span className="text-destructive">*</span></Label>
                   <TransliterateTextarea
                     lang={activeLanguage}
-                    value={examInstructionTrans[activeLanguage] || ""}
-                    onValueChange={(text) => setExamInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
+                    value={generalInstructionTrans[activeLanguage] || ""}
+                    onValueChange={(text) => setGeneralInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
+                    rows={4}
+                    placeholder={`General instructions for all candidates in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Exam Instruction</Label>
+                  <TransliterateTextarea
+                    lang={activeLanguage}
+                    value={examSpecificInstructionTrans[activeLanguage] || ""}
+                    onValueChange={(text) => setExamSpecificInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
                     rows={4}
                     placeholder={`Specific instructions for the exam in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
@@ -2960,7 +3098,15 @@ export default function ExamDetail() {
                       {sections.length}
                     </span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">Drag to reorder</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Drag to reorder
+                    {allowSectionSwitching && (
+                      <>
+                        {" · "}
+                        <span className="text-primary font-semibold">switching on</span>
+                      </>
+                    )}
+                  </p>
                 </div>
               </div>
               <Button
@@ -2978,6 +3124,16 @@ export default function ExamDetail() {
             </CardHeader>
             {!isSectionsCollapsed && (
               <CardContent className="space-y-2.5 px-4 pb-4 pt-1">
+                {/* How the paper is timed — decides what the rows below mean */}
+                <SectionNavigationControl
+                  allowSwitching={allowSectionSwitching}
+                  totalMinutes={totalTimeMinutes}
+                  sectionMinutesSum={sumSectionMinutes(sections)}
+                  sectionCount={sections.length}
+                  onToggle={handleToggleSectionSwitching}
+                  onTotalMinutesChange={handleTotalTimeChange}
+                  busy={savingNavMode}
+                />
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
@@ -3023,25 +3179,50 @@ export default function ExamDetail() {
                             </Button>
                             </div>
                           </div>
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <Clock className="h-3 w-3" />
-                            <Input
-                              className="h-6 w-14 rounded-md text-xs text-center tabular-nums"
-                              type="number"
-                              value={s.time_minutes}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) =>
-                                handleLocalUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
-                              }
-                              onBlur={(e) =>
-                                handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') e.currentTarget.blur();
-                              }}
-                            />
-                            <span className="font-medium">min</span>
-                          </div>
+                          {allowSectionSwitching ? (
+                            // Switching on: the paper has one clock, so this
+                            // section has no time of its own to show. The stored
+                            // minutes are kept (not zeroed) so turning switching
+                            // back off restores the paper as it was.
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span
+                                    className="inline-flex items-center gap-1.5 rounded-md bg-muted/70 px-2 py-1 text-[11px] font-medium text-muted-foreground cursor-help"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <Hourglass className="h-3 w-3" />
+                                    Timed as one paper
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom" className="max-w-[240px] text-xs">
+                                  Section switching is on, so the whole paper shares one clock.
+                                  This section's saved {s.time_minutes} min comes back if you
+                                  turn switching off.
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Clock className="h-3 w-3" />
+                              <Input
+                                className="h-6 w-14 rounded-md text-xs text-center tabular-nums"
+                                type="number"
+                                value={s.time_minutes}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) =>
+                                  handleLocalUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
+                                }
+                                onBlur={(e) =>
+                                  handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') e.currentTarget.blur();
+                                }}
+                              />
+                              <span className="font-medium">min</span>
+                            </div>
+                          )}
                         </div>
                       </SortableSectionItem>
                     ))}

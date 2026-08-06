@@ -199,13 +199,24 @@ test("examSimulatorTs: Start Section button calls handleStartSection", () => {
 
 test("examSimulatorTs: attempt INSERT is inside handleStartSection", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
-  // handleStartSection must contain the insert and setAttemptId
+  // handleStartSection must contain the insert and set the attempt id.
+  //
+  // The insert became multi-row when configurable section navigation landed:
+  // a paper with `allow_section_switching` on opens one attempt per section at
+  // once, so the sitting's id is picked out of the returned rows instead of a
+  // single `data.id`. The property under test — nothing is inserted until the
+  // student presses Start — is unchanged.
   const handleStart = src.slice(
     src.indexOf("const handleStartSection = async"),
     src.indexOf("const updateQuestionTime")
   );
   assertContains(handleStart, '.from("attempts")', "attempt insert not in handleStartSection");
-  assertContains(handleStart, "setAttemptId(data.id)", "setAttemptId not in handleStartSection");
+  assertContains(handleStart, "setAttemptId(", "setAttemptId not in handleStartSection");
+  assertContains(
+    handleStart,
+    "setAttemptIdBySection(",
+    "per-section attempt map not populated in handleStartSection"
+  );
   assertContains(handleStart, "setHasStarted(true)", "setHasStarted not in handleStartSection");
 });
 
@@ -481,14 +492,19 @@ test("cloze markers are handled before math and markdown passes", () => {
     "renderMathInHtml no longer normalizes cloze markers — passages show raw ***1***");
   assertContains(renderMath, "renderClozeBlanks(text == null",
     "renderMathInText no longer normalizes cloze markers — options show raw ***1***");
-  // The markdown-lite bold pass runs BEFORE renderMathInHtml on these two
-  // pages and would mangle ***1*** into broken <strong> nesting, so the raw
-  // text must go through renderClozeBlanks first.
-  for (const file of ["pages/ExamSimulator.tsx", "pages/ExamReview.tsx"]) {
-    const src = readSrc(file);
-    assertContains(src, "renderMathInHtml(renderClozeBlanks(",
-      `${file}: question text hits the bold/italic pass before cloze markers are normalized`);
-  }
+  // The markdown-lite bold pass would mangle ***1*** into broken <strong>
+  // nesting, so raw text must go through renderClozeBlanks first. The
+  // simulator (and its All Questions overview) share that ordering via
+  // renderQuestionHtml; ExamReview still inlines the same pipeline.
+  const questionContent = readSrc("lib/questionContent.ts");
+  assertContains(questionContent, "renderMathInHtml(applyInlineMarkdown(renderClozeBlanks(",
+    "lib/questionContent.ts: renderQuestionHtml runs the bold/italic pass before cloze markers are normalized");
+  assertContains(readSrc("pages/ExamSimulator.tsx"), "renderQuestionHtml(",
+    "pages/ExamSimulator.tsx: question text no longer goes through the shared cloze-safe renderer");
+  assertContains(readSrc("components/exam/AllQuestionsDialog.tsx"), "renderQuestionHtml(",
+    "AllQuestionsDialog: question text no longer goes through the shared cloze-safe renderer");
+  assertContains(readSrc("pages/ExamReview.tsx"), "renderMathInHtml(renderClozeBlanks(",
+    "pages/ExamReview.tsx: question text hits the bold/italic pass before cloze markers are normalized");
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

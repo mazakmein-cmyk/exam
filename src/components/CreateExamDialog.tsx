@@ -33,7 +33,8 @@ type Props = {
 const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
   const [examName, setExamName] = useState("");
   const [examDescription, setExamDescription] = useState("");
-  const [examInstruction, setExamInstruction] = useState("");
+  const [generalInstruction, setGeneralInstruction] = useState("");
+  const [examSpecificInstruction, setExamSpecificInstruction] = useState("");
   const [examCategory, setExamCategory] = useState<string>("");
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["en"]);
   const [primaryLanguage, setPrimaryLanguage] = useState<string>("en");
@@ -143,9 +144,11 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           user_id: user.id,
           name: examName,
           description: examDescription || null,
-          instruction: examInstruction || null,
+          instruction: generalInstruction || null,
+          exam_instruction: examSpecificInstruction || null,
           description_translations: examDescription ? { en: examDescription } : {},
-          instruction_translations: examInstruction ? { en: examInstruction } : {},
+          instruction_translations: generalInstruction ? { en: generalInstruction } : {},
+          exam_instruction_translations: examSpecificInstruction ? { en: examSpecificInstruction } : {},
           exam_category: examCategory || null,
           supported_languages: selectedLanguages,
           primary_language: primaryLanguage,
@@ -225,7 +228,8 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       setExamName("");
       setExamCategory("");
       setExamDescription("");
-      setExamInstruction("");
+      setGeneralInstruction("");
+      setExamSpecificInstruction("");
       setSelectedLanguages(["en"]);
       setPrimaryLanguage("en");
       setSections([]);
@@ -271,10 +275,10 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       return;
     }
 
-    if (!examInstruction) {
+    if (!generalInstruction) {
       toast({
         title: "Invalid exam",
-        description: "Please enter exam instructions",
+        description: "Please enter general instructions",
         variant: "destructive",
       });
       return;
@@ -307,9 +311,11 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
         user_id: user.id,
         name: examName,
         description: examDescription || null,
-        instruction: examInstruction || null,
+        instruction: generalInstruction || null,
+        exam_instruction: examSpecificInstruction || null,
         description_translations: examDescription ? { en: examDescription } : {},
-        instruction_translations: examInstruction ? { en: examInstruction } : {},
+        instruction_translations: generalInstruction ? { en: generalInstruction } : {},
+        exam_instruction_translations: examSpecificInstruction ? { en: examSpecificInstruction } : {},
         exam_category: examCategory || null,
         supported_languages: selectedLanguages,
         primary_language: primaryLanguage,
@@ -367,7 +373,8 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
     setExamName("");
     setExamCategory("");
     setExamDescription("");
-    setExamInstruction("");
+    setGeneralInstruction("");
+    setExamSpecificInstruction("");
     setSelectedLanguages(["en"]);
     setPrimaryLanguage("en");
     setSections([]);
@@ -426,13 +433,26 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="exam-instruction" className="text-sm font-medium">Instruction <span className="text-destructive">*</span></Label>
+                <Label htmlFor="general-instruction" className="text-sm font-medium">General Instruction <span className="text-destructive">*</span></Label>
+                <TransliterateTextarea
+                  id="general-instruction"
+                  lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
+                  placeholder="General instructions for all candidates..."
+                  value={generalInstruction}
+                  onValueChange={(text) => setGeneralInstruction(text)}
+                  rows={2}
+                  className="resize-none placeholder:text-muted-foreground/50"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="exam-instruction" className="text-sm font-medium">Exam Instruction</Label>
                 <TransliterateTextarea
                   id="exam-instruction"
                   lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
                   placeholder="Specific instructions for the exam..."
-                  value={examInstruction}
-                  onValueChange={(text) => setExamInstruction(text)}
+                  value={examSpecificInstruction}
+                  onValueChange={(text) => setExamSpecificInstruction(text)}
                   rows={2}
                   className="resize-none placeholder:text-muted-foreground/50"
                 />

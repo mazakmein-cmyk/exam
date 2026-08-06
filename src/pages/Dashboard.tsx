@@ -12,6 +12,7 @@ import ExamTypeDialog from "@/components/ExamTypeDialog";
 import CreateLiveExamDialog from "@/components/CreateLiveExamDialog";
 import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCount, type LiveExam } from "@/services/liveExamService";
 import PublishExamDialog from "@/components/PublishExamDialog";
+import { navigationCopyPatch } from "@/lib/examSettings";
 import SEO from "@/components/SEO";
 import {
   DropdownMenu,
@@ -45,9 +46,14 @@ type Exam = {
   description_translations?: Record<string, string> | null;
   instruction: string | null;
   instruction_translations?: Record<string, string> | null;
+  exam_instruction?: string | null;
+  exam_instruction_translations?: Record<string, string> | null;
   created_at: string;
   is_published: boolean;
   exam_category: string | null;
+  /** Section navigation mode — absent when the migration has not been applied. */
+  allow_section_switching?: boolean;
+  total_time_minutes?: number | null;
 };
 
 import { useUserRole } from "@/hooks/use-user-role";
@@ -295,15 +301,21 @@ const Dashboard = () => {
     try {
       setLoading(true);
 
-      // Create a copy of the exam
+      // Create a copy of the exam. Navigation mode travels with it via a gated
+      // patch — absent (and so default-locked) on a database that has not had
+      // the migration applied.
+      const navPatch = await navigationCopyPatch(exam);
       const { data: newExam, error: examError } = await supabase
         .from("exams")
         .insert({
+          ...navPatch,
           name: `${exam.name} (Copy)`,
           description: exam.description,
           description_translations: exam.description_translations,
           instruction: exam.instruction,
           instruction_translations: exam.instruction_translations,
+          exam_instruction: exam.exam_instruction ?? null,
+          exam_instruction_translations: exam.exam_instruction_translations ?? {},
           exam_category: exam.exam_category,
           user_id: user.id,
           is_published: false,
@@ -784,13 +796,35 @@ const Dashboard = () => {
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-3">
-                        <Button
-                          className="flex-1 min-w-[100px] bg-emerald-600 hover:bg-emerald-700"
-                          onClick={() => navigate(`/live-exam/${user.id}/${exam.id}`)}
-                        >
-                          <FileText className="mr-2 h-4 w-4" />
-                          Edit
-                        </Button>
+                        {/* An ended session's most useful artifact is its report,
+                            so it takes the primary slot and Edit steps back. */}
+                        {exam.status === "ended" ? (
+                          <>
+                            <Button
+                              className="flex-1 min-w-[100px] bg-emerald-600 hover:bg-emerald-700"
+                              onClick={() => navigate(`/live-exam/${user.id}/${exam.id}/report`)}
+                            >
+                              <BarChart className="mr-2 h-4 w-4" />
+                              Report
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="flex-1 min-w-[100px]"
+                              onClick={() => navigate(`/live-exam/${user.id}/${exam.id}`)}
+                            >
+                              <FileText className="mr-2 h-4 w-4" />
+                              Edit
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            className="flex-1 min-w-[100px] bg-emerald-600 hover:bg-emerald-700"
+                            onClick={() => navigate(`/live-exam/${user.id}/${exam.id}`)}
+                          >
+                            <FileText className="mr-2 h-4 w-4" />
+                            Edit
+                          </Button>
+                        )}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button

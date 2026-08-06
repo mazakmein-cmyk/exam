@@ -1525,3 +1525,90 @@ export async function fetchResponseCount(
   if (error) throw error;
   return count || 0;
 }
+
+// ─── Post-session deep dive (creator analytics tabs) ─────────
+//
+// Every query below rides an RLS policy the creator has had since the first
+// live-exam migration ("Creator can view all responses for own exams",
+// "Creator can view all participants", "Creator can read confusion for own
+// exams") — which is what lets the analytics tabs exist with no new migration.
+// For anyone who is not the creator these return empty sets, not errors.
+
+/** PostgREST caps a select at 1000 rows; a 100-student × 30-question session
+ *  is 3000 response rows, so every bulk read here pages until a short page. */
+const DEEP_DIVE_PAGE_SIZE = 1000;
+
+export type LiveConfusionSignal = {
+  live_exam_id: string;
+  live_question_id: string;
+  user_id: string;
+  question_ordinal: number;
+  created_at: string;
+};
+
+/** Every response row of the session — the creator-side ground truth.
+ *  Raw rows carry the real is_correct (masking only exists in the student
+ *  RPC paths), so post-session analytics read clean grades. */
+export async function fetchAllLiveResponses(examId: string): Promise<LiveResponse[]> {
+  const all: LiveResponse[] = [];
+  for (let from = 0; ; from += DEEP_DIVE_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("live_responses")
+      .select("*")
+      .eq("live_exam_id", examId)
+      // Stable order so pages never overlap: submitted_at can tie, id cannot.
+      .order("submitted_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + DEEP_DIVE_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data || []) as unknown as LiveResponse[];
+    all.push(...page);
+    if (page.length < DEEP_DIVE_PAGE_SIZE) return all;
+  }
+}
+
+/** Every "I'm lost" tap of the session, one row per student per question. */
+export async function fetchLiveConfusionSignals(examId: string): Promise<LiveConfusionSignal[]> {
+  const all: LiveConfusionSignal[] = [];
+  for (let from = 0; ; from += DEEP_DIVE_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("live_confusion_signals")
+      .select("*")
+      .eq("live_exam_id", examId)
+      // The PK is (live_question_id, user_id) — order by it for stable pages.
+      .order("live_question_id", { ascending: true })
+      .order("user_id", { ascending: true })
+      .range(from, from + DEEP_DIVE_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data || []) as unknown as LiveConfusionSignal[];
+    all.push(...page);
+    if (page.length < DEEP_DIVE_PAGE_SIZE) return all;
+  }
+}
+
+export type LiveDeepDive = {
+  /** Primary-language questions in play order — index IS the ordinal. */
+  questions: LiveQuestion[];
+  analytics: LiveQuestionAnalytics[];
+  participants: LiveParticipant[];
+  responses: LiveResponse[];
+  confusion: LiveConfusionSignal[];
+};
+
+/**
+ * Everything the post-session analytics tabs need, in one round of parallel
+ * queries. Creator-only by RLS; the public report link never calls this.
+ */
+export async function fetchLiveDeepDive(
+  examId: string,
+  primaryLanguage?: string
+): Promise<LiveDeepDive> {
+  const [questions, analytics, participants, responses, confusion] = await Promise.all([
+    fetchAllLiveQuestions(examId, primaryLanguage),
+    fetchAllAnalytics(examId),
+    fetchLeaderboard(examId),
+    fetchAllLiveResponses(examId),
+    fetchLiveConfusionSignals(examId),
+  ]);
+  return { questions, analytics, participants, responses, confusion };
+}
