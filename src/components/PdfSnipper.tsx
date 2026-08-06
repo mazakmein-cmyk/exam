@@ -12,9 +12,15 @@ interface PdfSnipperProps {
     pdfUrl: string;
     onSnip: (blob: Blob) => void;
     onSnipPassage?: (blob: Blob) => void;
+    /**
+     * Receives a crop destined for an answer option. The parent decides which
+     * option it lands on (see SnipOptionDialog); omit for question types that
+     * have no options.
+     */
+    onSnipOption?: (blob: Blob) => void;
 }
 
-export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipperProps) {
+export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage, onSnipOption }: PdfSnipperProps) {
     const [numPages, setNumPages] = useState<number>(0);
     const [pageNumber, setPageNumber] = useState<number>(1);
     const [scale, setScale] = useState<number>(1.1);
@@ -68,11 +74,12 @@ export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipper
 
     const handleSnip = () => processSnip(onSnip);
     const handleSnipPassage = () => onSnipPassage && processSnip(onSnipPassage);
+    const handleSnipOption = () => onSnipOption && processSnip(onSnipOption);
 
     return (
         <div className="flex flex-col h-full bg-slate-100 rounded-lg border overflow-hidden">
             {/* Toolbar */}
-            <div className="flex items-center justify-between p-2 bg-white border-b">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2 bg-white border-b">
                 <div className="flex items-center gap-2">
                     <Button
                         variant="outline"
@@ -113,7 +120,7 @@ export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipper
                     </Button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     {onSnipPassage && (
                         <Button
                             onClick={handleSnipPassage}
@@ -133,6 +140,17 @@ export default function PdfSnipper({ pdfUrl, onSnip, onSnipPassage }: PdfSnipper
                         <Scissors className="mr-2 h-4 w-4" />
                         Snip & Attach Question
                     </Button>
+                    {onSnipOption && (
+                        <Button
+                            onClick={handleSnipOption}
+                            disabled={!completedCrop?.width || !completedCrop?.height}
+                            variant="outline"
+                            className="border-emerald-600 text-emerald-700 hover:bg-emerald-600 hover:text-white"
+                        >
+                            <Scissors className="mr-2 h-4 w-4" />
+                            Snip & Attach Answer
+                        </Button>
+                    )}
                 </div>
             </div>
 

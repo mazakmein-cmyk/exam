@@ -38,6 +38,7 @@ import {
   getExamScoringDefault,
 } from "@/services/scoringService";
 const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
+import SnipOptionDialog from "@/components/SnipOptionDialog";
 import { QuestionForm } from "@/components/QuestionForm";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
@@ -2686,6 +2687,67 @@ export default function ExamDetail() {
     setNewQuestionOptionImages((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // ─── Snip → answer option ───
+  // "Snip & Attach Answer" parks the crop here; SnipOptionDialog is open while
+  // it is non-null and decides which option row the image lands on.
+  const [pendingOptionSnip, setPendingOptionSnip] = useState<Blob | null>(null);
+
+  const uploadOptionSnip = async (blob: Blob) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user || !section) return null;
+    const fileName = `${user.id}/${examId}/${section.id}/option-snip-${Date.now()}.png`;
+    const file = new File([blob], "option-snip.png", { type: "image/png" });
+    return uploadQuestionImage(fileName, file);
+  };
+
+  const handleAttachSnipToOption = async (idx: number) => {
+    if (!pendingOptionSnip || optionImageBusy) return;
+    setOptionImageBusy(true);
+    try {
+      toast({ title: "Uploading option snip..." });
+      const publicUrl = await uploadOptionSnip(pendingOptionSnip);
+      if (!publicUrl) return;
+      setNewQuestionOptionImages((prev) => {
+        const next = [...prev];
+        while (next.length <= idx) next.push(null);
+        next[idx] = publicUrl;
+        return next;
+      });
+      setPendingOptionSnip(null);
+      toast({ title: "Snip attached", description: `Image added to option ${String.fromCharCode(65 + idx)}.` });
+    } catch (error: any) {
+      toast({ title: "Upload failed", description: error.message, variant: "destructive" });
+    } finally {
+      setOptionImageBusy(false);
+    }
+  };
+
+  // Upload first, then append the row — a failed upload must not leave a stray
+  // empty option behind.
+  const handleAttachSnipToNewOption = async () => {
+    if (!pendingOptionSnip || optionImageBusy) return;
+    setOptionImageBusy(true);
+    try {
+      toast({ title: "Uploading option snip..." });
+      const publicUrl = await uploadOptionSnip(pendingOptionSnip);
+      if (!publicUrl) return;
+      const idx = newQuestionOptions.length;
+      setNewQuestionOptions((prev) => [...prev, ""]);
+      setNewQuestionOptionImages((prev) => {
+        const next = [...prev];
+        while (next.length <= idx) next.push(null);
+        next[idx] = publicUrl;
+        return next;
+      });
+      setPendingOptionSnip(null);
+      toast({ title: "Option added", description: `Option ${String.fromCharCode(65 + idx)} created from the snip.` });
+    } catch (error: any) {
+      toast({ title: "Upload failed", description: error.message, variant: "destructive" });
+    } finally {
+      setOptionImageBusy(false);
+    }
+  };
+
   const handlePassageImageRemove = () => {
     setPassageImage(null);
   };
@@ -3801,6 +3863,12 @@ export default function ExamDetail() {
                           pdfUrl={section.pdf_url}
                           onSnip={handleSnip}
                           onSnipPassage={questionFormat === "passage" ? handleSnipPassage : undefined}
+                          onSnipOption={
+                            (newQuestionType === "single" || newQuestionType === "multi") &&
+                            !(isMultiLang && !isPrimaryLanguage && !!editingQuestionId)
+                              ? setPendingOptionSnip
+                              : undefined
+                          }
                         />
                       </Suspense>
                     </div>
@@ -3919,6 +3987,17 @@ export default function ExamDetail() {
                       onOptionImageRemove={handleOptionImageRemove}
                       onRemoveOption={handleRemoveOptionRow}
                       optionImageBusy={optionImageBusy}
+                    />
+
+                    {/* Destination picker for "Snip & Attach Answer" above. */}
+                    <SnipOptionDialog
+                      blob={pendingOptionSnip}
+                      options={newQuestionOptions}
+                      optionImages={newQuestionOptionImages}
+                      busy={optionImageBusy}
+                      onAttach={handleAttachSnipToOption}
+                      onAttachToNew={handleAttachSnipToNewOption}
+                      onCancel={() => setPendingOptionSnip(null)}
                     />
                   </div>
                 </TabsContent>
