@@ -267,9 +267,31 @@ test("the shipped template carries Hindi copy, written in Hindi", () => {
   const hiBlock = body.slice(body.indexOf("hi: ["), body.indexOf("].join", body.indexOf("hi: [")));
   assert(/[ऀ-ॿ]/.test(hiBlock), "the hi copy must actually be Devanagari, not English under a hi key");
   assert(/।/.test(hiBlock), "Hindi sentences end with the danda, not the full stop");
+});
+
+test("the template is the full exam-hall sheet, and Hindi promises everything English does", () => {
+  const body = TEMPLATES.slice(TEMPLATES.indexOf("GENERAL_INSTRUCTION_TEMPLATES"));
+  const block = (lang) => {
+    const start = body.indexOf(`${lang}: [`);
+    return body.slice(start, body.indexOf("].join", start));
+  };
+  const numbered = (b) => (b.match(/^\s*"\d+\./gm) || []).length;
+  const en = block("en");
+  const hi = block("hi");
+  assert(numbered(en) >= 10, "the standard sheet covers timer, palette, review, navigating, answering, submitting — a short list is a different feature");
   assert(
-    (hiBlock.match(/^\s*"\d+\./gm) || []).length === 7,
-    "the Hindi template makes the same seven promises the English one makes — a shorter list quietly tells Hindi candidates less"
+    numbered(en) === numbered(hi),
+    `en makes ${numbered(en)} numbered promises, hi makes ${numbered(hi)} — a shorter list quietly tells Hindi candidates less`
+  );
+  // The palette legend must state OUR runner's colours. Green/purple/red/plain
+  // is ExamSimulator's legend; the NTA sheet this format borrows from uses
+  // different colours and different mechanics.
+  for (const colour of ["Green:", "Purple:", "Red:", "Plain:"]) {
+    assert(en.includes(colour), `the palette legend must explain the ${colour.slice(0, -1)} state`);
+  }
+  assert(
+    en.includes("never discards an answer") && en.includes("Clear Response"),
+    "this runner saves on click and clears via Clear Response — copying NTA's 'Next to save' mechanics would teach candidates false fear"
   );
 });
 

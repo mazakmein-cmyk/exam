@@ -36,35 +36,83 @@ export type InstructionTemplate = {
 };
 
 /**
- * PLACEHOLDER COPY — written to be true of this app (a countdown that
- * auto-submits, a question palette, mark-for-review, answers editable until
- * submit) so it is safe to ship as-is. Replace with your own wording.
+ * THE STANDARD EXAM-HALL INSTRUCTIONS — the full NTA/SSC-style sheet every
+ * candidate has met on other platforms: timer, palette legend, mark-for-review
+ * semantics, navigating, answering, submitting. Deliberately identical for
+ * every exam; anything that varies (sections, timing mode, marking) belongs to
+ * the Exam Instruction field, which the generator writes per exam.
+ *
+ * The structure is borrowed from that convention; every sentence is checked
+ * against THIS runner, because the convention's mechanics are not ours:
+ *   • Answers save the moment they are clicked or typed — Next only navigates.
+ *     (On NTA platforms, palette-jumping discards the unsaved answer. Here it
+ *     never does, and saying otherwise would teach candidates a false fear.)
+ *   • Deselecting is the Clear Response button, not re-clicking the option.
+ *   • Palette colours (ExamSimulator's legend): green attempted, purple viewed,
+ *     red marked for review — red wins over green — plain untouched.
+ *   • Zero auto-submits; the timer reddens and warns at 5 minutes.
  */
 export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "standard",
     label: "Standard exam instructions",
-    description: "Timer, palette, marking for review, and what not to do",
+    description: "The full exam-hall sheet: timer, palette colours, navigating, answering, submitting",
     text: {
       en: [
-        "1. Read all instructions carefully before you begin the exam.",
-        "2. The countdown timer at the top of the screen shows your remaining time. The exam is submitted automatically when the timer reaches zero.",
-        "3. The question palette shows the status of every question — answered, not answered, marked for review, or not visited.",
-        "4. Click an option to answer a question. You may change your answer any number of times before you submit.",
-        "5. Use \"Mark for Review\" to flag a question you want to come back to. A marked question with an option selected is still counted as answered.",
-        "6. Do not refresh the page, use the browser's Back button, or close the tab while the exam is in progress — your progress may be lost.",
-        "7. Once you submit the exam, your answers are final and cannot be changed.",
+        "1. Read all instructions carefully before you begin. The timer, the question palette and the answering controls work exactly as described below, whatever the exam.",
+        "",
+        "2. The countdown timer at the top of the screen shows your remaining time. When it reaches zero, the exam is submitted by itself — you do not need to do anything. The timer turns red and a warning appears when 5 minutes remain.",
+        "",
+        "3. The question palette — on the right of the screen; on a phone it opens as a sheet — shows the status of every question:",
+        "   • Green: you have answered the question.",
+        "   • Purple: you have viewed the question but not answered it.",
+        "   • Red: you have marked the question for review.",
+        "   • Plain: you have not visited the question yet.",
+        "",
+        "4. Mark for Review simply flags a question you want to look at again. If a marked question has an answer selected, that answer IS counted in the evaluation — red does not mean unanswered.",
+        "",
+        "Navigating to a question:",
+        "5. Click a question number in the palette to go straight to that question, or use the Previous and Next buttons below it. Moving between questions never discards an answer — everything you have selected or typed stays saved.",
+        "6. Use the All Questions button to read the whole section on one page.",
+        "",
+        "Answering a question:",
+        "7. For a multiple-choice question, click an option to select it; click a different option to change it. Where several answers are correct, tick every option you choose — tick again to untick.",
+        "8. For a numerical or typed answer, type it into the answer box below the question.",
+        "9. To withdraw an answer entirely, use the Clear Response button — a cleared question stops counting as answered.",
+        "",
+        "10. Sections and timing depend on the exam: either you sit one section at a time — each with its own timer, and a submitted section cannot be reopened — or all sections share one timer and you may move between them freely. The start screen tells you which applies to this paper.",
+        "11. Do not refresh the page, use the browser's Back button, or close the tab while the exam is running — your progress may be lost.",
+        "12. Once you submit, your answers are final and cannot be changed.",
       ].join("\n"),
-      // The same seven promises, not a machine translation of the sentences —
-      // each line states what the same screen does, in exam-hall Hindi.
+      // The same twelve promises, not a machine translation of the sentences —
+      // each line states what the same screen does, in exam-hall Hindi. Button
+      // names (Mark for Review, Next, Clear Response…) stay in English because
+      // that is what the buttons themselves say.
       hi: [
-        "1. परीक्षा शुरू करने से पहले सभी निर्देश ध्यान से पढ़ें।",
-        "2. स्क्रीन के ऊपर दिख रहा काउंटडाउन टाइमर आपका शेष समय दिखाता है। टाइमर शून्य होते ही परीक्षा अपने आप सबमिट हो जाएगी।",
-        "3. प्रश्न पैलेट में हर प्रश्न की स्थिति दिखती है — उत्तर दिया गया, उत्तर नहीं दिया गया, समीक्षा के लिए चिह्नित, या अभी देखा नहीं गया।",
-        "4. उत्तर देने के लिए किसी विकल्प पर क्लिक करें। सबमिट करने से पहले आप अपना उत्तर जितनी बार चाहें बदल सकते हैं।",
-        "5. जिस प्रश्न पर बाद में लौटना हो उसे \"Mark for Review\" से चिह्नित करें। चिह्नित प्रश्न में विकल्प चुना हो तो वह उत्तर दिया गया ही गिना जाएगा।",
-        "6. परीक्षा चलते समय पेज रीफ़्रेश न करें, ब्राउज़र का Back बटन इस्तेमाल न करें, और टैब बंद न करें — आपकी प्रगति खो सकती है।",
-        "7. एक बार परीक्षा सबमिट करने के बाद आपके उत्तर अंतिम होंगे और बदले नहीं जा सकेंगे।",
+        "1. शुरू करने से पहले सभी निर्देश ध्यान से पढ़ें। टाइमर, प्रश्न पैलेट और उत्तर देने के नियम हर परीक्षा में ठीक नीचे बताए अनुसार ही काम करते हैं।",
+        "",
+        "2. स्क्रीन के ऊपर दिख रहा काउंटडाउन टाइमर आपका शेष समय दिखाता है। टाइमर शून्य होते ही परीक्षा अपने आप सबमिट हो जाएगी — आपको कुछ करने की ज़रूरत नहीं। 5 मिनट शेष रहने पर टाइमर लाल हो जाता है और चेतावनी दिखाई देती है।",
+        "",
+        "3. प्रश्न पैलेट — स्क्रीन की दाईं ओर; फ़ोन पर यह एक शीट के रूप में खुलता है — हर प्रश्न की स्थिति दिखाता है:",
+        "   • हरा: आपने प्रश्न का उत्तर दे दिया है।",
+        "   • बैंगनी: आपने प्रश्न देखा है, पर उत्तर नहीं दिया।",
+        "   • लाल: आपने प्रश्न समीक्षा के लिए चिह्नित किया है।",
+        "   • सादा: आपने प्रश्न अभी देखा ही नहीं है।",
+        "",
+        "4. Mark for Review केवल यह बताता है कि आप उस प्रश्न को दोबारा देखना चाहते हैं। यदि चिह्नित प्रश्न में उत्तर चुना गया है, तो वह उत्तर मूल्यांकन में गिना जाएगा — लाल का अर्थ अनुत्तरित नहीं है।",
+        "",
+        "प्रश्नों के बीच आना-जाना:",
+        "5. पैलेट में प्रश्न-संख्या पर क्लिक करके सीधे उस प्रश्न पर जाएँ, या प्रश्न के नीचे Previous और Next बटनों का उपयोग करें। प्रश्न बदलने से कोई उत्तर नहीं मिटता — जो कुछ आपने चुना या लिखा है, वह सुरक्षित रहता है।",
+        "6. पूरा खंड एक ही पेज पर पढ़ने के लिए All Questions बटन का उपयोग करें।",
+        "",
+        "उत्तर देना:",
+        "7. बहुविकल्पीय प्रश्न में किसी विकल्प पर क्लिक करके उसे चुनें; उत्तर बदलने के लिए किसी दूसरे विकल्प पर क्लिक करें। जिन प्रश्नों में कई उत्तर सही हों, वहाँ हर चुना हुआ विकल्प टिक करें — हटाने के लिए दोबारा टिक करें।",
+        "8. संख्यात्मक या लिखित उत्तर प्रश्न के नीचे दिए उत्तर-बॉक्स में टाइप करें।",
+        "9. उत्तर पूरी तरह हटाने के लिए Clear Response बटन का उपयोग करें — हटाए गए उत्तर वाला प्रश्न उत्तर दिया हुआ नहीं गिना जाएगा।",
+        "",
+        "10. खंड और समय की व्यवस्था परीक्षा पर निर्भर करती है: या तो आप एक समय में एक ही खंड हल करते हैं — हर खंड का अपना टाइमर, और सबमिट किया गया खंड दोबारा नहीं खुलता — या सभी खंडों का एक साझा टाइमर होता है और आप उनके बीच स्वतंत्र रूप से आ-जा सकते हैं। शुरू करने से पहले स्टार्ट स्क्रीन बताती है कि इस प्रश्नपत्र में कौन-सी व्यवस्था लागू है।",
+        "11. परीक्षा चलते समय पेज रीफ़्रेश न करें, ब्राउज़र का Back बटन इस्तेमाल न करें, और टैब बंद न करें — आपकी प्रगति खो सकती है।",
+        "12. एक बार सबमिट करने के बाद आपके उत्तर अंतिम होंगे और बदले नहीं जा सकेंगे।",
       ].join("\n"),
     },
   },
