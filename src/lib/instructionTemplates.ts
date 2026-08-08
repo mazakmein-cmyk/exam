@@ -51,6 +51,16 @@ export type InstructionTemplate = {
  *   • Palette colours (ExamSimulator's legend): green attempted, purple viewed,
  *     red marked for review — red wins over green — plain untouched.
  *   • Zero auto-submits; the timer reddens and warns at 5 minutes.
+ *
+ * THE RULE FOR EVERY LINE — this text ships with every exam, whatever its
+ * shape, so a sentence is allowed only if it is one of:
+ *   (a) a runner constant — true for every exam because the code makes it so
+ *       (the timer, the palette colours, save-on-click, Clear Response); or
+ *   (b) explicitly conditional — "if a question allows several answers…",
+ *       "either … or …" — so an exam without that question type or in the
+ *       other mode makes the sentence idle, never wrong.
+ * Anything tied to ONE exam's configuration (its sections, its marks, its
+ * languages) is banned from here; that is the generated Exam Instruction's job.
  */
 export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
@@ -63,7 +73,7 @@ export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
         "",
         "2. The countdown timer at the top of the screen shows your remaining time. When it reaches zero, the exam is submitted by itself — you do not need to do anything. The timer turns red and a warning appears when 5 minutes remain.",
         "",
-        "3. The question palette — on the right of the screen; on a phone it opens as a sheet — shows the status of every question:",
+        "3. The question palette shows the status of every question:",
         "   • Green: you have answered the question.",
         "   • Purple: you have viewed the question but not answered it.",
         "   • Red: you have marked the question for review.",
@@ -72,12 +82,12 @@ export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
         "4. Mark for Review simply flags a question you want to look at again. If a marked question has an answer selected, that answer IS counted in the evaluation — red does not mean unanswered.",
         "",
         "Navigating to a question:",
-        "5. Click a question number in the palette to go straight to that question, or use the Previous and Next buttons below it. Moving between questions never discards an answer — everything you have selected or typed stays saved.",
+        "5. Click a question number in the palette to go straight to that question, or use the Previous and Next buttons. Moving between questions never discards an answer — everything you have selected or typed stays saved.",
         "6. Use the All Questions button to read the whole section on one page.",
         "",
         "Answering a question:",
-        "7. For a multiple-choice question, click an option to select it; click a different option to change it. Where several answers are correct, tick every option you choose — tick again to untick.",
-        "8. For a numerical or typed answer, type it into the answer box below the question.",
+        "7. For a multiple-choice question, click an option to select it; click a different option to change it. If a question allows several answers, tick every option you choose — tick again to untick.",
+        "8. If a question asks for a typed or numerical answer, type it into the answer box below the question.",
         "9. To withdraw an answer entirely, use the Clear Response button — a cleared question stops counting as answered.",
         "",
         "10. Sections and timing depend on the exam: either you sit one section at a time — each with its own timer, and a submitted section cannot be reopened — or all sections share one timer and you may move between them freely. The start screen tells you which applies to this paper.",
@@ -93,7 +103,7 @@ export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
         "",
         "2. स्क्रीन के ऊपर दिख रहा काउंटडाउन टाइमर आपका शेष समय दिखाता है। टाइमर शून्य होते ही परीक्षा अपने आप सबमिट हो जाएगी — आपको कुछ करने की ज़रूरत नहीं। 5 मिनट शेष रहने पर टाइमर लाल हो जाता है और चेतावनी दिखाई देती है।",
         "",
-        "3. प्रश्न पैलेट — स्क्रीन की दाईं ओर; फ़ोन पर यह एक शीट के रूप में खुलता है — हर प्रश्न की स्थिति दिखाता है:",
+        "3. प्रश्न पैलेट हर प्रश्न की स्थिति दिखाता है:",
         "   • हरा: आपने प्रश्न का उत्तर दे दिया है।",
         "   • बैंगनी: आपने प्रश्न देखा है, पर उत्तर नहीं दिया।",
         "   • लाल: आपने प्रश्न समीक्षा के लिए चिह्नित किया है।",
@@ -102,12 +112,12 @@ export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
         "4. Mark for Review केवल यह बताता है कि आप उस प्रश्न को दोबारा देखना चाहते हैं। यदि चिह्नित प्रश्न में उत्तर चुना गया है, तो वह उत्तर मूल्यांकन में गिना जाएगा — लाल का अर्थ अनुत्तरित नहीं है।",
         "",
         "प्रश्नों के बीच आना-जाना:",
-        "5. पैलेट में प्रश्न-संख्या पर क्लिक करके सीधे उस प्रश्न पर जाएँ, या प्रश्न के नीचे Previous और Next बटनों का उपयोग करें। प्रश्न बदलने से कोई उत्तर नहीं मिटता — जो कुछ आपने चुना या लिखा है, वह सुरक्षित रहता है।",
+        "5. पैलेट में प्रश्न-संख्या पर क्लिक करके सीधे उस प्रश्न पर जाएँ, या Previous और Next बटनों का उपयोग करें। प्रश्न बदलने से कोई उत्तर नहीं मिटता — जो कुछ आपने चुना या लिखा है, वह सुरक्षित रहता है।",
         "6. पूरा खंड एक ही पेज पर पढ़ने के लिए All Questions बटन का उपयोग करें।",
         "",
         "उत्तर देना:",
-        "7. बहुविकल्पीय प्रश्न में किसी विकल्प पर क्लिक करके उसे चुनें; उत्तर बदलने के लिए किसी दूसरे विकल्प पर क्लिक करें। जिन प्रश्नों में कई उत्तर सही हों, वहाँ हर चुना हुआ विकल्प टिक करें — हटाने के लिए दोबारा टिक करें।",
-        "8. संख्यात्मक या लिखित उत्तर प्रश्न के नीचे दिए उत्तर-बॉक्स में टाइप करें।",
+        "7. बहुविकल्पीय प्रश्न में किसी विकल्प पर क्लिक करके उसे चुनें; उत्तर बदलने के लिए किसी दूसरे विकल्प पर क्लिक करें। यदि किसी प्रश्न में कई उत्तर चुने जा सकते हों, तो हर चुना हुआ विकल्प टिक करें — हटाने के लिए दोबारा टिक करें।",
+        "8. यदि किसी प्रश्न का उत्तर टाइप करना हो — संख्या या लिखित — तो उसे प्रश्न के नीचे दिए उत्तर-बॉक्स में टाइप करें।",
         "9. उत्तर पूरी तरह हटाने के लिए Clear Response बटन का उपयोग करें — हटाए गए उत्तर वाला प्रश्न उत्तर दिया हुआ नहीं गिना जाएगा।",
         "",
         "10. खंड और समय की व्यवस्था परीक्षा पर निर्भर करती है: या तो आप एक समय में एक ही खंड हल करते हैं — हर खंड का अपना टाइमर, और सबमिट किया गया खंड दोबारा नहीं खुलता — या सभी खंडों का एक साझा टाइमर होता है और आप उनके बीच स्वतंत्र रूप से आ-जा सकते हैं। शुरू करने से पहले स्टार्ट स्क्रीन बताती है कि इस प्रश्नपत्र में कौन-सी व्यवस्था लागू है।",

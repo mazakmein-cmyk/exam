@@ -295,6 +295,33 @@ test("the template is the full exam-hall sheet, and Hindi promises everything En
   );
 });
 
+test("the sheet cannot fail for any exam: type- and mode-specific lines are conditional", () => {
+  const body = TEMPLATES.slice(TEMPLATES.indexOf("GENERAL_INSTRUCTION_TEMPLATES"));
+  // This text ships with EVERY exam. Question types vary per paper, so their
+  // mechanics must be phrased as "if a question…" — idle on an all-MCQ paper,
+  // never wrong. Same for the two timing modes: "either … or …".
+  assert(
+    /If a question allows several answers/.test(body) &&
+      /If a question asks for a typed or numerical answer/.test(body),
+    "an unconditional multi/numeric line is false for every exam without those types"
+  );
+  assert(
+    /either you sit one section at a time[\s\S]{0,200}or all sections share one timer/.test(body),
+    "the timing point must carry both modes — stating one as fact fails for half the exams"
+  );
+  // And nothing tied to one exam's configuration may appear at all: no counts,
+  // no minutes, no marks. (Digits are allowed only as list numbering and the
+  // 5-minute warning, which is a runner constant.)
+  const enBlock = body.slice(body.indexOf("en: ["), body.indexOf("].join", body.indexOf("en: [")));
+  const lines = enBlock.match(/"[^"]+"/g) || [];
+  for (const line of lines) {
+    assert(
+      !/\d+ (marks?|questions?|sections?)|\d+ minutes for/.test(line),
+      `a per-exam number has no place in the generic sheet: ${line}`
+    );
+  }
+});
+
 test("blank copy counts as no copy", () => {
   assert(
     /text\[lang\]\?\.trim\(\) \? template\.text\[lang\] : null/.test(TEMPLATES),
