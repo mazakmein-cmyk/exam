@@ -265,7 +265,7 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'live_exams'
       AND column_name = 'present_show_options'
   ) THEN
-    v_missing := v_missing || 'live_exams.present_show_options';
+    v_missing := v_missing || 'live_exams.present_show_options'::TEXT;
   END IF;
 
   IF NOT EXISTS (
@@ -273,15 +273,15 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'live_exams'
       AND column_name = 'present_theme'
   ) THEN
-    v_missing := v_missing || 'live_exams.present_theme';
+    v_missing := v_missing || 'live_exams.present_theme'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
   IF v_src IS NULL OR v_src NOT LIKE '%present_show_options%' THEN
-    v_missing := v_missing || 'live_session_sync does not return present_show_options';
+    v_missing := v_missing || 'live_session_sync does not return present_show_options'::TEXT;
   END IF;
   IF v_src IS NULL OR v_src NOT LIKE '%present_theme%' THEN
-    v_missing := v_missing || 'live_session_sync does not return present_theme';
+    v_missing := v_missing || 'live_session_sync does not return present_theme'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN

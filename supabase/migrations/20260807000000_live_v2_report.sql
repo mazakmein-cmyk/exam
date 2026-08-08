@@ -148,6 +148,13 @@ BEGIN
   WHERE lm.live_exam_id = p_live_exam_id;
 
   -- ─── Attendance: ids only, resolved on read ───────────────
+  --
+  -- ROW_NUMBER() is numbered in the subquery and merely READ here. It cannot be
+  -- an argument to jsonb_agg() — an aggregate's arguments are computed before
+  -- window functions are evaluated, and Postgres rejects the nesting outright
+  -- with "aggregate function calls cannot contain window function calls". It
+  -- rejects it at parse time, which in plpgsql means the first time control
+  -- reaches this statement, not at CREATE OR REPLACE. See migration 20260815.
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
     'user_id',        lp.user_id,
     'joined_at',      lp.joined_at,
@@ -155,12 +162,21 @@ BEGIN
     'total_answered', lp.total_answered,
     'rank',           lp.rank,
     -- Join order, so a masked name can be derived identically to everywhere else.
-    'anon_ordinal',   (ROW_NUMBER() OVER (ORDER BY lp.joined_at, lp.id) - 1)
+    'anon_ordinal',   lp.anon_ordinal
   ) ORDER BY lp.rank NULLS LAST, lp.joined_at)
   , '[]')
   INTO v_attend
-  FROM public.live_participants lp
-  WHERE lp.live_exam_id = p_live_exam_id;
+  FROM (
+    SELECT
+      p.user_id,
+      p.joined_at,
+      p.total_correct,
+      p.total_answered,
+      p.rank,
+      (ROW_NUMBER() OVER (ORDER BY p.joined_at, p.id) - 1) AS anon_ordinal
+    FROM public.live_participants p
+    WHERE p.live_exam_id = p_live_exam_id
+  ) lp;
 
   v_payload := jsonb_build_object(
     'exam_name',    v_exam.name,

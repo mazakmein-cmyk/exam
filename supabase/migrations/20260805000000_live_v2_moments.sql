@@ -128,20 +128,32 @@ BEGIN
       (SELECT COUNT(*) FROM _moment_hist w
        WHERE w.user_id = t.user_id AND NOT w.is_correct
          AND w.question_ordinal < t.first_right) AS wrong_before
+    -- The `g` level is load-bearing. A window function may not appear inside
+    -- another window function's arguments, so MAX(... ROW_NUMBER() OVER ...) OVER
+    -- (...) is rejected as "window function calls cannot be nested". The
+    -- run-grouping key is computed once in `g`; `t` then runs its two window
+    -- aggregates over that plain column. See migration 20260815.
     FROM (
       SELECT
-        m.user_id,
-        m.is_correct,
-        m.question_ordinal,
-        -- Group consecutive same-result answers.
-        m.question_ordinal - ROW_NUMBER() OVER (
-          PARTITION BY m.user_id, m.is_correct ORDER BY m.question_ordinal
-        ) AS grp,
-        MAX(m.question_ordinal - ROW_NUMBER() OVER (
-          PARTITION BY m.user_id, m.is_correct ORDER BY m.question_ordinal
-        )) FILTER (WHERE m.is_correct) OVER (PARTITION BY m.user_id) AS last_grp,
-        MIN(m.question_ordinal) FILTER (WHERE m.is_correct) OVER (PARTITION BY m.user_id) AS first_right
-      FROM _moment_hist m
+        g.user_id,
+        g.is_correct,
+        g.question_ordinal,
+        g.grp,
+        -- The trailing correct run: grp rises with the ordinal, so the largest
+        -- grp among a student's correct answers is their most recent run.
+        MAX(g.grp) FILTER (WHERE g.is_correct) OVER (PARTITION BY g.user_id) AS last_grp,
+        MIN(g.question_ordinal) FILTER (WHERE g.is_correct) OVER (PARTITION BY g.user_id) AS first_right
+      FROM (
+        SELECT
+          m.user_id,
+          m.is_correct,
+          m.question_ordinal,
+          -- Group consecutive same-result answers.
+          m.question_ordinal - ROW_NUMBER() OVER (
+            PARTITION BY m.user_id, m.is_correct ORDER BY m.question_ordinal
+          ) AS grp
+        FROM _moment_hist m
+      ) g
     ) t
     WHERE t.is_correct
     GROUP BY t.user_id, t.first_right

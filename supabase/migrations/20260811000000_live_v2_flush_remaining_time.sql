@@ -208,35 +208,35 @@ DECLARE
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_question_visual_end') THEN
     v_missing := v_missing ||
-      'live_question_visual_end is missing — apply 20260804000000 (live controls) first';
+      'live_question_visual_end is missing — apply 20260804000000 (live controls) first'::TEXT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_ordinal_min_seconds') THEN
     v_missing := v_missing ||
-      'live_ordinal_min_seconds is missing — apply 20260804000000 (live controls) first';
+      'live_ordinal_min_seconds is missing — apply 20260804000000 (live controls) first'::TEXT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_ordinal_max_seconds') THEN
-    v_missing := v_missing || 'live_ordinal_max_seconds was not created';
+    v_missing := v_missing || 'live_ordinal_max_seconds was not created'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'end_live_question_time' LIMIT 1;
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'end_live_question_time was not created';
+    v_missing := v_missing || 'end_live_question_time was not created'::TEXT;
   ELSE
     -- The bound. Flushing against the shortest sibling leaves the longest one
     -- running, which is the one failure this control cannot have.
     IF v_src NOT LIKE '%live_ordinal_max_seconds%' THEN
-      v_missing := v_missing || 'end_live_question_time must bound on the LONGEST sibling';
+      v_missing := v_missing || 'end_live_question_time must bound on the LONGEST sibling'::TEXT;
     END IF;
     IF v_src NOT LIKE '%FLOOR%' THEN
       v_missing := v_missing ||
-        'end_live_question_time must round the elapsed seconds DOWN, or it leaves a second on the clock';
+        'end_live_question_time must round the elapsed seconds DOWN, or it leaves a second on the clock'::TEXT;
     END IF;
     IF v_src NOT LIKE '%FOR UPDATE%' THEN
-      v_missing := v_missing || 'end_live_question_time must lock the row it rewrites';
+      v_missing := v_missing || 'end_live_question_time must lock the row it rewrites'::TEXT;
     END IF;
     IF v_src NOT LIKE '%live_unlock_log%' THEN
       v_missing := v_missing ||
-        'end_live_question_time must mirror the write to live_unlock_log, which is where the analytics window is read from';
+        'end_live_question_time must mirror the write to live_unlock_log, which is where the analytics window is read from'::TEXT;
     END IF;
   END IF;
 

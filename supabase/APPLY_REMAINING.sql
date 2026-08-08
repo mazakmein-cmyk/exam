@@ -1041,20 +1041,32 @@ BEGIN
       (SELECT COUNT(*) FROM _moment_hist w
        WHERE w.user_id = t.user_id AND NOT w.is_correct
          AND w.question_ordinal < t.first_right) AS wrong_before
+    -- The `g` level is load-bearing. A window function may not appear inside
+    -- another window function's arguments, so MAX(... ROW_NUMBER() OVER ...) OVER
+    -- (...) is rejected as "window function calls cannot be nested". The
+    -- run-grouping key is computed once in `g`; `t` then runs its two window
+    -- aggregates over that plain column. See migration 20260815.
     FROM (
       SELECT
-        m.user_id,
-        m.is_correct,
-        m.question_ordinal,
-        -- Group consecutive same-result answers.
-        m.question_ordinal - ROW_NUMBER() OVER (
-          PARTITION BY m.user_id, m.is_correct ORDER BY m.question_ordinal
-        ) AS grp,
-        MAX(m.question_ordinal - ROW_NUMBER() OVER (
-          PARTITION BY m.user_id, m.is_correct ORDER BY m.question_ordinal
-        )) FILTER (WHERE m.is_correct) OVER (PARTITION BY m.user_id) AS last_grp,
-        MIN(m.question_ordinal) FILTER (WHERE m.is_correct) OVER (PARTITION BY m.user_id) AS first_right
-      FROM _moment_hist m
+        g.user_id,
+        g.is_correct,
+        g.question_ordinal,
+        g.grp,
+        -- The trailing correct run: grp rises with the ordinal, so the largest
+        -- grp among a student's correct answers is their most recent run.
+        MAX(g.grp) FILTER (WHERE g.is_correct) OVER (PARTITION BY g.user_id) AS last_grp,
+        MIN(g.question_ordinal) FILTER (WHERE g.is_correct) OVER (PARTITION BY g.user_id) AS first_right
+      FROM (
+        SELECT
+          m.user_id,
+          m.is_correct,
+          m.question_ordinal,
+          -- Group consecutive same-result answers.
+          m.question_ordinal - ROW_NUMBER() OVER (
+            PARTITION BY m.user_id, m.is_correct ORDER BY m.question_ordinal
+          ) AS grp
+        FROM _moment_hist m
+      ) g
     ) t
     WHERE t.is_correct
     GROUP BY t.user_id, t.first_right
@@ -1830,6 +1842,13 @@ BEGIN
   WHERE lm.live_exam_id = p_live_exam_id;
 
   -- ─── Attendance: ids only, resolved on read ───────────────
+  --
+  -- ROW_NUMBER() is numbered in the subquery and merely READ here. It cannot be
+  -- an argument to jsonb_agg() — an aggregate's arguments are computed before
+  -- window functions are evaluated, and Postgres rejects the nesting outright
+  -- with "aggregate function calls cannot contain window function calls". It
+  -- rejects it at parse time, which in plpgsql means the first time control
+  -- reaches this statement, not at CREATE OR REPLACE. See migration 20260815.
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
     'user_id',        lp.user_id,
     'joined_at',      lp.joined_at,
@@ -1837,12 +1856,21 @@ BEGIN
     'total_answered', lp.total_answered,
     'rank',           lp.rank,
     -- Join order, so a masked name can be derived identically to everywhere else.
-    'anon_ordinal',   (ROW_NUMBER() OVER (ORDER BY lp.joined_at, lp.id) - 1)
+    'anon_ordinal',   lp.anon_ordinal
   ) ORDER BY lp.rank NULLS LAST, lp.joined_at)
   , '[]')
   INTO v_attend
-  FROM public.live_participants lp
-  WHERE lp.live_exam_id = p_live_exam_id;
+  FROM (
+    SELECT
+      p.user_id,
+      p.joined_at,
+      p.total_correct,
+      p.total_answered,
+      p.rank,
+      (ROW_NUMBER() OVER (ORDER BY p.joined_at, p.id) - 1) AS anon_ordinal
+    FROM public.live_participants p
+    WHERE p.live_exam_id = p_live_exam_id
+  ) lp;
 
   v_payload := jsonb_build_object(
     'exam_name',    v_exam.name,
@@ -2371,7 +2399,7 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'live_exams'
       AND column_name = 'present_show_options'
   ) THEN
-    v_missing := v_missing || 'live_exams.present_show_options';
+    v_missing := v_missing || 'live_exams.present_show_options'::TEXT;
   END IF;
 
   IF NOT EXISTS (
@@ -2379,15 +2407,15 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'live_exams'
       AND column_name = 'present_theme'
   ) THEN
-    v_missing := v_missing || 'live_exams.present_theme';
+    v_missing := v_missing || 'live_exams.present_theme'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
   IF v_src IS NULL OR v_src NOT LIKE '%present_show_options%' THEN
-    v_missing := v_missing || 'live_session_sync does not return present_show_options';
+    v_missing := v_missing || 'live_session_sync does not return present_show_options'::TEXT;
   END IF;
   IF v_src IS NULL OR v_src NOT LIKE '%present_theme%' THEN
-    v_missing := v_missing || 'live_session_sync does not return present_theme';
+    v_missing := v_missing || 'live_session_sync does not return present_theme'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN
@@ -2731,9 +2759,9 @@ BEGIN
   JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public' AND p.proname = 'get_live_moments';
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'get_live_moments is missing';
+    v_missing := v_missing || 'get_live_moments is missing'::TEXT;
   ELSIF v_src LIKE '%p.user_id = lm.user_id%' THEN
-    v_missing := v_missing || 'get_live_moments still filters the participant set before ranking it';
+    v_missing := v_missing || 'get_live_moments still filters the participant set before ranking it'::TEXT;
   END IF;
 
   -- The re-mask-on-toggle invariant lives in 20260803020000, which
@@ -2742,7 +2770,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger WHERE tgname = 'trg_live_privacy_mode_changed'
   ) THEN
-    v_missing := v_missing || 'trigger trg_live_privacy_mode_changed is absent — apply 20260803020000_live_v2_privacy_remask_trigger.sql, or flipping privacy mode will not re-mask already-computed questions';
+    v_missing := v_missing || 'trigger trg_live_privacy_mode_changed is absent — apply 20260803020000_live_v2_privacy_remask_trigger.sql, or flipping privacy mode will not re-mask already-computed questions'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN
@@ -3047,31 +3075,31 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'live_exams'
       AND column_name = 'present_reveal_answer'
   ) THEN
-    v_missing := v_missing || 'live_exams.present_reveal_answer';
+    v_missing := v_missing || 'live_exams.present_reveal_answer'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
   IF v_src IS NULL OR v_src NOT LIKE '%present_reveal_answer%' THEN
-    v_missing := v_missing || 'live_session_sync does not return present_reveal_answer';
+    v_missing := v_missing || 'live_session_sync does not return present_reveal_answer'::TEXT;
   END IF;
   -- The keys this migration inherited must still be there: it redefines the
   -- whole function, so a bad merge here silently un-ships Q15 and Q16.
   IF v_src IS NULL OR v_src NOT LIKE '%present_show_options%' THEN
-    v_missing := v_missing || 'live_session_sync lost present_show_options';
+    v_missing := v_missing || 'live_session_sync lost present_show_options'::TEXT;
   END IF;
   IF v_src IS NULL OR v_src NOT LIKE '%present_theme%' THEN
-    v_missing := v_missing || 'live_session_sync lost present_theme';
+    v_missing := v_missing || 'live_session_sync lost present_theme'::TEXT;
   END IF;
   IF v_src IS NULL OR v_src NOT LIKE '%score_visible%' THEN
-    v_missing := v_missing || 'live_session_sync lost the score_visible gate';
+    v_missing := v_missing || 'live_session_sync lost the score_visible gate'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'get_revealed_live_answers' LIMIT 1;
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'get_revealed_live_answers is missing';
+    v_missing := v_missing || 'get_revealed_live_answers is missing'::TEXT;
   ELSIF v_src NOT LIKE '%live_question_deadline%' THEN
     v_missing := v_missing ||
-      'get_revealed_live_answers no longer honours live_question_deadline — the focus screen would draw the key before the timer is up';
+      'get_revealed_live_answers no longer honours live_question_deadline — the focus screen would draw the key before the timer is up'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN
@@ -3299,35 +3327,35 @@ DECLARE
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_question_visual_end') THEN
     v_missing := v_missing ||
-      'live_question_visual_end is missing — apply 20260804000000 (live controls) first';
+      'live_question_visual_end is missing — apply 20260804000000 (live controls) first'::TEXT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_ordinal_min_seconds') THEN
     v_missing := v_missing ||
-      'live_ordinal_min_seconds is missing — apply 20260804000000 (live controls) first';
+      'live_ordinal_min_seconds is missing — apply 20260804000000 (live controls) first'::TEXT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'live_ordinal_max_seconds') THEN
-    v_missing := v_missing || 'live_ordinal_max_seconds was not created';
+    v_missing := v_missing || 'live_ordinal_max_seconds was not created'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'end_live_question_time' LIMIT 1;
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'end_live_question_time was not created';
+    v_missing := v_missing || 'end_live_question_time was not created'::TEXT;
   ELSE
     -- The bound. Flushing against the shortest sibling leaves the longest one
     -- running, which is the one failure this control cannot have.
     IF v_src NOT LIKE '%live_ordinal_max_seconds%' THEN
-      v_missing := v_missing || 'end_live_question_time must bound on the LONGEST sibling';
+      v_missing := v_missing || 'end_live_question_time must bound on the LONGEST sibling'::TEXT;
     END IF;
     IF v_src NOT LIKE '%FLOOR%' THEN
       v_missing := v_missing ||
-        'end_live_question_time must round the elapsed seconds DOWN, or it leaves a second on the clock';
+        'end_live_question_time must round the elapsed seconds DOWN, or it leaves a second on the clock'::TEXT;
     END IF;
     IF v_src NOT LIKE '%FOR UPDATE%' THEN
-      v_missing := v_missing || 'end_live_question_time must lock the row it rewrites';
+      v_missing := v_missing || 'end_live_question_time must lock the row it rewrites'::TEXT;
     END IF;
     IF v_src NOT LIKE '%live_unlock_log%' THEN
       v_missing := v_missing ||
-        'end_live_question_time must mirror the write to live_unlock_log, which is where the analytics window is read from';
+        'end_live_question_time must mirror the write to live_unlock_log, which is where the analytics window is read from'::TEXT;
     END IF;
   END IF;
 
@@ -3586,31 +3614,31 @@ BEGIN
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
 
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'live_session_sync is missing';
+    v_missing := v_missing || 'live_session_sync is missing'::TEXT;
   ELSE
     -- The fix.
     IF v_src NOT LIKE '%leaderboard_visibility = ''off''%' THEN
       v_missing := v_missing ||
-        'live_session_sync still hands every student their rank when E3 is off';
+        'live_session_sync still hands every student their rank when E3 is off'::TEXT;
     END IF;
 
     -- Everything the rewrite had to carry forward.
     IF v_src NOT LIKE '%v_score_visible%' THEN
       v_missing := v_missing ||
-        'live_session_sync lost the score_visible gate — mid-question correctness would leak again';
+        'live_session_sync lost the score_visible gate — mid-question correctness would leak again'::TEXT;
     END IF;
     IF v_src NOT LIKE '%present_reveal_answer%' THEN
-      v_missing := v_missing || 'live_session_sync lost present_reveal_answer (Q15b)';
+      v_missing := v_missing || 'live_session_sync lost present_reveal_answer (Q15b)'::TEXT;
     END IF;
     IF v_src NOT LIKE '%present_show_options%' THEN
-      v_missing := v_missing || 'live_session_sync lost present_show_options (Q15)';
+      v_missing := v_missing || 'live_session_sync lost present_show_options (Q15)'::TEXT;
     END IF;
     IF v_src NOT LIKE '%present_theme%' THEN
-      v_missing := v_missing || 'live_session_sync lost present_theme (Q16)';
+      v_missing := v_missing || 'live_session_sync lost present_theme (Q16)'::TEXT;
     END IF;
     IF v_src NOT LIKE '%live_question_visual_end%' THEN
       v_missing := v_missing ||
-        'live_session_sync lost the visual-end cadence — poll-lane clients would sleep through the A3 window';
+        'live_session_sync lost the visual-end cadence — poll-lane clients would sleep through the A3 window'::TEXT;
     END IF;
   END IF;
 
@@ -3620,7 +3648,7 @@ BEGIN
   SELECT pg_get_viewdef('public.live_participants_public'::regclass) INTO v_view;
   IF v_view IS NULL OR v_view NOT LIKE '%leaderboard_visibility%' THEN
     v_missing := v_missing ||
-      'live_participants_public no longer applies E3 — the standings are readable directly again';
+      'live_participants_public no longer applies E3 — the standings are readable directly again'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN

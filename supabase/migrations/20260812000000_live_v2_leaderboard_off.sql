@@ -238,31 +238,31 @@ BEGIN
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
 
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'live_session_sync is missing';
+    v_missing := v_missing || 'live_session_sync is missing'::TEXT;
   ELSE
     -- The fix.
     IF v_src NOT LIKE '%leaderboard_visibility = ''off''%' THEN
       v_missing := v_missing ||
-        'live_session_sync still hands every student their rank when E3 is off';
+        'live_session_sync still hands every student their rank when E3 is off'::TEXT;
     END IF;
 
     -- Everything the rewrite had to carry forward.
     IF v_src NOT LIKE '%v_score_visible%' THEN
       v_missing := v_missing ||
-        'live_session_sync lost the score_visible gate — mid-question correctness would leak again';
+        'live_session_sync lost the score_visible gate — mid-question correctness would leak again'::TEXT;
     END IF;
     IF v_src NOT LIKE '%present_reveal_answer%' THEN
-      v_missing := v_missing || 'live_session_sync lost present_reveal_answer (Q15b)';
+      v_missing := v_missing || 'live_session_sync lost present_reveal_answer (Q15b)'::TEXT;
     END IF;
     IF v_src NOT LIKE '%present_show_options%' THEN
-      v_missing := v_missing || 'live_session_sync lost present_show_options (Q15)';
+      v_missing := v_missing || 'live_session_sync lost present_show_options (Q15)'::TEXT;
     END IF;
     IF v_src NOT LIKE '%present_theme%' THEN
-      v_missing := v_missing || 'live_session_sync lost present_theme (Q16)';
+      v_missing := v_missing || 'live_session_sync lost present_theme (Q16)'::TEXT;
     END IF;
     IF v_src NOT LIKE '%live_question_visual_end%' THEN
       v_missing := v_missing ||
-        'live_session_sync lost the visual-end cadence — poll-lane clients would sleep through the A3 window';
+        'live_session_sync lost the visual-end cadence — poll-lane clients would sleep through the A3 window'::TEXT;
     END IF;
   END IF;
 
@@ -272,7 +272,7 @@ BEGIN
   SELECT pg_get_viewdef('public.live_participants_public'::regclass) INTO v_view;
   IF v_view IS NULL OR v_view NOT LIKE '%leaderboard_visibility%' THEN
     v_missing := v_missing ||
-      'live_participants_public no longer applies E3 — the standings are readable directly again';
+      'live_participants_public no longer applies E3 — the standings are readable directly again'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN

@@ -15,6 +15,12 @@
  * instead — a tab cut in half then looks like there is more to reach, not like
  * a broken layout. Switching section from the palette sheet also pulls that
  * tab into view, so the strip never disagrees with the question on screen.
+ *
+ * That only holds for a handful of sections. Past SECTION_TAB_LIMIT in
+ * ExamSimulator the strip is replaced by SectionPicker, which shows the same
+ * information in a list that does not care whether the paper has six sections
+ * or sixty. The `stacked` variant here is what that picker — and the mobile
+ * palette sheet — draw their rows with.
  */
 import { useEffect, useRef, useState } from "react";
 import { Check, Flag } from "lucide-react";
@@ -70,7 +76,11 @@ export default function SectionTabs({
     activeTabRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
   }, [activeSectionId, stacked]);
 
-  if (sections.length < 2) return null;
+  // The strip is meaningless for a single section. The stacked list is not: it
+  // renders whatever it is handed, including the one row left after a search
+  // inside SectionPicker.
+  if (sections.length === 0) return null;
+  if (!stacked && sections.length < 2) return null;
 
   const tabs = sections.map((s, index) => {
     const questions = questionsBySection[s.id] || [];

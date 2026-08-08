@@ -559,6 +559,109 @@ test("tabs carry each section's answered count", () => {
   assertContains(src, "{answered}/{total}");
 });
 
+test("a paper with more sections than fit swaps the strip for a picker", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  assertContains(
+    src,
+    "allSections.length > SECTION_TAB_LIMIT",
+    "past the limit the strip becomes a scrub bar — the picker has to take over"
+  );
+  assertContains(src, "useSectionPicker ? (");
+  assertContains(src, "<SectionPicker");
+});
+
+test("the picker is the switcher on mobile at every section count", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  const mobileRow = src.slice(src.indexOf('className="lg:hidden flex min-w-0'));
+  assert(
+    mobileRow.indexOf("<SectionPicker") < mobileRow.indexOf("</div>"),
+    "the mobile row must switch sections itself, not point at the palette sheet"
+  );
+});
+
+test("the picker scrolls its list and searches a long one", () => {
+  const src = readSrc("components/exam/SectionPicker.tsx");
+  assertContains(src, "max-h-[min(60vh,22rem)] overflow-y-auto", "60 sections must scroll, not overflow the viewport");
+  assertContains(src, "SEARCH_THRESHOLD");
+  assertContains(src, 'variant="stacked"', "the list reuses the sheet's rows rather than a second design");
+});
+
+test("Clear / Previous / Next are pinned, not scrolled to", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  // The bar is a sibling of the scroll container, not inside it: sticky
+  // positioning inside would let it sit on top of the last option.
+  assertContains(src, 'ref={questionScrollRef} className="flex-1 min-h-0 overflow-y-auto');
+  const bar = src.slice(src.indexOf("{/* Locked action bar"));
+  assert(bar.indexOf("handleClearResponse") > -1, "Clear Response belongs in the pinned bar");
+  assert(
+    bar.indexOf('handleNavigation("prev")') > -1 && bar.indexOf('handleNavigation("next")') > -1,
+    "both navigation buttons belong in the pinned bar"
+  );
+  assert(
+    src.indexOf("{/* Locked action bar") > src.indexOf("</Card>"),
+    "the bar sits below the question column, outside it"
+  );
+});
+
+test("the bar reads Previous · Clear Response · Next, and carries no counter", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  const bar = src.slice(
+    src.indexOf("{/* Locked action bar"),
+    src.indexOf("{/* Desktop Question Palette")
+  );
+  const prev = bar.indexOf('handleNavigation("prev")');
+  const clear = bar.indexOf("handleClearResponse");
+  const next = bar.indexOf('handleNavigation("next")');
+  assert(prev > -1 && clear > -1 && next > -1, "all three controls live in the bar");
+  assert(prev < clear && clear < next, "back left, clear centre, forward right");
+  assert(
+    !bar.includes("{questions.length}"),
+    "the question counter belongs to the palette, not the bar"
+  );
+});
+
+test("Mark for Review sits right-aligned on the question's metadata line", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  const start = src.indexOf("{/* Question metadata");
+  assert(start > -1, "the metadata row moved — re-anchor this test");
+  // Search for the card *after* the row: earlier screens in this file open Cards too.
+  const row = src.slice(start, src.indexOf("<Card", start));
+  assertContains(row, "handleMarkForReview");
+  assertContains(row, 'className="ml-auto h-7', "hard right, and chip-height so the row stays one line");
+});
+
+test("moving to another question scrolls back to its first line", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  assertContains(
+    src,
+    "questionScrollRef.current?.scrollTo({ top: 0 })",
+    "with Next pinned, a half-scrolled long question would otherwise carry its offset to the next one"
+  );
+  assertContains(src, "}, [currentQuestionIndex, activeSectionId]);");
+});
+
+test("the runner's frame is one viewport tall, address bar included", () => {
+  assertContains(readSrc("pages/ExamSimulator.tsx"), "exam-frame");
+  const css = readFileSync(resolve(ROOT, "src/index.css"), "utf8");
+  const frame = css.slice(css.indexOf(".exam-frame"), css.indexOf(".delay-100"));
+  // A definite height, not a floor: with height:auto the flex row inside sizes
+  // to the question, the inner scroller never scrolls, and the document does —
+  // taking the "pinned" action bar off the bottom of the screen with it.
+  assertContains(frame, "height: 100dvh;");
+  assertContains(frame, "overflow: hidden;");
+  assert(
+    !frame.includes("min-height"),
+    "min-height is a floor — it does not stop a tall question growing the frame"
+  );
+});
+
+test("a search narrowed to one section still renders it", () => {
+  // SectionTabs used to bail out below two sections, which would have blanked
+  // the picker's list on any search specific enough to matter.
+  const src = readSrc("components/exam/SectionTabs.tsx");
+  assertContains(src, "if (!stacked && sections.length < 2) return null;");
+});
+
 // ─── [11] Locked mode is untouched ──────────────────────────────────────────
 console.log("\n[11] Locked mode regression");
 

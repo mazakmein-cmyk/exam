@@ -324,9 +324,9 @@ BEGIN
   JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public' AND p.proname = 'get_live_moments';
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'get_live_moments is missing';
+    v_missing := v_missing || 'get_live_moments is missing'::TEXT;
   ELSIF v_src LIKE '%p.user_id = lm.user_id%' THEN
-    v_missing := v_missing || 'get_live_moments still filters the participant set before ranking it';
+    v_missing := v_missing || 'get_live_moments still filters the participant set before ranking it'::TEXT;
   END IF;
 
   -- The re-mask-on-toggle invariant lives in 20260803020000, which
@@ -335,7 +335,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_trigger WHERE tgname = 'trg_live_privacy_mode_changed'
   ) THEN
-    v_missing := v_missing || 'trigger trg_live_privacy_mode_changed is absent — apply 20260803020000_live_v2_privacy_remask_trigger.sql, or flipping privacy mode will not re-mask already-computed questions';
+    v_missing := v_missing || 'trigger trg_live_privacy_mode_changed is absent — apply 20260803020000_live_v2_privacy_remask_trigger.sql, or flipping privacy mode will not re-mask already-computed questions'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN

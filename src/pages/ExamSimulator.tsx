@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu, Info, Eye, LayoutList, ArrowLeftRight, Check } from "lucide-react";
+import { Clock, Flag, ChevronLeft, ChevronRight, ArrowLeft, Menu, Info, Eye, LayoutList, ArrowLeftRight, Check, Eraser, Maximize2, Minimize2 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -30,6 +30,7 @@ import { toExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/exam
 import CreatorExamBlocked from "@/components/CreatorExamBlocked";
 import AllQuestionsDialog from "@/components/exam/AllQuestionsDialog";
 import SectionTabs from "@/components/exam/SectionTabs";
+import SectionPicker from "@/components/exam/SectionPicker";
 import { getQuestionTypeInfo, renderQuestionHtml, splitPassageContent } from "@/lib/questionContent";
 import { readNavigationSettings } from "@/lib/examSettings";
 import {
@@ -42,6 +43,9 @@ import {
   totalExamMinutes,
   totalExamSeconds,
 } from "@/lib/examNavigation.js";
+
+/** Most sections that still read as tabs at desktop width; above it, a picker. */
+const SECTION_TAB_LIMIT = 5;
 
 type Question = {
   id: string;
@@ -128,17 +132,119 @@ const ExamSimulator = () => {
   const timerWorkerRef = useRef<Worker | null>(null);
   // Always-current ref to handleAutoSubmit so the worker callback isn't stale
   const handleAutoSubmitRef = useRef<() => void>(() => {});
+  // The question column scrolls, the action bar under it does not. Navigating
+  // has to reset this: with Next pinned to the bottom of the screen a candidate
+  // can leave a long question half-scrolled, and the next one would otherwise
+  // open at that same offset — somewhere in the middle of its own text.
+  const questionScrollRef = useRef<HTMLDivElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   // "All Questions" overview — the whole section on one scroll, read-only
   const [isAllQuestionsOpen, setIsAllQuestionsOpen] = useState(false);
   const [scoringConfigs, setScoringConfigs] = useState<Map<string, ScoringConfig>>(new Map());
   const [showMarksInSim, setShowMarksInSim] = useState(true);
+  /**
+   * Expanded mode: the reading-width caps come off and the browser goes
+   * fullscreen, in one gesture.
+   *
+   * Both halves matter, and neither is enough alone. The caps (max-w-7xl on the
+   * header, max-w-6xl on the question column) are what make a 27" monitor render
+   * a 1280px column with grey either side — deliberate for prose, wasteful for a
+   * passage-plus-question split that wants two real columns. Fullscreen is what
+   * removes the tab strip and bookmarks bar above it, which is the other half of
+   * the wasted screen and cannot be done with CSS.
+   *
+   * Kept as our own flag rather than read off `document.fullscreenElement`,
+   * because requestFullscreen can be refused (iframes without allow-fullscreen,
+   * some kiosk setups) and the width change should still happen when it is.
+   *
+   * Starting the exam turns this on by itself — see handleStartSection. The
+   * header button is then how a candidate gets back out, alongside Esc.
+   */
+  const [isExpanded, setIsExpanded] = useState(false);
   // Derived from the signed-in account, never from the URL: "take" for
   // students/guests, "preview" for the exam's own creator (nothing is
   // persisted), "blocked" for a creator on someone else's exam.
   const [access, setAccess] = useState<ExamAccessMode>("take");
   const isPreview = access === "preview";
+
+  const enterExpanded = useCallback(() => {
+    // Flag first, browser second: the width has to change even where fullscreen
+    // is refused, so it must not be conditional on the browser saying yes.
+    setIsExpanded(true);
+    // documentElement, not the exam frame: every dialog, sheet and popover here
+    // is portalled to document.body, and fullscreening an inner element would
+    // leave all of them rendering outside the fullscreen subtree — invisible.
+    void document.documentElement.requestFullscreen?.()?.catch(() => {});
+  }, []);
+
+  const collapseExpanded = useCallback(() => {
+    setIsExpanded(false);
+    if (document.fullscreenElement) void document.exitFullscreen?.()?.catch(() => {});
+  }, []);
+
+  const toggleExpanded = useCallback(() => {
+    if (isExpanded) collapseExpanded();
+    else enterExpanded();
+  }, [isExpanded, enterExpanded, collapseExpanded]);
+
+  /**
+   * Leaving fullscreen by any route the page does not control — Esc, F11, the
+   * browser's own "exit" pill — has to bring the width back with it. Otherwise
+   * the exam is left in a half-state: windowed, but still edge-to-edge, with a
+   * Minimize button that looks like it did nothing.
+   */
+  useEffect(() => {
+    const sync = () => {
+      if (!document.fullscreenElement) setIsExpanded(false);
+    };
+    document.addEventListener("fullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      // Submitting navigates away. A fullscreen results page, which has no exit
+      // control of its own, is a trap — hand the browser chrome back on the way out.
+      if (document.fullscreenElement) void document.exitFullscreen?.()?.catch(() => {});
+    };
+  }, []);
+
+  /**
+   * Esc as the way out, for the case the handler above cannot see: fullscreen was
+   * refused, so the layout is expanded with no fullscreenchange event coming.
+   *
+   * Esc is the top layer's key, though. A dialog, the palette sheet or the
+   * section popover all use it to close, and collapsing the exam underneath them
+   * at the same time would take two visible actions from one keypress.
+   */
+  useEffect(() => {
+    if (!isExpanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (
+        isAllQuestionsOpen ||
+        isPaletteOpen ||
+        showSubmitDialog ||
+        showTimeWarning ||
+        showSectionCompleteDialog
+      ) {
+        return;
+      }
+      // Popovers and tooltips are not in the state above; ask the DOM.
+      if (document.querySelector('[data-state="open"][role="dialog"], [data-radix-popper-content-wrapper]')) {
+        return;
+      }
+      collapseExpanded();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    isExpanded,
+    collapseExpanded,
+    isAllQuestionsOpen,
+    isPaletteOpen,
+    showSubmitDialog,
+    showTimeWarning,
+    showSectionCompleteDialog,
+  ]);
 
   // Spin up the Web Worker once on mount and tear it down on unmount
   useEffect(() => {
@@ -190,6 +296,13 @@ const ExamSimulator = () => {
   useEffect(() => {
     questionStartTimeRef.current = Date.now();
   }, [currentQuestionIndex]);
+
+  // A new question always starts at its own first line. Instant, not smooth:
+  // this is a jump between two documents, not movement within one, and a
+  // candidate clicking Next four times should not be watching four animations.
+  useEffect(() => {
+    questionScrollRef.current?.scrollTo({ top: 0 });
+  }, [currentQuestionIndex, activeSectionId]);
 
   // Auto-dismiss the 5-minute warning after 5 seconds
   useEffect(() => {
@@ -470,6 +583,25 @@ const ExamSimulator = () => {
 
   // Create attempt and start exam only when user explicitly clicks "Start Section"
   const handleStartSection = async () => {
+    /**
+     * Sitting down to the paper is the one moment that needs no asking: from here
+     * until Submit there is nothing else on this screen to do, so it takes the
+     * whole screen.
+     *
+     * Asked for here, at the top, and not after the awaits below. Fullscreen is
+     * granted on *transient* user activation — the click that ran this handler,
+     * good for a few seconds — and an auth round trip plus an attempt insert can
+     * outlive that on a slow connection. Past it the request is refused and the
+     * exam starts windowed, intermittently, on exactly the connections least
+     * likely to be reproducible.
+     *
+     * fullscreenEnabled first, rather than trying and catching: where the browser
+     * will never grant it (iOS Safari fullscreens video and nothing else) the
+     * width caps do not bind at phone width either, so expanding would change
+     * nothing on screen except to put a Minimize button in the header that
+     * visibly does nothing.
+     */
+    if (document.fullscreenEnabled) enterExpanded();
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
@@ -527,6 +659,10 @@ const ExamSimulator = () => {
           .select();
 
         if (error || !data || data.length === 0) {
+          // The exam did not start, so give the screen back: a fullscreen start
+          // card with an error toast is a dead end — no browser chrome, and the
+          // Back button it wants is behind the fullscreen the click just took.
+          collapseExpanded();
           toast({
             title: "Error",
             description: "Failed to start exam attempt",
@@ -551,6 +687,7 @@ const ExamSimulator = () => {
       timerWorkerRef.current?.postMessage({ type: "START", endTime: examEndTimeRef.current });
       setHasStarted(true);
     } catch (error) {
+      collapseExpanded();
       console.error("Error starting section:", error);
       toast({
         title: "Error",
@@ -1116,6 +1253,10 @@ const ExamSimulator = () => {
   // Free-mode reading of the paper as a whole: which sections still have
   // unanswered questions, and whether Next has anywhere left to go.
   const showSectionTabs = isFreeNav && allSections.length > 1;
+  // Past the limit a tab strip stops being navigation and becomes a scrub bar:
+  // truncated names, the tab you want off-screen behind a fade. The picker is
+  // the same width whether the paper has six sections or sixty.
+  const useSectionPicker = showSectionTabs && allSections.length > SECTION_TAB_LIMIT;
   const perSectionSummary = isFreeNav
     ? allSections
         .map((s) => ({
@@ -1134,11 +1275,21 @@ const ExamSimulator = () => {
   /** Free mode keeps Submit reachable from anywhere — a candidate may finish early. */
   const showSubmitInline = isFreeNav ? atEndOfPaper : currentQuestionIndex === questions.length - 1;
 
+  /* The two width caps expanded mode lifts. Dropping `container` with them is
+     deliberate: it carries its own max-width at 2xl, so leaving it on would cap
+     the "full width" layout at 1400px on exactly the screens wide enough to
+     notice. Both rows use the same cap so the tab strip stays flush under the
+     header, and both stay a plain class string — a candidate mid-exam should not
+     see the header re-flow through an animation. */
+  const chromeWidth = isExpanded ? "max-w-none" : "container max-w-7xl";
+  const columnWidth = isExpanded ? "max-w-none" : "max-w-6xl";
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
-      <div className="border-b border-border bg-card sticky top-0 z-10">
-        <div className="container mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
+    <div className="exam-frame bg-background flex flex-col">
+      {/* Header. shrink-0 because the frame now has a definite height: without
+          it a flex column will happily squash its own header to make room. */}
+      <div className="shrink-0 border-b border-border bg-card sticky top-0 z-10">
+        <div className={`${chromeWidth} mx-auto px-4 py-3 flex items-center justify-between`}>
           <div className="flex items-center gap-2 min-w-0">
             <h1 className="text-lg font-semibold text-foreground truncate max-w-[150px] sm:max-w-md">{section?.name}</h1>
             {showSectionTabs && (
@@ -1162,16 +1313,42 @@ const ExamSimulator = () => {
               </span>
             </div>
 
-            {/* Whole-section overview — available in both preview and a real attempt */}
+            {/* Whole-section overview — available in both preview and a real
+                attempt. Below lg only: from lg up this lives at the foot of the
+                palette, which is where it belongs, but there is no palette
+                column at phone and tablet width to put it in. */}
             <Button
               variant="outline"
               size="sm"
+              className="lg:hidden"
               onClick={() => setIsAllQuestionsOpen(true)}
               title="See every question in this section"
             >
               <LayoutList className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">All Questions</span>
               <span className="sr-only sm:hidden">All Questions</span>
+            </Button>
+
+            {/* Expand / collapse. Icon-only and last in the row: it is a view
+                preference, not part of answering, so it should be the least
+                shouty control here.
+
+                Asymmetric on small screens, deliberately. Collapsed, it is hidden
+                below sm: neither width cap binds at phone width, so there is
+                nothing to gain and the row has no pixels to spare. Expanded, it
+                shows at every size — starting the exam enters this mode on its own,
+                and a phone in fullscreen has no Esc key to press. The way out
+                cannot be narrower than the way in. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleExpanded}
+              className={isExpanded ? "px-2" : "hidden sm:inline-flex px-2"}
+              aria-pressed={isExpanded}
+              aria-label={isExpanded ? "Exit full screen" : "Expand to full screen"}
+              title={isExpanded ? "Exit full screen (Esc)" : "Expand to full screen"}
+            >
+              {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </Button>
 
             {/* Mobile Menu Trigger */}
@@ -1247,28 +1424,44 @@ const ExamSimulator = () => {
             walk to the last question to say so. */}
         {showSectionTabs && (
           <div className="border-t border-border/60 bg-card">
-            <div className="container mx-auto max-w-7xl flex items-stretch justify-between gap-2">
+            <div className={`${chromeWidth} mx-auto flex items-stretch justify-between gap-2`}>
               <div className="min-w-0 flex-1 hidden lg:block">
-                <SectionTabs
+                {useSectionPicker ? (
+                  <div className="flex h-11 items-center px-3">
+                    <SectionPicker
+                      sections={allSections}
+                      activeSectionId={activeSectionId}
+                      questionsBySection={questionsBySection}
+                      questionStates={questionStates}
+                      onSelect={handleSectionSwitch}
+                      className="w-[22rem]"
+                    />
+                  </div>
+                ) : (
+                  <SectionTabs
+                    sections={allSections}
+                    activeSectionId={activeSectionId}
+                    questionsBySection={questionsBySection}
+                    questionStates={questionStates}
+                    onSelect={handleSectionSwitch}
+                  />
+                )}
+              </div>
+
+              {/* Mobile/tablet: no room for a strip at any section count, so the
+                  picker is the switcher here — one tap to a full list, instead
+                  of the old "open the palette sheet and look for it" detour. */}
+              <div className="lg:hidden flex min-w-0 flex-1 items-center gap-2 px-3 py-2">
+                <SectionPicker
                   sections={allSections}
                   activeSectionId={activeSectionId}
                   questionsBySection={questionsBySection}
                   questionStates={questionStates}
                   onSelect={handleSectionSwitch}
+                  className="min-w-0 flex-1"
                 />
-              </div>
-
-              {/* Mobile/tablet: the strip is in the palette sheet, so this row
-                  just states where you are and how far along the paper is. */}
-              <div className="lg:hidden flex items-center gap-2 px-4 py-2 min-w-0">
-                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
-                  <ArrowLeftRight className="h-3 w-3" />
-                  {activeSectionNumber}/{allSections.length}
-                </span>
-                <span className="text-[11px] text-muted-foreground truncate">
-                  {paperAnswered}/{paperTotal} answered · tap
-                  <Menu className="inline h-3 w-3 mx-0.5" />
-                  to switch section
+                <span className="hidden shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground sm:inline">
+                  {paperAnswered}/{paperTotal}
                 </span>
               </div>
 
@@ -1292,58 +1485,65 @@ const ExamSimulator = () => {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Main Question Area */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-20 sm:pb-6">
-          <div className="max-w-6xl mx-auto space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-sm font-medium text-muted-foreground">
-                  Question {currentQuestionIndex + 1} of {questions.length}
-                  {currentQuestion?.section_label && ` - ${currentQuestion.section_label}`}
-                </h2>
-                {currentQuestion && (() => {
-                  const hasOptions = !!(
-                    currentQuestion.options &&
-                    Array.isArray(currentQuestion.options) &&
-                    currentQuestion.options.length > 0
-                  );
-                  const info = getQuestionTypeInfo(currentQuestion.answer_type, hasOptions);
-                  return (
-                    <TooltipProvider delayDuration={200}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary cursor-help select-none"
-                            aria-label={`Question type: ${info.label}`}
-                          >
-                            {info.label}
-                            <Info className="h-3 w-3" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-[260px] text-xs">
-                          {info.description}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  );
-                })()}
-              </div>
+        {/* Main Question Area — scrolls; the action bar below it does not. */}
+        <div className="flex-1 flex min-w-0 flex-col overflow-hidden">
+        <div ref={questionScrollRef} className="flex-1 min-h-0 overflow-y-auto p-3 sm:px-6 sm:py-4">
+          {/* space-y-3, not 6: a question and its own metadata are one object,
+              and the gap between them was costing a line of options. */}
+          <div className={`${columnWidth} mx-auto space-y-3`}>
+            {/* Question metadata: what this question is on the left, what you can
+                do about it on the right, both on the one line directly above the
+                card. It replaced a heading-plus-button bar that cost ~70px of the
+                single screen a question gets — the button here is h-7 rather than
+                the default h-9 so the row stays chip-height. The question number
+                it used to carry is in the palette. */}
+            <div className="flex flex-wrap items-center gap-2">
+              {currentQuestion && (() => {
+                const hasOptions = !!(
+                  currentQuestion.options &&
+                  Array.isArray(currentQuestion.options) &&
+                  currentQuestion.options.length > 0
+                );
+                const info = getQuestionTypeInfo(currentQuestion.answer_type, hasOptions);
+                return (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary cursor-help select-none"
+                          aria-label={`Question type: ${info.label}`}
+                        >
+                          {info.label}
+                          <Info className="h-3 w-3" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-[260px] text-xs">
+                        {info.description}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                );
+              })()}
+              {showMarksInSim && currentQuestion && (
+                <MarksQuestionBadge config={scoringConfigs.get(currentQuestion.id) ?? null} />
+              )}
+
+              {/* ml-auto: hard right, level with the type chip, on the same line
+                  the eye already reads before dropping into the question. */}
               <Button
                 variant={questionStates[currentQuestion?.id]?.isMarkedForReview ? "destructive" : "outline"}
                 size="sm"
                 onClick={handleMarkForReview}
-                className="self-start sm:self-auto"
+                title="Flag this question to come back to"
+                className="ml-auto h-7 shrink-0 gap-1.5 px-2.5 text-xs"
               >
-                <Flag className="h-4 w-4 mr-2" />
+                <Flag className="h-3.5 w-3.5" />
                 {questionStates[currentQuestion?.id]?.isMarkedForReview ? "Marked" : "Mark for Review"}
               </Button>
-              {showMarksInSim && currentQuestion && (
-                <MarksQuestionBadge config={scoringConfigs.get(currentQuestion.id) ?? null} />
-              )}
             </div>
 
             <Card className="border-t-4 border-t-primary">
-              <CardContent className="pt-6 space-y-6">
+              <CardContent className="pt-4 space-y-4">
                 {(() => {
                   // Passage/question split and the markdown+math pipeline are shared
                   // with the All Questions overview (see @/lib/questionContent).
@@ -1409,20 +1609,11 @@ const ExamSimulator = () => {
                               dangerouslySetInnerHTML={{ __html: renderQuestionHtml(questionContent) }}
                             />
                           )}
-                          {/* Answer Options */}
+                          {/* Answer Options. Clear Response lives in the locked
+                              action bar, not here — a button that scrolls out of
+                              reach is one a candidate stops using. */}
                           <div className="mt-4 pt-4 border-t space-y-3">
                             {renderAnswerInput()}
-                            <div className="flex justify-end">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={!isAnswerPresent(questionStates[currentQuestion?.id]?.selectedAnswer)}
-                                onClick={handleClearResponse}
-                              >
-                                Clear Response
-                              </Button>
-                            </div>
                           </div>
                         </div>
                       </div>
@@ -1459,67 +1650,80 @@ const ExamSimulator = () => {
                           dangerouslySetInnerHTML={{ __html: renderQuestionHtml(currentQuestion.text) }}
                         />
                       )}
-                      <div className="mt-6 pt-6 border-t space-y-3">
+                      <div className="mt-4 pt-4 border-t space-y-3">
                         {renderAnswerInput()}
-                        <div className="flex justify-end">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={!isAnswerPresent(questionStates[currentQuestion?.id]?.selectedAnswer)}
-                            onClick={handleClearResponse}
-                          >
-                            Clear Response
-                          </Button>
-                        </div>
                       </div>
                     </>
                   );
                 })()}
               </CardContent>
             </Card>
-
-            <div className="flex justify-between pb-8">
-              <Button
-                variant="outline"
-                onClick={() => handleNavigation("prev")}
-                // Free mode: Previous keeps working off the top of a section,
-                // stepping back into the one before it. Only the paper's very
-                // first question has nowhere to go.
-                disabled={
-                  isFreeNav
-                    ? !stepThroughPaper(flatPaper, activeSectionId, currentQuestionIndex, "prev")
-                    : currentQuestionIndex === 0
-                }
-                className="w-1/3 sm:w-auto"
-              >
-                <ChevronLeft className="h-4 w-4 mr-2" />
-                <span className="hidden sm:inline">Previous</span>
-                <span className="sm:hidden">Prev</span>
-              </Button>
-
-              {/* Mobile count indicator */}
-              <span className="text-sm text-muted-foreground flex items-center sm:hidden">
-                {currentQuestionIndex + 1} / {questions.length}
-              </span>
-
-              {showSubmitInline ? (
-                <Button onClick={() => setShowSubmitDialog(true)} className="w-1/3 sm:w-auto">
-                  Submit
-                </Button>
-              ) : (
-                <Button onClick={() => handleNavigation("next")} className="w-1/3 sm:w-auto">
-                  <span className="hidden sm:inline">Next</span>
-                  <span className="sm:hidden">Next</span>
-                  <ChevronRight className="h-4 w-4 ml-2" />
-                </Button>
-              )}
-            </div>
           </div>
         </div>
+        {/* /scrolling question column */}
 
-        {/* Desktop Question Palette - Hidden on mobile */}
-        <div className="hidden lg:block w-80 border-l border-border bg-card overflow-y-auto p-6">
+        {/* Locked action bar. Everything a candidate does *to* the question they
+            are on — clear it, leave it, move on — sits here at a fixed height,
+            reachable without scrolling however long the passage above runs.
+            Outside the scroll container rather than sticky inside it, so it can
+            never overlap the last option of a question. */}
+        <div className="shrink-0 border-t border-border bg-card">
+          {/* Back on the left, forward on the right, and the one destructive
+              action in the middle where neither thumb lands by accident. */}
+          <div className={`${columnWidth} mx-auto flex items-center gap-2 px-3 py-2.5 sm:px-6`}>
+            <Button
+              variant="outline"
+              onClick={() => handleNavigation("prev")}
+              // Free mode: Previous keeps working off the top of a section,
+              // stepping back into the one before it. Only the paper's very
+              // first question has nowhere to go.
+              disabled={
+                isFreeNav
+                  ? !stepThroughPaper(flatPaper, activeSectionId, currentQuestionIndex, "prev")
+                  : currentQuestionIndex === 0
+              }
+              className="shrink-0"
+            >
+              <ChevronLeft className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Previous</span>
+              <span className="sr-only sm:hidden">Previous</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!isAnswerPresent(questionStates[currentQuestion?.id]?.selectedAnswer)}
+              onClick={handleClearResponse}
+              className="mx-auto shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              <Eraser className="h-4 w-4 sm:mr-1.5" />
+              <span className="hidden sm:inline">Clear Response</span>
+              <span className="sr-only sm:hidden">Clear Response</span>
+            </Button>
+
+            {showSubmitInline ? (
+              <Button onClick={() => setShowSubmitDialog(true)} className="shrink-0">
+                <Check className="h-4 w-4 mr-2" />
+                Submit
+              </Button>
+            ) : (
+              <Button onClick={() => handleNavigation("next")} className="shrink-0">
+                Next
+                <ChevronRight className="h-4 w-4 ml-2" />
+              </Button>
+            )}
+          </div>
+        </div>
+        </div>{/* /question column + its action bar */}
+
+        {/* Desktop Question Palette - Hidden on mobile. A column, not a block:
+            the grid and legend scroll, and All Questions is pinned to the foot
+            of it — the bottom-right corner of the screen, level with the action
+            bar, and beside the palette it belongs with rather than up in the
+            timer's row. */}
+        <div className="hidden lg:flex w-80 shrink-0 flex-col border-l border-border bg-card">
+          <div className="flex-1 min-h-0 overflow-y-auto p-6">
           <div className="flex items-center justify-between mb-4 gap-2">
             <h3 className="text-sm font-semibold text-foreground">Question Palette</h3>
             {/* With several sections in play, the palette needs to say which
@@ -1562,6 +1766,33 @@ const ExamSimulator = () => {
               <div className="w-4 h-4 rounded bg-background border border-border"></div>
               <span>Untouched</span>
             </div>
+          </div>
+          </div>
+
+          {/* Pinned foot of the palette: the whole-section view, one click from
+              the bottom-right corner however far the grid has scrolled.
+
+              Three surfaces, each a few shades down from the one behind it: the
+              palette is card-white, this strip is a step darker, the button a
+              step darker again with a border of its own. An outline button here
+              was white on white — a label, not a control.
+
+              Tinted with foreground rather than a fixed grey so it inverts with
+              the theme: 8% of the text colour is darker than a white panel and
+              lighter than a dark one, which is the right direction in both. */}
+          <div className="shrink-0 border-t border-border bg-foreground/[0.03] p-3">
+            <Button
+              variant="outline"
+              // Resting state only — the hover left alone on purpose, so this
+              // still lights up accent-purple like every other outline button
+              // in the app. It was never the hover that failed to read.
+              className="w-full justify-center gap-2 border-foreground/20 bg-foreground/[0.07] font-semibold text-foreground shadow-sm hover:border-accent active:scale-[0.99]"
+              onClick={() => setIsAllQuestionsOpen(true)}
+              title="See every question in this section"
+            >
+              <LayoutList className="h-4 w-4" />
+              All Questions
+            </Button>
           </div>
         </div>
       </div>

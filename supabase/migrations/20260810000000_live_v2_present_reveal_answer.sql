@@ -254,31 +254,31 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'live_exams'
       AND column_name = 'present_reveal_answer'
   ) THEN
-    v_missing := v_missing || 'live_exams.present_reveal_answer';
+    v_missing := v_missing || 'live_exams.present_reveal_answer'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'live_session_sync' LIMIT 1;
   IF v_src IS NULL OR v_src NOT LIKE '%present_reveal_answer%' THEN
-    v_missing := v_missing || 'live_session_sync does not return present_reveal_answer';
+    v_missing := v_missing || 'live_session_sync does not return present_reveal_answer'::TEXT;
   END IF;
   -- The keys this migration inherited must still be there: it redefines the
   -- whole function, so a bad merge here silently un-ships Q15 and Q16.
   IF v_src IS NULL OR v_src NOT LIKE '%present_show_options%' THEN
-    v_missing := v_missing || 'live_session_sync lost present_show_options';
+    v_missing := v_missing || 'live_session_sync lost present_show_options'::TEXT;
   END IF;
   IF v_src IS NULL OR v_src NOT LIKE '%present_theme%' THEN
-    v_missing := v_missing || 'live_session_sync lost present_theme';
+    v_missing := v_missing || 'live_session_sync lost present_theme'::TEXT;
   END IF;
   IF v_src IS NULL OR v_src NOT LIKE '%score_visible%' THEN
-    v_missing := v_missing || 'live_session_sync lost the score_visible gate';
+    v_missing := v_missing || 'live_session_sync lost the score_visible gate'::TEXT;
   END IF;
 
   SELECT prosrc INTO v_src FROM pg_proc WHERE proname = 'get_revealed_live_answers' LIMIT 1;
   IF v_src IS NULL THEN
-    v_missing := v_missing || 'get_revealed_live_answers is missing';
+    v_missing := v_missing || 'get_revealed_live_answers is missing'::TEXT;
   ELSIF v_src NOT LIKE '%live_question_deadline%' THEN
     v_missing := v_missing ||
-      'get_revealed_live_answers no longer honours live_question_deadline — the focus screen would draw the key before the timer is up';
+      'get_revealed_live_answers no longer honours live_question_deadline — the focus screen would draw the key before the timer is up'::TEXT;
   END IF;
 
   IF array_length(v_missing, 1) > 0 THEN

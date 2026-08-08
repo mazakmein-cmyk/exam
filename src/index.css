@@ -221,6 +221,31 @@
    ============================================ */
 
 @layer utilities {
+  /*
+    The exam runner's outer frame. The question column scrolls inside it and the
+    Clear / Previous / Next bar is pinned under that column, so the frame has to
+    be exactly one viewport tall — otherwise the bar lands below the fold and the
+    candidate is back to scrolling for Next, which is the thing it exists to stop.
+
+    height, NOT min-height. This is the whole trick, and getting it wrong looks
+    like the bar simply not working: a flex container whose height is auto sizes
+    to its content first, so `flex: 1` on the row inside it resolves against the
+    question's own height rather than against the screen. The row then grows to
+    fit a 2000px question, its overflow:hidden clips nothing because nothing
+    overflows it, the inner overflow-y-auto never scrolls, and the whole document
+    scrolls instead — carrying the "pinned" bar off the bottom of the screen.
+    min-height only sets a floor; it never stops that growth. A definite height
+    does, and .stage-frame above learned the same thing the same way.
+
+    vh first as the fallback, then dvh: on a phone 100vh counts the space behind
+    the address bar, which is precisely the strip the action bar would hide under.
+  */
+  .exam-frame {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
   .delay-100 { animation-delay: 100ms; }
   .delay-150 { animation-delay: 150ms; }
   .delay-200 { animation-delay: 200ms; }
