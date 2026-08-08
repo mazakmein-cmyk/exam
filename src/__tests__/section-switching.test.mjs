@@ -41,6 +41,12 @@ import {
   sectionTimeSpentSeconds,
   staggeredTimestamps,
 } from "../lib/examNavigation.js";
+import { reconcileTimingLine } from "../lib/examInstructionEngine.js";
+import {
+  auditInstructionTiming,
+  describeTimingDrift,
+  effectivePaperMinutes,
+} from "../lib/instructionTimingAudit.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
@@ -551,6 +557,176 @@ test("the intro screen states the format before the student starts", () => {
   assertContains(src, "You can switch between sections");
   assertContains(src, "One section at a time");
   assertContains(src, "for the whole paper");
+});
+
+// ─── [12] Instructions that went out of date ────────────────────────────────
+console.log("\n[12] Instruction timing audit");
+
+const LOCKED_PAPER = { allowSectionSwitching: false, totalMinutes: 155, sectionMinutes: [30, 30, 30, 30] };
+const FREE_PAPER = { allowSectionSwitching: true, totalMinutes: 155, sectionMinutes: [30, 30, 30, 30] };
+
+test("a locked paper is worth the sum of its sections, whatever the total says", () => {
+  // The stored total_time_minutes is ignored in locked mode — the runner gives
+  // each section its own clock, so 155 is not a number any student will see.
+  assertEqual(effectivePaperMinutes(LOCKED_PAPER), 120);
+  assertEqual(effectivePaperMinutes(FREE_PAPER), 155);
+});
+
+test("the reported bug: text claiming 155 min on a 120 min paper", () => {
+  const findings = auditInstructionTiming(
+    "You have 155 minutes for the whole paper. All sections share one clock.",
+    LOCKED_PAPER
+  );
+  assertEqual(findings.length, 2, "both the number and the mode are wrong");
+  assertEqual(findings[0].kind, "duration");
+  assertEqual(findings[0].stated, 155);
+  assertEqual(findings[0].expected, 120);
+  assertEqual(findings[1].kind, "mode");
+  assertContains(describeTimingDrift(findings), "it says 155 min, but students get 120 min");
+});
+
+test("text that agrees with the paper says nothing", () => {
+  assertEqual(
+    auditInstructionTiming(
+      "You have 120 minutes. Sections are sat one at a time, each on its own clock.",
+      LOCKED_PAPER
+    ).length,
+    0
+  );
+  assertEqual(
+    auditInstructionTiming("You have 155 minutes for the whole paper. All sections share one clock.", FREE_PAPER).length,
+    0
+  );
+});
+
+test("the five-minute warning is not a claim about the paper's length", () => {
+  // The standard General Instructions say "a warning appears when 5 minutes
+  // remain". Flagging that would train creators to ignore the warning.
+  assertEqual(
+    auditInstructionTiming(
+      "The paper is submitted automatically when time runs out; a warning appears when 5 minutes remain.",
+      LOCKED_PAPER
+    ).length,
+    0
+  );
+});
+
+test("listing a section's own clock is legitimate", () => {
+  assertEqual(
+    auditInstructionTiming("Each section is 30 minutes long.", LOCKED_PAPER).length,
+    0,
+    "30 is a real section clock on this paper, not a stale claim"
+  );
+});
+
+test("hours are read as durations too", () => {
+  const findings = auditInstructionTiming("You have 3 hours for this paper.", LOCKED_PAPER);
+  assertEqual(findings.length, 1);
+  assertEqual(findings[0].stated, 180);
+});
+
+test("a paper with no clock cannot be contradicted about its clock", () => {
+  assertEqual(
+    auditInstructionTiming("You have 90 minutes.", {
+      allowSectionSwitching: false,
+      totalMinutes: null,
+      sectionMinutes: [],
+    }).length,
+    0
+  );
+  assertEqual(auditInstructionTiming("", LOCKED_PAPER).length, 0);
+  assertEqual(describeTimingDrift([]), null);
+});
+
+test("a stale generated timing line is corrected before anyone reads it", () => {
+  const LOCKED_NOW = {
+    sections: [
+      { name: "English", minutes: 30, questionCount: 25 },
+      { name: "General Awareness", minutes: 30, questionCount: 25 },
+      { name: "Reasoning", minutes: 30, questionCount: 20 },
+      { name: "Numerical", minutes: 30, questionCount: 20 },
+    ],
+    allowSectionSwitching: false,
+    totalMinutes: 155,
+    marking: null,
+    answerTypes: null,
+    languageNames: null,
+  };
+  const stale = [
+    "1. This paper has 4 sections.",
+    "2. You have 155 minutes for the whole paper. All sections share one clock — move between them in any order and change any answer until you submit.",
+    "3. Every question is multiple choice with a single correct answer.",
+  ].join("\n");
+  const out = reconcileTimingLine(stale, LOCKED_NOW, "en");
+  assertEqual(out.changed, true);
+  assert(!out.text.includes("155 minutes"), "the number nobody will get must not survive");
+  assertContains(out.text, "120 minutes in all");
+  assertContains(out.text, "2. Each section is timed separately", "the numbering is preserved");
+  assertContains(out.text, "3. Every question is multiple choice", "other lines are untouched");
+});
+
+test("a creator's own wording is never rewritten", () => {
+  const facts = {
+    sections: [{ name: "A", minutes: 30, questionCount: 10 }, { name: "B", minutes: 30, questionCount: 10 }],
+    allowSectionSwitching: false,
+    totalMinutes: 155,
+    marking: null,
+    answerTypes: null,
+    languageNames: null,
+  };
+  // Says the wrong thing, but this app did not write it — rewriting a creator's
+  // prose on their behalf is worse than telling them about it in the editor.
+  const out = reconcileTimingLine("2. You get 155 minutes, so be quick.", facts, "en");
+  assertEqual(out.changed, false);
+  assertContains(out.text, "155 minutes, so be quick");
+  // Unsupported language: leave it alone rather than swapping in English.
+  assertEqual(reconcileTimingLine("2. Something", facts, "fr").changed, false);
+});
+
+test("the creator's preview is the candidate's screen, with no extra notes", () => {
+  const intro = readSrc("pages/ExamIntro.tsx");
+  assertContains(intro, "reconcileTimingLine(", "the intro corrects the sentence for everyone");
+  assertContains(intro, "{displayedExamInstruction}", "and renders the corrected copy");
+  assert(
+    !intro.includes("Only you can see this."),
+    "a preview that shows the creator something the candidate cannot see is not a preview"
+  );
+
+  // The editor still says the stored text is stale — that is where it is fixed.
+  const editor = readSrc("pages/ExamDetail.tsx");
+  assertContains(editor, "auditInstructionTiming(text, {");
+  assertContains(editor, "{timingDrift && (");
+});
+
+test("nobody starts an exam without accepting the declaration", () => {
+  const src = readSrc("pages/ExamIntro.tsx");
+  assertContains(src, "const [accepted, setAccepted] = useState(false);", "never pre-ticked");
+  assertContains(src, "id=\"exam-declaration\"");
+  // The gate itself: Start is disabled on !canStart, and canStart requires it.
+  assertContains(src, "const canStart = blockedReason === null;");
+  assertContains(src, ": !accepted");
+  assertContains(src, "disabled={!canStart}");
+  assertContains(src, "Tick the declaration to continue.", "a disabled button has to say why");
+});
+
+test("the intro is two screens with the step buttons locked to the foot", () => {
+  const src = readSrc("pages/ExamIntro.tsx");
+  assertContains(src, "exam-frame", "the intro fills the viewport rather than scrolling as one column");
+  assertContains(src, "const [step, setStep] = useState(0);");
+  assertContains(src, "bodyRef.current?.scrollTo({ top: 0 })", "screen 2 starts at its own first line");
+
+  const footer = src.slice(src.indexOf("{/* Locked footer"));
+  assert(footer.includes("setStep(1)"), "Next belongs in the pinned footer");
+  assert(footer.includes("setStep(0)"), "so does Back");
+  assert(footer.includes("handleStartExam"), "and so does Start");
+
+  // Split across the two screens, not stacked on one.
+  const general = src.indexOf("General Instructions");
+  const examSpecific = src.indexOf("{displayExamInstruction ? (");
+  assert(
+    general > -1 && examSpecific > general,
+    "general instructions on screen 1, the paper's own instructions on screen 2"
+  );
 });
 
 test("tabs carry each section's answered count", () => {

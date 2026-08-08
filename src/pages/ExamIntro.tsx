@@ -1,14 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, BookOpen, ClipboardList, Globe, Eye, ArrowLeftRight, Lock, Hourglass } from "lucide-react";
+import { ArrowLeft, BookOpen, ClipboardList, Globe, Eye, ArrowLeftRight, Lock, Hourglass, ChevronLeft, ChevronRight, ListChecks } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatMarks, type ScoringConfig } from "@/services/scoringEngine";
 import { getExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/examAccess";
 import CreatorExamBlocked from "@/components/CreatorExamBlocked";
+import InstructionText from "@/components/exam/InstructionText";
 import { readNavigationSettings } from "@/lib/examSettings";
+import { reconcileTimingLine } from "@/lib/examInstructionEngine.js";
 import { sumSectionMinutes, totalExamMinutes } from "@/lib/examNavigation.js";
 
 const AVAILABLE_LANGUAGES = [
@@ -68,6 +71,28 @@ const ExamIntro = () => {
     const [allowSectionSwitching, setAllowSectionSwitching] = useState(false);
     const [paperMinutes, setPaperMinutes] = useState(0);
     const [sectionCount, setSectionCount] = useState(0);
+    /**
+     * Two screens, not one scroll. A candidate about to sit a three-hour paper
+     * reads the general rules once and the exam's own instructions once, and a
+     * single column that runs past the fold turns both into something to flick
+     * past on the way to the Start button. Splitting them puts a deliberate
+     * beat between "how an exam works here" and "what THIS exam expects", and
+     * makes the second screen the last thing read before question 1.
+     */
+    const [step, setStep] = useState(0);
+    const bodyRef = useRef<HTMLDivElement | null>(null);
+    /**
+     * The declaration. Deliberately un-ticked on every arrival and never
+     * remembered: its whole value is that the candidate read it *this* time, and
+     * a box that arrives pre-ticked is a box nobody reads. It gates Start rather
+     * than warning after the fact, because after the fact the clock is running.
+     */
+    const [accepted, setAccepted] = useState(false);
+
+    // Screen 2 starts at its own first line — see the same reset in the runner.
+    useEffect(() => {
+        bodyRef.current?.scrollTo({ top: 0 });
+    }, [step]);
 
     const fromPage = searchParams.get("from");
 
@@ -360,15 +385,61 @@ const ExamIntro = () => {
         (exam.exam_instruction_translations && exam.exam_instruction_translations['en']) ||
         exam.exam_instruction;
 
+    /**
+     * The instructions, with any generated timing sentence brought back in line
+     * with the paper as it stands right now.
+     *
+     * Stored instruction text is a snapshot of the exam at the moment someone
+     * pressed "Generate from exam". Change the timing afterwards and the
+     * sentence keeps promising the old number — 155 minutes on a paper that now
+     * gives 120 — directly above the panel stating the real one. Correcting it
+     * here means nobody is shown the wrong figure: not the candidate, and not
+     * the creator previewing, who must see exactly what the candidate sees.
+     *
+     * Only sentences this app's own generator wrote are touched, and only in the
+     * language they were written in; a creator's own wording is left alone and
+     * flagged in the editor instead, which is the only place it can be fixed.
+     */
+    const displayedExamInstruction = reconcileTimingLine(
+        displayExamInstruction || "",
+        {
+            sections: allSections
+                .filter((s: any) => !s.language || s.language === displayLanguage)
+                .map((s: any) => ({ name: s.name, minutes: s.time_minutes, questionCount: null })),
+            allowSectionSwitching,
+            totalMinutes: paperMinutes,
+            marking: null,
+            answerTypes: null,
+            languageNames: null,
+        },
+        displayLanguage
+    ).text;
+
+    // Everything that has to be true before the clock can start, and — when one
+    // of them is not — what to say about it. A disabled button with no stated
+    // reason is the same as a broken one.
+    const blockedReason =
+        allSections.length === 0
+            ? "This exam has no sections yet."
+            : isMultiLang && !selectedLanguage
+                ? "Choose a language to continue."
+                : !accepted
+                    ? "Tick the declaration to continue."
+                    : null;
+    const canStart = blockedReason === null;
+
     return (
-        <div className="min-h-screen relative overflow-hidden flex items-center justify-center p-4 bg-background">
+        // exam-frame, the same viewport-height frame the runner uses: the card
+        // below fills it, its body scrolls, and the step buttons stay put.
+        <div className="exam-frame relative flex flex-col bg-background">
             {/* Subtle ambient orbs */}
             <div className="absolute top-1/3 left-1/4 w-80 h-80 bg-[#6C3EF4]/6 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute bottom-1/3 right-1/4 w-64 h-64 bg-[#A855F7]/5 rounded-full blur-3xl pointer-events-none" />
 
-            <div className="relative z-10 w-full max-w-2xl">
-                {/* Brand bar */}
-                <div className="flex items-center justify-between mb-6">
+            <div className="relative z-10 flex min-h-0 flex-1 flex-col">
+                {/* Brand bar — its own strip across the top of the screen now,
+                    not a caption floating above a card. */}
+                <div className="shrink-0 flex items-center justify-between border-b border-border/60 bg-card px-4 py-3 sm:px-6">
                     <button
                         onClick={handleBack}
                         className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -392,12 +463,49 @@ const ExamIntro = () => {
                     </div>
                 </div>
 
-                {/* Main card */}
-                <div className="rounded-2xl border border-border/60 bg-card shadow-xl overflow-hidden">
+                {/* The screen itself, not a card floating in it: header, scrolling
+                    body and pinned step buttons all run edge to edge. The rails
+                    inside cap the measure at max-w-7xl — the same cap the exam
+                    runner uses, so the two screens line up — and the instruction
+                    text below splits into columns rather than stretching to a
+                    200-character line, which is the actual reason a narrow card
+                    was there in the first place. */}
+                <div className="flex w-full min-h-0 flex-1 flex-col bg-card">
                     {/* Header gradient bar */}
                     <div className="h-1 w-full bg-gradient-to-r from-[#6C3EF4] via-[#8B5CF6] to-[#A855F7]" />
 
-                    <div className="p-7 space-y-6">
+                    {/* Which exam, which screen. Stays put across both steps so
+                        the paper's name is never scrolled away. */}
+                    <div className="shrink-0 border-b border-border/60 px-4 py-4 sm:px-6">
+                      <div className="mx-auto w-full max-w-7xl">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-[#A855F7] uppercase tracking-widest bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 px-2 py-0.5 rounded-full">
+                                {isPreview ? "Preview" : "Exam"}
+                            </span>
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                                Step {step + 1} of 2 · {step === 0 ? "Before you begin" : "Exam instructions"}
+                            </span>
+                        </div>
+                        <h1 className="mt-1.5 text-xl sm:text-2xl font-bold text-foreground leading-snug line-clamp-2">
+                            {exam.name}
+                        </h1>
+                        <div className="mt-3 flex gap-1.5" aria-hidden>
+                            {[0, 1].map((i) => (
+                                <span
+                                    key={i}
+                                    className={`h-1 flex-1 rounded-full transition-colors ${
+                                        i <= step ? "bg-[#6C3EF4]" : "bg-border"
+                                    }`}
+                                />
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+                      <div className="mx-auto w-full max-w-7xl space-y-5">
+                      {step === 0 ? (
+                        <>
                         {/* Creator preview notice — a preview is never scored or saved */}
                         {isPreview && (
                             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 flex items-start gap-3">
@@ -412,18 +520,9 @@ const ExamIntro = () => {
                             </div>
                         )}
 
-                        {/* Exam title & description */}
-                        <div>
-                            <div className="flex items-center gap-2 mb-2">
-                                <span className="text-[10px] font-bold text-[#A855F7] uppercase tracking-widest bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 px-2 py-0.5 rounded-full">
-                                    {isPreview ? "Preview" : "Exam"}
-                                </span>
-                            </div>
-                            <h1 className="text-2xl md:text-3xl font-bold text-foreground leading-tight">{exam.name}</h1>
-                            {displayDescription && (
-                                <p className="text-muted-foreground mt-2 text-base leading-relaxed">{displayDescription}</p>
-                            )}
-                        </div>
+                        {displayDescription && (
+                            <p className="text-muted-foreground text-sm leading-relaxed">{displayDescription}</p>
+                        )}
 
                         {/* General Instructions */}
                         {displayGeneralInstruction && (
@@ -432,18 +531,64 @@ const ExamIntro = () => {
                                     <BookOpen className="h-4 w-4 text-[#A855F7]" />
                                     General Instructions
                                 </h3>
-                                <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{displayGeneralInstruction}</p>
+                                {/* One vertical flow. Columns were tried here and
+                                    were wrong: a numbered list has an order, and
+                                    CSS columns cut item 4 in half to balance the
+                                    gap — "…any number of times" at the foot of
+                                    one column, "before you submit." at the head
+                                    of the next. max-w-4xl instead caps the line
+                                    length, which was the only thing the columns
+                                    were really buying. */}
+                                {/* InstructionText, not a bare <p>: legend lines
+                                    written as [green]/[red]/… tokens render as
+                                    the palette's own colour tiles. */}
+                                <InstructionText
+                                    text={displayGeneralInstruction}
+                                    className="max-w-4xl text-sm text-muted-foreground leading-relaxed"
+                                />
                             </div>
                         )}
 
-                        {/* Exam Instructions */}
-                        {displayExamInstruction && (
-                            <div className="rounded-xl border border-[#6C3EF4]/20 bg-[#6C3EF4]/5 p-4 space-y-2">
+                        {/* This paper's own instructions, its format and its
+                            marking are all screen 2 — see below. */}
+
+                        </>
+                      ) : (
+                        <>
+                        {/* Screen 2: everything specific to THIS paper — its own
+                            instructions, how it is timed, what the questions are
+                            worth — and the choice that gates starting. Screen 1
+                            is how an exam works here; this is what this one asks
+                            of you, and it is the last thing read before Start.
+
+                            Two columns from lg: the paper's own instructions run
+                            full width above, the format and marking cards sit
+                            side by side under them. */}
+                        <div className="grid items-start gap-5 lg:grid-cols-2">
+                        {displayExamInstruction ? (
+                            <div className="lg:col-span-2 rounded-xl border border-[#6C3EF4]/20 bg-[#6C3EF4]/5 p-4 space-y-2">
                                 <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
                                     <ClipboardList className="h-4 w-4 text-[#A855F7]" />
                                     Exam Instructions
                                 </h3>
-                                <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{displayExamInstruction}</p>
+                                <InstructionText
+                                    text={displayedExamInstruction}
+                                    className="max-w-4xl text-sm text-muted-foreground leading-relaxed"
+                                />
+                            </div>
+                        ) : (
+                            // No exam-specific instructions on this paper. Say so
+                            // rather than opening screen 2 on the format card with
+                            // no explanation of what happened to the instructions.
+                            <div className="lg:col-span-2 rounded-xl border border-border/60 bg-muted/30 p-4 space-y-2">
+                                <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
+                                    <ListChecks className="h-4 w-4 text-[#A855F7]" />
+                                    You're ready to begin
+                                </h3>
+                                <p className="text-sm text-muted-foreground leading-relaxed">
+                                    This paper has no instructions of its own beyond the general ones on the
+                                    previous screen. The clock starts when you press {isPreview ? "Preview" : "Start"}.
+                                </p>
                             </div>
                         )}
 
@@ -593,10 +738,9 @@ const ExamIntro = () => {
                                 )}
                             </div>
                         )}
-
                         {/* Language Selection for Multi-Language Exams */}
                         {isMultiLang && (
-                            <div className="rounded-xl border border-border/60 bg-secondary/30 p-4 space-y-3">
+                            <div className="lg:col-span-2 rounded-xl border border-border/60 bg-secondary/30 p-4 space-y-3">
                                 <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
                                     <Globe className="h-4 w-4 text-[#6C3EF4]" />
                                     Choose Your Language
@@ -637,19 +781,86 @@ const ExamIntro = () => {
                             </div>
                         )}
 
-                        {/* Start button */}
-                        <div className="pt-2 border-t border-border/40">
-                            <button
-                                onClick={handleStartExam}
-                                disabled={allSections.length === 0 || (isMultiLang && !selectedLanguage)}
-                                className="w-full h-12 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-base shadow-lg shadow-[#6C3EF4]/30 hover:shadow-xl hover:shadow-[#6C3EF4]/40 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
-                            >
-                                {isPreview ? <Eye className="h-5 w-5" /> : <BookOpen className="h-5 w-5" />}
-                                {isMultiLang && !selectedLanguage
-                                    ? (isPreview ? "Select a Language to Preview" : "Select a Language to Start")
-                                    : (isPreview ? "Preview Exam" : "Start Exam")}
-                            </button>
+                        {/* Declaration — the last thing on the last screen, and
+                            the gate on Start. */}
+                        <div
+                            className={`lg:col-span-2 rounded-xl border p-4 transition-colors ${
+                                accepted
+                                    ? "border-[#6C3EF4]/30 bg-[#6C3EF4]/[0.05]"
+                                    : "border-border/60 bg-muted/30"
+                            }`}
+                        >
+                            <label htmlFor="exam-declaration" className="flex items-start gap-3 cursor-pointer">
+                                <Checkbox
+                                    id="exam-declaration"
+                                    checked={accepted}
+                                    onCheckedChange={(next) => setAccepted(next === true)}
+                                    className="mt-0.5 shrink-0"
+                                />
+                                <span className="text-sm leading-relaxed text-muted-foreground">
+                                    <span className="font-semibold text-foreground">Declaration. </span>
+                                    I have read and understood all the instructions above. I agree not to
+                                    communicate with anyone, or use any unfair means, while this exam is in
+                                    progress. I understand that using unfair means of any kind — for my own
+                                    or anyone else's advantage — will lead to this attempt being
+                                    disqualified, and that MockSetu's decision in such matters is final.
+                                </span>
+                            </label>
                         </div>
+
+                        </div>
+                        </>
+                      )}
+                      </div>
+                    </div>
+
+                    {/* Locked footer. Outside the scrolling body, so Next and Back
+                        are on the screen at the same place on both steps however
+                        long the instructions run. */}
+                    <div className="shrink-0 border-t border-border/60 bg-foreground/[0.02] px-4 py-3 sm:px-6">
+                      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3">
+                        {step === 0 ? (
+                            <>
+                                <p className="min-w-0 text-xs text-muted-foreground">
+                                    <span className="hidden sm:inline">Read the general instructions, then continue.</span>
+                                    <span className="sm:hidden">Then continue.</span>
+                                </p>
+                                <Button
+                                    onClick={() => setStep(1)}
+                                    className="shrink-0 h-11 px-6 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold shadow-lg shadow-[#6C3EF4]/30"
+                                >
+                                    Next
+                                    <ChevronRight className="h-4 w-4 ml-1.5" />
+                                </Button>
+                            </>
+                        ) : (
+                            <>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setStep(0)}
+                                    className="shrink-0 h-11 rounded-xl"
+                                >
+                                    <ChevronLeft className="h-4 w-4 mr-1.5" />
+                                    Back
+                                </Button>
+                                <div className="flex min-w-0 items-center justify-end gap-3">
+                                    {blockedReason && (
+                                        <p className="hidden sm:block text-xs text-muted-foreground">
+                                            {blockedReason}
+                                        </p>
+                                    )}
+                                    <button
+                                        onClick={handleStartExam}
+                                        disabled={!canStart}
+                                        className="shrink-0 h-11 px-6 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-base shadow-lg shadow-[#6C3EF4]/30 hover:shadow-xl hover:shadow-[#6C3EF4]/40 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
+                                    >
+                                        {isPreview ? <Eye className="h-5 w-5" /> : <BookOpen className="h-5 w-5" />}
+                                        {isPreview ? "Preview Exam" : "Start Exam"}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                      </div>
                     </div>
                 </div>
             </div>

@@ -407,6 +407,29 @@ const GEN = readSrc("components/exam/GenerateExamInstruction.tsx");
 const DETAIL = readSrc("pages/ExamDetail.tsx");
 const DIALOG = readSrc("components/CreateExamDialog.tsx");
 
+test("the generate action never gives up its place to Undo", () => {
+  // It used to: after a fill the button became Undo, so the one control a
+  // creator wants right then — write it again, now that the paper has changed —
+  // was gone until they edited the field to withdraw the offer.
+  const generateBranch = GEN.slice(GEN.indexOf("if (busy)"));
+  assert(
+    generateBranch.indexOf("onClick={generate}") < generateBranch.indexOf("canUndo &&"),
+    "the action renders first and unconditionally; Undo stands beside it, not in its place"
+  );
+  assert(
+    /\{value\.trim\(\) \? "Regenerate" : "Generate from exam"\}/.test(GEN),
+    "a field with text is being rewritten, and the label should say so"
+  );
+});
+
+test("filling an empty field is offered no undo", () => {
+  const HOOK = readSrc("components/exam/useUndoableFill.ts");
+  assert(
+    /canUndo: filled !== null && \(previous \?\? ""\)\.trim\(\) !== ""/.test(HOOK),
+    "'put back what was here before' must not mean 'empty the box I just filled'"
+  );
+});
+
 test("the editor counts questions with the runner's own filter", () => {
   assert(
     /\.select\("id, section_id, answer_type"\)[\s\S]{0,80}\.eq\("is_excluded", false\)/.test(DETAIL),

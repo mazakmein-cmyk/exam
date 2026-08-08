@@ -16,8 +16,13 @@
  *    anything typed during that flight belongs in the snapshot, not in the
  *    bin. Taken after the write, the "restore point" would be the new text
  *    and Undo would do nothing.
- *  • While the snapshot is held, the caller renders an Undo button; undo()
- *    writes the snapshot back and forgets it.
+ *  • While the snapshot is held AND it holds something worth restoring, the
+ *    caller renders an Undo button; undo() writes the snapshot back and forgets
+ *    it. Filling an empty field is not offered an undo: "put back what was here
+ *    before" is a promise to restore nothing, and a control that empties the box
+ *    it just filled reads as broken. It also cost the creator the only action
+ *    that matters at that moment, since Undo used to replace the fill button
+ *    rather than stand beside it.
  *  • The offer withdraws itself on the first edit to the filled text. From
  *    then on Undo would discard the creator's words to restore ours — the same
  *    label doing the opposite thing.
@@ -89,8 +94,11 @@ export function useUndoableFill({ lang, value, onFill }: Args) {
   };
 
   return {
-    /** True while Undo should be the button. */
-    canUndo: filled !== null,
+    /**
+     * True while Undo is worth offering: a snapshot is held AND it has text to
+     * put back. Restoring an empty field is not an undo, it is a delete.
+     */
+    canUndo: filled !== null && (previous ?? "").trim() !== "",
     fill,
     undo,
   };

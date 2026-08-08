@@ -61,6 +61,13 @@ export type InstructionTemplate = {
  *       other mode makes the sentence idle, never wrong.
  * Anything tied to ONE exam's configuration (its sections, its marks, its
  * languages) is banned from here; that is the generated Exam Instruction's job.
+ *
+ * THE PALETTE LEGEND uses tile tokens, not colour words: a line beginning
+ * `[green]` / `[purple]` / `[red]` / `[plain]` is rendered by InstructionText
+ * (the intro page's renderer) as the palette's own colour tile beside the
+ * text — the way every big platform draws this legend. The tokens are syntax,
+ * identical in every language; anywhere without the renderer (the editor's
+ * textarea, an export) they degrade to a readable label, never garbage.
  */
 export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
@@ -74,10 +81,10 @@ export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
         "2. The countdown timer at the top of the screen shows your remaining time. When it reaches zero, the exam is submitted by itself — you do not need to do anything. The timer turns red and a warning appears when 5 minutes remain.",
         "",
         "3. The question palette shows the status of every question:",
-        "   • Green: you have answered the question.",
-        "   • Purple: you have viewed the question but not answered it.",
-        "   • Red: you have marked the question for review.",
-        "   • Plain: you have not visited the question yet.",
+        "   [green] You have answered the question.",
+        "   [purple] You have viewed the question but not answered it.",
+        "   [red] You have marked the question for review.",
+        "   [plain] You have not visited the question yet.",
         "",
         "4. Mark for Review simply flags a question you want to look at again. If a marked question has an answer selected, that answer IS counted in the evaluation — red does not mean unanswered.",
         "",
@@ -104,10 +111,10 @@ export const GENERAL_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
         "2. स्क्रीन के ऊपर दिख रहा काउंटडाउन टाइमर आपका शेष समय दिखाता है। टाइमर शून्य होते ही परीक्षा अपने आप सबमिट हो जाएगी — आपको कुछ करने की ज़रूरत नहीं। 5 मिनट शेष रहने पर टाइमर लाल हो जाता है और चेतावनी दिखाई देती है।",
         "",
         "3. प्रश्न पैलेट हर प्रश्न की स्थिति दिखाता है:",
-        "   • हरा: आपने प्रश्न का उत्तर दे दिया है।",
-        "   • बैंगनी: आपने प्रश्न देखा है, पर उत्तर नहीं दिया।",
-        "   • लाल: आपने प्रश्न समीक्षा के लिए चिह्नित किया है।",
-        "   • सादा: आपने प्रश्न अभी देखा ही नहीं है।",
+        "   [green] आपने प्रश्न का उत्तर दे दिया है।",
+        "   [purple] आपने प्रश्न देखा है, पर उत्तर नहीं दिया।",
+        "   [red] आपने प्रश्न समीक्षा के लिए चिह्नित किया है।",
+        "   [plain] आपने प्रश्न अभी देखा ही नहीं है।",
         "",
         "4. Mark for Review केवल यह बताता है कि आप उस प्रश्न को दोबारा देखना चाहते हैं। यदि चिह्नित प्रश्न में उत्तर चुना गया है, तो वह उत्तर मूल्यांकन में गिना जाएगा — लाल का अर्थ अनुत्तरित नहीं है।",
         "",

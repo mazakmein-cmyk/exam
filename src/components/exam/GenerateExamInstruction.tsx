@@ -132,15 +132,6 @@ export default function GenerateExamInstruction({
     }
   };
 
-  if (canUndo) {
-    return (
-      <button type="button" onClick={undo} className={FILL_ACTION_CLASS} title="Put back what was here before">
-        <RotateCcw className="h-3 w-3" />
-        Undo
-      </button>
-    );
-  }
-
   if (busy) {
     return (
       <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] font-semibold text-muted-foreground">
@@ -150,15 +141,33 @@ export default function GenerateExamInstruction({
     );
   }
 
+  // Generating is the action; Undo is at most a companion to it. It used to
+  // REPLACE this button after a fill, which took the only useful control away at
+  // the one moment a creator wants it — they have just seen the text and want it
+  // written again against a paper they have since changed. Now the action always
+  // stands, named for what it will do to a field that already has text.
   return (
-    <button
-      type="button"
-      onClick={generate}
-      className={FILL_ACTION_CLASS}
-      title={value.trim() ? titles.replace : titles.fill}
-    >
-      <Sparkles className="h-3 w-3" />
-      Generate from exam
-    </button>
+    <span className="inline-flex shrink-0 items-center gap-0.5">
+      <button
+        type="button"
+        onClick={generate}
+        className={FILL_ACTION_CLASS}
+        title={value.trim() ? titles.replace : titles.fill}
+      >
+        <Sparkles className="h-3 w-3" />
+        {value.trim() ? "Regenerate" : "Generate from exam"}
+      </button>
+      {canUndo && (
+        <button
+          type="button"
+          onClick={undo}
+          className={`${FILL_ACTION_CLASS} text-muted-foreground hover:bg-muted hover:text-foreground`}
+          title="Put back what was here before"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Undo
+        </button>
+      )}
+    </span>
   );
 }

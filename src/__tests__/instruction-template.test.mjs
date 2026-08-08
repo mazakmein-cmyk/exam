@@ -283,15 +283,61 @@ test("the template is the full exam-hall sheet, and Hindi promises everything En
     numbered(en) === numbered(hi),
     `en makes ${numbered(en)} numbered promises, hi makes ${numbered(hi)} — a shorter list quietly tells Hindi candidates less`
   );
-  // The palette legend must state OUR runner's colours. Green/purple/red/plain
-  // is ExamSimulator's legend; the NTA sheet this format borrows from uses
-  // different colours and different mechanics.
-  for (const colour of ["Green:", "Purple:", "Red:", "Plain:"]) {
-    assert(en.includes(colour), `the palette legend must explain the ${colour.slice(0, -1)} state`);
+  // The palette legend must cover OUR runner's four states, written as tile
+  // tokens — identical syntax in every language, rendered as colour swatches
+  // by InstructionText on the intro page.
+  for (const token of ["[green]", "[purple]", "[red]", "[plain]"]) {
+    assert(en.includes(token), `the en legend must carry the ${token} tile line`);
+    assert(hi.includes(token), `the hi legend must carry the ${token} tile line — tokens are syntax, not prose`);
   }
   assert(
     en.includes("never discards an answer") && en.includes("Clear Response"),
     "this runner saves on click and clears via Clear Response — copying NTA's 'Next to save' mechanics would teach candidates false fear"
+  );
+});
+
+// ─── [7] The legend renders as tiles, not colour words ──────────────────────
+console.log("\n[7] Palette legend tiles");
+
+const TILES = readSrc("components/exam/InstructionText.tsx");
+const INTRO = readSrc("pages/ExamIntro.tsx");
+const SIM = readSrc("pages/ExamSimulator.tsx");
+
+test("the tile colours are the runner's own legend, class for class", () => {
+  // A legend that disagrees with the palette is worse than text. These are
+  // the exact classes ExamSimulator's legend swatches use.
+  for (const cls of ['"bg-green-500"', '"bg-purple-500"', '"bg-red-500"', '"bg-background border border-border"']) {
+    assert(TILES.includes(`: ${cls}`) || TILES.includes(`:${cls}`), `InstructionText must map a token to ${cls}`);
+    assert(SIM.includes(cls.replace(/"/g, '"').slice(1, -1)), `sanity: ${cls} should still be what the runner's legend uses`);
+  }
+});
+
+test("only the four known tokens are special; everything else stays pre-wrap text", () => {
+  assert(
+    TILES.includes("(green|purple|red|plain)"),
+    "the token set is closed — a creator's own [brackets] must not become mystery tiles"
+  );
+  assert(
+    /whitespace-pre-wrap/.test(TILES),
+    "non-tile lines must render exactly as the bare <p> used to render them"
+  );
+});
+
+test("the intro renders both instruction blocks through the tile renderer", () => {
+  assert(
+    /InstructionText[\s\S]{0,120}text=\{displayGeneralInstruction\}/.test(INTRO),
+    "the general instructions carry the legend — a bare <p> would print the tokens raw"
+  );
+  assert(
+    /InstructionText[\s\S]{0,120}text=\{displayedExamInstruction\}/.test(INTRO),
+    "the exam instructions get the same renderer, so a creator pasting legend lines there is not punished"
+  );
+});
+
+test("the tile speaks its colour to screen readers", () => {
+  assert(
+    /aria-hidden="true"/.test(TILES) && /sr-only/.test(TILES),
+    "the colour IS information — 'red means marked' — and the swatch is the only place it lives once the colour word is gone"
   );
 });
 

@@ -449,3 +449,86 @@ export function generateExamInstruction(facts, lang = "en") {
 
   return lines.map((line, i) => `${i + 1}. ${line}`).join("\n");
 }
+
+/**
+ * A regex matching whatever `build` produces, with its interpolated values
+ * wild. Built from the copy pack itself rather than hand-written, so a reworded
+ * sentence can never leave a matcher quietly checking for text that no longer
+ * exists.
+ * @param {(...args: string[]) => string} build
+ * @param {number} arity
+ */
+function shapeMatcher(build, arity) {
+  const SENTINEL = "\u0001";
+  const literal = build(...Array.from({ length: arity }, () => SENTINEL));
+  const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("^" + escaped.split(SENTINEL).join("[\\s\\S]+?") + "$");
+}
+
+/** Every shape timingLine can emit, for one copy pack. */
+function timingShapes(t) {
+  return [
+    shapeMatcher((m) => t.paperClock(m), 1),
+    shapeMatcher((m) => `${t.freeClock(m)} ${t.freeMove}`, 1),
+    shapeMatcher(() => t.freeMove, 0),
+    shapeMatcher((parts, total) => `${t.lockedKnown(parts, total)} ${t.lockedOrder}`, 2),
+    shapeMatcher(() => `${t.lockedUnknown} ${t.lockedOrder}`, 0),
+  ];
+}
+
+/**
+ * Bring a stored instruction's timing sentence back in line with the paper.
+ *
+ * Why this exists
+ * ---------------
+ * Generation is a snapshot. "You have 155 minutes for the whole paper. All
+ * sections share one clock." is true when written and false the moment section
+ * switching is turned off — but the sentence is now sitting in a column,
+ * telling a candidate a number they will not get, directly above the panel that
+ * states the real one. Warning the creator helps the next paper; it does not
+ * help the candidate reading this one today.
+ *
+ * Why it is safe to rewrite someone's prose
+ * -----------------------------------------
+ * It only ever rewrites a line it can prove this engine wrote: the line has to
+ * match one of the shapes timingLine emits, in the same language, with only the
+ * numbers and section names wild. A creator's own sentence about timing matches
+ * nothing here and is left exactly as typed — they are then told about it in the
+ * editor instead, which is the only place it can actually be fixed.
+ *
+ * The line is replaced, never deleted, and keeps its "2. " numbering, so the
+ * list a candidate reads is the same length and shape it always was.
+ *
+ * @param {string} text   The stored instruction copy.
+ * @param {ExamFacts} facts  The paper as it is NOW.
+ * @param {string} lang
+ * @returns {{ text: string, changed: boolean }}
+ */
+export function reconcileTimingLine(text, facts, lang = "en") {
+  const unchanged = { text, changed: false };
+  if (typeof text !== "string" || !text.trim()) return unchanged;
+  if (!canGenerateFor(lang)) return unchanged;
+  if (!facts || !Array.isArray(facts.sections) || facts.sections.length === 0) return unchanged;
+
+  const t = COPY[lang];
+  const current = timingLine(facts, t);
+  // Nothing to say about this paper's timing — leave what is there rather than
+  // silently deleting a sentence we cannot replace.
+  if (current === null) return unchanged;
+
+  const shapes = timingShapes(t);
+  let changed = false;
+
+  const out = text.split("\n").map((line) => {
+    // Keep the numbering prefix: this is one line of a numbered list.
+    const parts = line.match(/^(\s*\d+[.)]\s*)?([\s\S]*)$/);
+    const prefix = parts[1] || "";
+    const body = parts[2].trim();
+    if (!body || body === current) return line;
+    if (!shapes.some((shape) => shape.test(body))) return line;
+    changed = true;
+    return `${prefix}${current}`;
+  });
+
+  return changed ? { text: out.join("\n"), changed: true } : unchanged;
+}

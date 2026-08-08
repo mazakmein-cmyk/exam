@@ -82,6 +82,8 @@ import GenerateExamInstruction, { type ExamFacts } from "@/components/exam/Gener
 import { rowsForText } from "@/lib/instructionTemplates";
 import { navigationCopyPatch, readNavigationSettings, saveNavigationSettings } from "@/lib/examSettings";
 import { sumSectionMinutes } from "@/lib/examNavigation.js";
+import { auditInstructionTiming, describeTimingDrift } from "@/lib/instructionTimingAudit.js";
+import { reconcileTimingLine } from "@/lib/examInstructionEngine.js";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -282,6 +284,43 @@ export default function ExamDetail() {
     }
     return m;
   }, [questions, marksModule.resolveQuestionConfig]);
+
+  /**
+   * Does the written Exam Instruction still describe this paper's clock?
+   *
+   * Timing only, and deliberately: how the paper is timed lives in this page's
+   * own state, so the check needs no fetch and can never be stale itself. The
+   * counts and marking the generator also writes would need the same round trip
+   * generation needs — see GenerateExamInstruction on why it shows no
+   * "up to date" tick.
+   */
+  const timingDrift = useMemo(() => {
+    const text = examSpecificInstructionTrans[activeLanguage] || "";
+    const drift = describeTimingDrift(
+      auditInstructionTiming(text, {
+        allowSectionSwitching,
+        totalMinutes: totalTimeMinutes,
+        sectionMinutes: sections.map((s) => s.time_minutes),
+      })
+    );
+    if (!drift) return null;
+    // Whether the intro can fix this sentence for candidates on the fly, which
+    // decides what to ask of the creator: regenerate the whole text, or edit a
+    // sentence only they can rewrite.
+    const { changed: autoCorrected } = reconcileTimingLine(
+      text,
+      {
+        sections: sections.map((s) => ({ name: s.name, minutes: s.time_minutes, questionCount: null })),
+        allowSectionSwitching,
+        totalMinutes: totalTimeMinutes,
+        marking: null,
+        answerTypes: null,
+        languageNames: null,
+      },
+      activeLanguage
+    );
+    return { drift, autoCorrected };
+  }, [examSpecificInstructionTrans, activeLanguage, allowSectionSwitching, totalTimeMinutes, sections]);
 
   // ── "Generate from exam" on the Exam Instruction field ──────────────────
   // The facts the engine wants are NOT all in this page's state: `questions`
@@ -3300,6 +3339,23 @@ export default function ExamDetail() {
                     rows={rowsForText(examSpecificInstructionTrans[activeLanguage] || "", 4, 16, 40)}
                     placeholder={`Specific instructions for the exam in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
+
+                  {/* Generated text is a snapshot; the paper keeps moving. Flipping
+                      the mode already toasts about this, but a toast is gone in
+                      four seconds and the wrong sentence stays for months — and
+                      the student sees it next to the panel that contradicts it. */}
+                  {timingDrift && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <p className="text-[11px] leading-snug text-muted-foreground">
+                        <span className="font-semibold text-foreground">Out of date. </span>
+                        {timingDrift.drift}{" "}
+                        {timingDrift.autoCorrected
+                          ? "Candidates are shown the corrected sentence, but the counts and marking in this text may be stale too — Generate from exam to refresh all of it."
+                          : "This wording is yours, so it is shown to candidates exactly as written. Edit it, or use Generate from exam."}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
               </CardContent>
