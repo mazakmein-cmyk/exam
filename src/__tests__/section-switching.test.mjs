@@ -686,7 +686,10 @@ test("a creator's own wording is never rewritten", () => {
 test("the creator's preview is the candidate's screen, with no extra notes", () => {
   const intro = readSrc("pages/ExamIntro.tsx");
   assertContains(intro, "reconcileTimingLine(", "the intro corrects the sentence for everyone");
-  assertContains(intro, "{displayedExamInstruction}", "and renders the corrected copy");
+  // The corrected copy flows on through the table dedup (dropShapeLine) and is
+  // rendered as shownExamInstruction — same text, same correction, one pipeline.
+  assertContains(intro, "dropShapeLine(displayedExamInstruction", "and renders the corrected copy");
+  assertContains(intro, "text={shownExamInstruction}", "and renders the corrected copy");
   assert(
     !intro.includes("Only you can see this."),
     "a preview that shows the creator something the candidate cannot see is not a preview"

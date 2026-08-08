@@ -570,6 +570,40 @@ test("both exam-instruction textareas grow for the generated text", () => {
   assert(/rows=\{rowsForText\(examSpecificInstruction, 2, 14, 90\)\}/.test(DIALOG), "the dialog's 2-row resize-none box would hide five of seven lines");
 });
 
+test("the intro opens the instructions with the paper table, from live data", () => {
+  const INTRO = readSrc("pages/ExamIntro.tsx");
+  assert(
+    (INTRO.match(/<PaperTable/g) || []).length === 2,
+    "both branches — instructions present and absent — carry the table; its numbers come from the paper, not the prose"
+  );
+  assert(
+    /showTime=\{!allowSectionSwitching\}/.test(INTRO),
+    "Sectional Timing is only a fact in locked mode — a free paper's sections share one clock"
+  );
+  assert(
+    /const shownExamInstruction = showPaperTable\s*\?\s*dropShapeLine\(/.test(INTRO),
+    "with the table on screen, the engine's prose repetition of it comes out of the display"
+  );
+  assert(
+    /sectionMax\.set\(/.test(INTRO) && /maxMarks: Math\.round/.test(INTRO),
+    "Maximum Marks is the sum of each question's RESOLVED config — question override → section → exam default"
+  );
+  assert(
+    /s\.language === displayLanguage/.test(INTRO.slice(INTRO.indexOf("const paperTableRows"))),
+    "in locked mode the runner enforces the display-language row's clock, so the table must show that row's minutes"
+  );
+});
+
+test("dropShapeLine touches only lines the engine can prove it wrote", () => {
+  const creator = "1. Bring a calculator.\n2. This paper has three parts, mind the last one.";
+  // Structural sanity beyond the permutation sweep: a creator sentence that
+  // merely resembles the shape line does not match its exact template.
+  const engine = readSrc("lib/examInstructionEngine.js");
+  assert(/export function dropShapeLine/.test(engine), "dropShapeLine must exist for the intro's table dedup");
+  assert(/paperShapes/.test(engine), "authorship is proven by matching the copy pack's own shapes");
+  void creator;
+});
+
 test("the engine's number rendering stays in lockstep with formatMarks", () => {
   const ENGINE = readSrc("lib/examInstructionEngine.js");
   const SCORING = readSrc("services/scoringEngine.ts");

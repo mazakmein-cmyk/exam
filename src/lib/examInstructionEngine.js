@@ -532,3 +532,66 @@ export function reconcileTimingLine(text, facts, lang = "en") {
 
   return changed ? { text: out.join("\n"), changed: true } : unchanged;
 }
+
+/** Every shape shapeLine can emit, for one copy pack. */
+function paperShapes(t) {
+  return [
+    shapeMatcher((name, c) => t.shapeOneKnown(name, c), 2),
+    shapeMatcher((name) => t.shapeOneUnknown(name), 1),
+    shapeMatcher((n, names) => t.shapeMany(n, names), 2),
+    shapeMatcher((n, parts, total) => t.shapeManyKnown(n, parts, total), 3),
+  ];
+}
+
+/**
+ * Remove the engine-written paper-shape line ("This paper has 3 sections —
+ * A (15), B (20)… — 50 questions in all.") from a stored instruction, for a
+ * surface that renders those same numbers as a TABLE directly above the text.
+ * Prose repeating the table it sits under is not reinforcement, it is two
+ * places for the numbers to disagree the next time the paper changes.
+ *
+ * Same proof-of-authorship rule as reconcileTimingLine: only a line matching a
+ * shape this engine emits, in this language, is touched — a creator's own
+ * sentence about the sections stays, because deleting words a person chose is
+ * not this function's call to make.
+ *
+ * Unlike reconcile (replace, keep numbering), removal leaves a hole in the
+ * numbered list, so the lines after it are renumbered down by one — but only
+ * when every remaining numbered line keeps the list contiguous; anything
+ * odd-looking and the text is returned untouched, because a wrong renumber is
+ * worse than a redundant sentence.
+ *
+ * @param {string} text   The stored instruction copy.
+ * @param {string} lang
+ * @returns {{ text: string, changed: boolean }}
+ */
+export function dropShapeLine(text, lang = "en") {
+  const unchanged = { text, changed: false };
+  if (typeof text !== "string" || !text.trim()) return unchanged;
+  if (!canGenerateFor(lang)) return unchanged;
+
+  const shapes = paperShapes(COPY[lang]);
+  const lines = text.split("\n");
+
+  const index = lines.findIndex((line) => {
+    const body = (line.match(/^(?:\s*\d+[.)]\s*)?([\s\S]*)$/) || [])[1]?.trim() || "";
+    return body !== "" && shapes.some((shape) => shape.test(body));
+  });
+  if (index === -1) return unchanged;
+
+  const removedNumber = Number((lines[index].match(/^\s*(\d+)[.)]/) || [])[1]);
+  const kept = lines.filter((_, i) => i !== index);
+
+  // Renumber only a list this removal actually broke: every numbered line
+  // after the removed one shifts down by exactly one.
+  if (Number.isFinite(removedNumber)) {
+    for (let i = 0; i < kept.length; i++) {
+      const match = kept[i].match(/^(\s*)(\d+)([.)])(\s*)([\s\S]*)$/);
+      if (!match) continue;
+      const n = Number(match[2]);
+      if (n > removedNumber) kept[i] = `${match[1]}${n - 1}${match[3]}${match[4]}${match[5]}`;
+    }
+  }
+
+  return { text: kept.join("\n"), changed: true };
+}

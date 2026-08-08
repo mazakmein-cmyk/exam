@@ -11,7 +11,7 @@ import { getExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/exa
 import CreatorExamBlocked from "@/components/CreatorExamBlocked";
 import InstructionText from "@/components/exam/InstructionText";
 import { readNavigationSettings } from "@/lib/examSettings";
-import { reconcileTimingLine } from "@/lib/examInstructionEngine.js";
+import { dropShapeLine, reconcileTimingLine } from "@/lib/examInstructionEngine.js";
 import { sumSectionMinutes, totalExamMinutes } from "@/lib/examNavigation.js";
 
 const AVAILABLE_LANGUAGES = [
@@ -42,6 +42,83 @@ type SectionMarkingDisplay = {
     namesByLanguage: Record<string, string>;
     questionCount: number;
     config: ScoringConfig | null;
+    /** Sum of resolved marks_correct over the section's questions — the paper table's Marks column. */
+    maxMarks: number;
+};
+
+/**
+ * The paper at a glance — the table every big platform opens its exam
+ * instructions with: one row per section, questions, maximum marks, and (for
+ * papers sat one section at a time) each section's clock. Built from LIVE exam
+ * data at view time, never parsed out of the stored instruction text, so it
+ * cannot go stale the way prose does; the engine-written sentence repeating
+ * these numbers is dropped from display while the table is present
+ * (dropShapeLine), leaving the prose to say what a table cannot.
+ *
+ * Columns appear only when they have something true to show: Maximum Marks
+ * needs a marking scheme somewhere on the paper, Sectional Timing is only a
+ * fact in locked mode (a free paper's sections share one clock, stated in
+ * prose), and a section with no clock set shows — rather than a number the
+ * runner would not enforce.
+ */
+type PaperTableRow = { name: string; questions: number; maxMarks: number; minutes: number | null };
+
+const PAPER_TABLE_LABELS: Record<string, { sl: string; section: string; questions: string; marks: string; time: string; total: string; min: string }> = {
+    en: { sl: "Sl No.", section: "Section Name", questions: "No. of Questions", marks: "Maximum Marks", time: "Sectional Timing", total: "Total", min: "min" },
+    hi: { sl: "क्रम", section: "खंड का नाम", questions: "प्रश्नों की संख्या", marks: "अधिकतम अंक", time: "खंड का समय", total: "कुल", min: "मिनट" },
+};
+
+const PaperTable = ({ rows, lang, showTime }: { rows: PaperTableRow[]; lang: string; showTime: boolean }) => {
+    const labels = PAPER_TABLE_LABELS[lang] ?? PAPER_TABLE_LABELS.en;
+    const showMarks = rows.some((r) => r.maxMarks > 0);
+    const allTimed = rows.every((r) => r.minutes !== null);
+    const cell = "border border-border/60 px-3 py-2";
+    return (
+        <div className="overflow-x-auto rounded-lg border border-border/60">
+            <table className="w-full min-w-[26rem] border-collapse text-sm">
+                <thead>
+                    <tr className="bg-[#6C3EF4]/10 text-left text-foreground">
+                        <th className={`${cell} font-semibold`}>{labels.sl}</th>
+                        <th className={`${cell} font-semibold`}>{labels.section}</th>
+                        <th className={`${cell} font-semibold`}>{labels.questions}</th>
+                        {showMarks && <th className={`${cell} font-semibold`}>{labels.marks}</th>}
+                        {showTime && <th className={`${cell} font-semibold`}>{labels.time}</th>}
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.map((r, i) => (
+                        <tr key={i} className={i % 2 === 1 ? "bg-muted/40" : "bg-card"}>
+                            <td className={`${cell} tabular-nums`}>{i + 1}</td>
+                            <td className={cell}>{r.name}</td>
+                            <td className={`${cell} tabular-nums`}>{r.questions}</td>
+                            {showMarks && <td className={`${cell} tabular-nums`}>{formatMarks(r.maxMarks)}</td>}
+                            {showTime && (
+                                <td className={`${cell} tabular-nums`}>
+                                    {r.minutes !== null ? `${r.minutes} ${labels.min}` : "—"}
+                                </td>
+                            )}
+                        </tr>
+                    ))}
+                    {rows.length > 1 && (
+                        <tr className="bg-muted/60 font-semibold text-foreground">
+                            <td className={cell} colSpan={2}>{labels.total}</td>
+                            <td className={`${cell} tabular-nums`}>{rows.reduce((n, r) => n + r.questions, 0)}</td>
+                            {showMarks && (
+                                <td className={`${cell} tabular-nums`}>
+                                    {formatMarks(Math.round(rows.reduce((n, r) => n + r.maxMarks, 0) * 100) / 100)}
+                                </td>
+                            )}
+                            {showTime && (
+                                <td className={`${cell} tabular-nums`}>
+                                    {allTimed ? `${rows.reduce((n, r) => n + (r.minutes || 0), 0)} ${labels.min}` : "—"}
+                                </td>
+                            )}
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
+    );
 };
 
 const ExamIntro = () => {
@@ -262,11 +339,10 @@ const ExamIntro = () => {
                             namesByLanguage: namesByLang,
                             questionCount: questionCounts.get(s.id) || 0,
                             config: effective,
+                            maxMarks: 0, // filled below, once per-question overrides are resolved
                         };
                     })
                     .filter((sm: SectionMarkingDisplay) => sm.questionCount > 0);
-
-                setSectionMarking(sectionMarkingArr);
 
                 // Section-level variation: do any two sections have different effective configs?
                 const configsAreEqual = (a: ScoringConfig | null, b: ScoringConfig | null) => {
@@ -291,9 +367,11 @@ const ExamIntro = () => {
                 // question's effective scoring config (question override → section
                 // override → exam default). Questions with no config at any level
                 // contribute 0 and are flagged as unscored so the student is warned
-                // about partial coverage on the intro screen.
+                // about partial coverage on the intro screen. Per-section subtotals
+                // ride along for the paper table's Maximum Marks column.
                 let computedTotalMax = 0;
                 let computedUnscored = 0;
+                const sectionMax = new Map<string, number>();
                 for (const q of allQuestionRows) {
                     const effective =
                         questionConfigs.get(q.id) ??
@@ -301,10 +379,20 @@ const ExamIntro = () => {
                         fallbackFromExam;
                     if (effective) {
                         computedTotalMax += effective.marks_correct;
+                        sectionMax.set(
+                            q.section_id,
+                            (sectionMax.get(q.section_id) || 0) + effective.marks_correct
+                        );
                     } else {
                         computedUnscored++;
                     }
                 }
+                setSectionMarking(
+                    sectionMarkingArr.map((sm) => ({
+                        ...sm,
+                        maxMarks: Math.round((sectionMax.get(sm.primarySectionId) || 0) * 100) / 100,
+                    }))
+                );
                 setTotalMaxMarks(Math.round(computedTotalMax * 100) / 100);
                 setTotalQuestionCount(allQuestionRows.length);
                 setUnscoredQuestionCount(computedUnscored);
@@ -414,6 +502,40 @@ const ExamIntro = () => {
         },
         displayLanguage
     ).text;
+
+    // The paper table's rows, in the candidate's language. sectionMarking is
+    // keyed by PRIMARY-language section ids (that is where counts and marks
+    // live); the name and the clock come from the display language's own row,
+    // because in locked mode the runner enforces THAT row's time_minutes.
+    const paperTableRows: PaperTableRow[] = sectionMarking.map((sm) => {
+        const primary = allSections.find((s: any) => s.id === sm.primarySectionId);
+        const displayRow = primary?.section_group_id
+            ? allSections.find(
+                  (s: any) =>
+                      s.section_group_id === primary.section_group_id &&
+                      s.language === displayLanguage
+              ) ?? primary
+            : primary;
+        const minutes = Number(displayRow?.time_minutes);
+        return {
+            name:
+                sm.namesByLanguage[displayLanguage] ??
+                sm.namesByLanguage[primaryLanguage] ??
+                displayRow?.name ??
+                "",
+            questions: sm.questionCount,
+            maxMarks: sm.maxMarks,
+            minutes: Number.isFinite(minutes) && minutes > 0 ? Math.floor(minutes) : null,
+        };
+    });
+    const showPaperTable = paperTableRows.length > 0;
+
+    // With the table on screen, the engine's prose repetition of its numbers
+    // comes out of the display (and only engine-written lines — dropShapeLine
+    // proves authorship the same way reconcileTimingLine does).
+    const shownExamInstruction = showPaperTable
+        ? dropShapeLine(displayedExamInstruction, displayLanguage).text
+        : displayedExamInstruction;
 
     // Everything that has to be true before the clock can start, and — when one
     // of them is not — what to say about it. A disabled button with no stated
@@ -566,25 +688,43 @@ const ExamIntro = () => {
                             side by side under them. */}
                         <div className="grid items-start gap-5 lg:grid-cols-2">
                         {displayExamInstruction ? (
-                            <div className="lg:col-span-2 rounded-xl border border-[#6C3EF4]/20 bg-[#6C3EF4]/5 p-4 space-y-2">
+                            <div className="lg:col-span-2 rounded-xl border border-[#6C3EF4]/20 bg-[#6C3EF4]/5 p-4 space-y-3">
                                 <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
                                     <ClipboardList className="h-4 w-4 text-[#A855F7]" />
                                     Exam Instructions
                                 </h3>
+                                {/* Sections/questions/marks/timing as a table —
+                                    live data, so it is right even when stored
+                                    prose has gone stale — with the engine's own
+                                    sentence repeating it dropped from the text. */}
+                                {showPaperTable && (
+                                    <PaperTable
+                                        rows={paperTableRows}
+                                        lang={displayLanguage}
+                                        showTime={!allowSectionSwitching}
+                                    />
+                                )}
                                 <InstructionText
-                                    text={displayedExamInstruction}
+                                    text={shownExamInstruction}
                                     className="max-w-4xl text-sm text-muted-foreground leading-relaxed"
                                 />
                             </div>
                         ) : (
-                            // No exam-specific instructions on this paper. Say so
-                            // rather than opening screen 2 on the format card with
-                            // no explanation of what happened to the instructions.
-                            <div className="lg:col-span-2 rounded-xl border border-border/60 bg-muted/30 p-4 space-y-2">
+                            // No exam-specific instructions on this paper. The
+                            // table still earns its place — its numbers come from
+                            // the paper, not the missing prose.
+                            <div className="lg:col-span-2 rounded-xl border border-border/60 bg-muted/30 p-4 space-y-3">
                                 <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
                                     <ListChecks className="h-4 w-4 text-[#A855F7]" />
                                     You're ready to begin
                                 </h3>
+                                {showPaperTable && (
+                                    <PaperTable
+                                        rows={paperTableRows}
+                                        lang={displayLanguage}
+                                        showTime={!allowSectionSwitching}
+                                    />
+                                )}
                                 <p className="text-sm text-muted-foreground leading-relaxed">
                                     This paper has no instructions of its own beyond the general ones on the
                                     previous screen. The clock starts when you press {isPreview ? "Preview" : "Start"}.

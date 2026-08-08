@@ -329,7 +329,7 @@ test("the intro renders both instruction blocks through the tile renderer", () =
     "the general instructions carry the legend — a bare <p> would print the tokens raw"
   );
   assert(
-    /InstructionText[\s\S]{0,120}text=\{displayedExamInstruction\}/.test(INTRO),
+    /InstructionText[\s\S]{0,120}text=\{shownExamInstruction\}/.test(INTRO),
     "the exam instructions get the same renderer, so a creator pasting legend lines there is not punished"
   );
 });
