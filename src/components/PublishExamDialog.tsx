@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { tableHasColumn } from "@/lib/dbFeatures";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -19,6 +20,7 @@ interface LangError {
     | "no_questions"
     | "blank_questions"
     | "invalid_question"
+    | "missing_answer"
     | "section_missing_in_lang"
     | "question_count_mismatch"
     | "empty_text_parity"
@@ -29,6 +31,41 @@ interface LangError {
   sectionId: string;
   qNos: number[];
   detail?: string;
+}
+
+/**
+ * Does this question carry a usable answer key?
+ *
+ * Stricter than a null check on purpose. A half-filled editor row or a JSON
+ * import leaves behind `"   "` and `["", ""]`, and both grade every candidate
+ * wrong exactly like a null does — scoreSCQ compares the selected option
+ * against them and never matches. Option index 0 is a real answer, so this
+ * tests for emptiness rather than falsiness.
+ */
+function hasAnswerKey(ca: unknown): boolean {
+  if (ca === null || ca === undefined) return false;
+  if (Array.isArray(ca)) {
+    return ca.some((v) => v !== null && v !== undefined && String(v).trim() !== "");
+  }
+  return String(ca).trim() !== "";
+}
+
+/**
+ * How many options would a candidate actually see?
+ *
+ * Counting `options.length` is not the same question. Draft saves and
+ * translated rows both store option slots that are blank strings, and a blank
+ * slot renders as an unlabelled button nobody can choose. An option counts when
+ * it has text OR an attached image — figure questions are legitimately
+ * text-free — so the count is over content, not slots.
+ */
+function filledOptionCount(q: any): number {
+  const opts = Array.isArray(q.options) ? q.options : [];
+  const imgs = Array.isArray(q.option_image_urls) ? q.option_image_urls : [];
+  return opts.filter((o: any, i: number) => {
+    const text = String(o ?? "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+    return text !== "" || !!imgs[i];
+  }).length;
 }
 
 interface PublishExamDialogProps {
@@ -78,6 +115,8 @@ export default function PublishExamDialog({
     setSelectedLangsForPublish([]);
 
     try {
+      const supportsOptionImages = await tableHasColumn("parsed_questions", "option_image_urls");
+
       const { data: examData } = await supabase
         .from("exams")
         .select("supported_languages, published_languages, primary_language")
@@ -124,9 +163,15 @@ export default function PublishExamDialog({
               langErrors.push({ type: "no_questions", sectionName: sec.name, sectionId: sec.id, qNos: [] });
             }
 
+            // option_image_urls ships behind a hand-applied migration, so ask
+            // before selecting it — naming an absent column fails the whole
+            // query and would block publishing outright.
             const { data: secQs } = await supabase
               .from("parsed_questions")
-              .select("q_no, text, image_url, image_urls, options, answer_type, correct_answer")
+              .select(
+                "q_no, text, image_url, image_urls, options, answer_type, correct_answer" +
+                  (supportsOptionImages ? ", option_image_urls" : "")
+              )
               .eq("section_id", sec.id)
               .order("q_no", { ascending: true });
 
@@ -147,23 +192,13 @@ export default function PublishExamDialog({
               });
             }
 
-            const primaryLang = (examData as any)?.primary_language || "en";
-            const isPrimary = lang === primaryLang;
-
             const invalidQs = (secQs || []).filter((q: any) => {
               const at = q.answer_type;
               if (!at) return true;
               if (at === "subjective") return false;
 
               if (at === "single" || at === "multi") {
-                const hasOptions = Array.isArray(q.options) && q.options.length >= 2;
-                if (!hasOptions) return true;
-              }
-
-              if (isPrimary) {
-                const ca = q.correct_answer;
-                const hasCorrectAnswer = ca !== null && ca !== undefined && ca !== "" && (!Array.isArray(ca) || ca.length > 0);
-                if (!hasCorrectAnswer) return true;
+                if (filledOptionCount(q) < 2) return true;
               }
 
               return false;
@@ -175,6 +210,33 @@ export default function PublishExamDialog({
                 sectionName: sec.name,
                 sectionId: sec.id,
                 qNos: invalidQs.map((q: any) => q.q_no),
+              });
+            }
+
+            // ── Answer-key gate: every language, not just primary ──
+            // Grading reads correct_answer off the row the candidate actually
+            // sat — examService fetches by the attempt's own question ids, and
+            // only the marks CONFIG is resolved back to the primary twin. So a
+            // Hindi row with an empty key marks every Hindi candidate wrong on
+            // that question while its English twin scores fine, and nothing on
+            // screen says so. Gating this on `isPrimary` let that ship.
+            //
+            // Subjective questions stay exempt: they are graded by hand and
+            // have no key to enter. Typeless rows are reported by the
+            // invalid_question check above, so they are skipped here rather
+            // than listed twice.
+            const missingAnswerQs = (secQs || []).filter((q: any) => {
+              const at = q.answer_type;
+              if (!at || at === "subjective") return false;
+              return !hasAnswerKey(q.correct_answer);
+            });
+
+            if (missingAnswerQs.length > 0) {
+              langErrors.push({
+                type: "missing_answer",
+                sectionName: sec.name,
+                sectionId: sec.id,
+                qNos: missingAnswerQs.map((q: any) => q.q_no),
               });
             }
           }
@@ -463,7 +525,11 @@ export default function PublishExamDialog({
     }
     if (err.type === "invalid_question") {
       const qList = err.qNos.map((n) => `Q${n}`).join(", ");
-      return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "are" : "is"} missing correct answer or options`;
+      return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "have" : "has"} no question type or fewer than 2 options`;
+    }
+    if (err.type === "missing_answer") {
+      const qList = err.qNos.map((n) => `Q${n}`).join(", ");
+      return `"${err.sectionName}" — ${qList} ${err.qNos.length > 1 ? "have" : "has"} no correct answer marked`;
     }
     if (err.type === "section_missing_in_lang") {
       return `Section "${err.sectionName}" missing in ${langName}`;
@@ -565,7 +631,7 @@ export default function PublishExamDialog({
                                     <span className="text-xs text-red-700 leading-relaxed">
                                       {getErrorMessage(err, langName)}
                                     </span>
-                                    {(err.type === "blank_questions" || err.type === "invalid_question") && onNavigateToQuestion && (
+                                    {(err.type === "blank_questions" || err.type === "invalid_question" || err.type === "missing_answer") && onNavigateToQuestion && (
                                       <button
                                         type="button"
                                         className="shrink-0 text-xs font-semibold text-red-600 hover:text-red-800 underline whitespace-nowrap"
