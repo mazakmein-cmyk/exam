@@ -252,9 +252,12 @@ export default function ExamDetail() {
       JSON.stringify(examSpecificInstructionTrans) !== JSON.stringify(initialExamDataRef.current.exam_instruction_translations);
 
     // Check if new question is being typed but not empty (ignoring initial empty state)
+    // An option that is nothing but a snipped image is still unsaved work —
+    // without it, navigating away silently discarded the picture.
     const isQuestionFormDirty =
       newQuestionText.trim() !== "" ||
       newQuestionOptions.some(opt => !isRichTextEmpty(opt)) ||
+      newQuestionOptionImages.some(Boolean) ||
       newQuestionImages.length > 0 ||
       newQuestionCorrect !== ""; // Simplified check
 
@@ -262,7 +265,7 @@ export default function ExamDetail() {
     const isEditing = editingQuestionId !== null;
 
     setIsDirty(isExamChanged || isEditing || (isQuestionFormDirty && !editingQuestionId));
-  }, [examTitle, examCategory, examDescriptionTrans, generalInstructionTrans, examSpecificInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionImages, newQuestionCorrect]);
+  }, [examTitle, examCategory, examDescriptionTrans, generalInstructionTrans, examSpecificInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionOptionImages, newQuestionImages, newQuestionCorrect]);
 
   // Section Switch Confirmation State
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
@@ -482,8 +485,33 @@ export default function ExamDetail() {
       editingQuestionId !== null ||
       newQuestionText.trim() !== "" ||
       newQuestionOptions.some((opt) => !isRichTextEmpty(opt)) ||
+      newQuestionOptionImages.some(Boolean) ||
       newQuestionImages.length > 0 ||
       newQuestionCorrect !== ""
+    );
+  };
+
+  // Is there anything in the editor worth writing to the database?
+  //
+  // Deliberately generous: a row earns its place the moment ANY of question
+  // text, a question image, passage content, or a single filled option exists.
+  // Everything else an exam eventually needs — the answer key, a second option
+  // — is enforced at PUBLISH time (PublishExamDialog), never at save time.
+  // Refusing to save a half-typed question is how people lost work: they typed
+  // the question, forgot the answer, hit back, and the draft evaporated.
+  const hasSavableQuestionDraft = () => {
+    const strippedText = newQuestionText
+      ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()
+      : '';
+    const strippedPassage = passageText
+      ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()
+      : '';
+    return (
+      strippedText !== '' ||
+      (newQuestionImages?.length ?? 0) > 0 ||
+      newQuestionOptions.some((opt) => !isRichTextEmpty(opt)) ||
+      newQuestionOptionImages.some(Boolean) ||
+      (questionFormat === "passage" && (strippedPassage !== '' || !!passageImage))
     );
   };
 
@@ -634,8 +662,15 @@ export default function ExamDetail() {
   const handleSaveExam = async (): Promise<boolean> => {
     if (!exam) return false;
 
+    // Persist whatever the question editor is holding before touching the exam
+    // row. `draft: true` means "store the current state, incomplete or not" —
+    // an unfinished question must survive Save and Save & Leave, and publishing
+    // is where the answer key and option count are demanded.
     if (editingQuestionId) {
-      const success = await handleUpdateQuestion();
+      const success = await handleUpdateQuestion({ draft: true });
+      if (!success) return false;
+    } else if (hasSavableQuestionDraft()) {
+      const success = await handleAddQuestion({ draft: true });
       if (!success) return false;
     }
 
@@ -742,30 +777,10 @@ export default function ExamDetail() {
     }
   };
 
-  // Handler to save both question (if in progress) and exam
+  // Handler to save both question (if in progress) and exam.
+  // handleSaveExam already commits the in-progress question as a draft, so this
+  // is a thin alias kept for the toolbar button's call site.
   const handleSaveAll = async () => {
-    // Check if there's a question in progress (has text or images)
-    const strippedQuestionText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
-    const hasQuestionContent = strippedQuestionText !== '' || (newQuestionImages && newQuestionImages.length > 0);
-
-    // For passage format, also check passage content
-    const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
-    const hasPassageContent = strippedPassageText !== '' || (passageImage !== null && passageImage !== '');
-
-    const hasQuestionInProgress = hasQuestionContent || (questionFormat === "passage" && hasPassageContent);
-
-    if (hasQuestionInProgress) {
-      // Try to save the question first
-      let success = false;
-      if (editingQuestionId) {
-        success = await handleUpdateQuestion();
-      } else {
-        success = await handleAddQuestion();
-      }
-      if (!success) return;
-    }
-
-    // Then save the exam
     await handleSaveExam();
   };
 
@@ -1054,11 +1069,14 @@ export default function ExamDetail() {
   };
 
   const handleSaveAndSwitchSection = async () => {
+    // Same contract as Save & Leave: keep the work, complete or not.
     let success = false;
     if (editingQuestionId) {
-      success = await handleUpdateQuestion();
+      success = await handleUpdateQuestion({ draft: true });
+    } else if (hasSavableQuestionDraft()) {
+      success = await handleAddQuestion({ draft: true });
     } else {
-      success = await handleAddQuestion();
+      success = true; // Nothing typed — switching is safe.
     }
 
     if (success && pendingSectionId) {
@@ -1334,16 +1352,21 @@ export default function ExamDetail() {
     }
   };
 
-  const handleAddQuestion = async () => {
+  // `draft` = save the editor's current state even when it is incomplete.
+  // Used by Save, Save & Leave and section switching so unfinished work is never
+  // thrown away; the explicit "Add Question" button stays strict so the author
+  // still gets told what is missing while their attention is on the question.
+  // Publishing enforces the full set of rules either way — PublishExamDialog.
+  const handleAddQuestion = async (opts?: { draft?: boolean }) => {
     if (!section) return false;
+    const draft = opts?.draft === true;
+
+    const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
+    const hasPassageContent = strippedPassageText !== '' || (passageImage !== null && passageImage !== '');
 
     // Validate passage content for passage-based questions
-    if (questionFormat === "passage") {
-      const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
-      const hasPassageText = strippedPassageText !== '';
-      const hasPassageImage = passageImage !== null && passageImage !== '';
-
-      if (!hasPassageText && !hasPassageImage) {
+    if (questionFormat === "passage" && !draft) {
+      if (!hasPassageContent) {
         toast({
           title: "Missing Passage Content",
           description: "For passage-based questions, please provide either passage text or a passage image.",
@@ -1359,7 +1382,12 @@ export default function ExamDetail() {
     const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
     const hasQuestionText = strippedText !== '';
     const hasQuestionImages = newQuestionImages && newQuestionImages.length > 0;
-    if (!hasQuestionText && !hasQuestionImages) {
+    // On a draft save, an option or a passage is content enough to keep the row.
+    const hasAnyOption = newQuestionOptions.some(
+      (opt, i) => !isRichTextEmpty(opt) || !!newQuestionOptionImages[i]
+    );
+    const hasDraftContent = hasAnyOption || (questionFormat === "passage" && hasPassageContent);
+    if (!hasQuestionText && !hasQuestionImages && !(draft && hasDraftContent)) {
       toast({
         title: "Missing Question Content",
         description: "Please provide either question text or an image before saving.",
@@ -1373,7 +1401,7 @@ export default function ExamDetail() {
       ? newQuestionCorrect.length > 0
       : newQuestionCorrect !== null && newQuestionCorrect !== undefined && newQuestionCorrect.toString().trim() !== "";
 
-    if (!hasCorrectAnswer) {
+    if (!hasCorrectAnswer && !draft) {
       toast({
         title: "Missing Answer",
         description: "Please specify the correct answer before saving the question.",
@@ -1386,11 +1414,12 @@ export default function ExamDetail() {
     // An option counts as "filled" when it has text OR an attached image —
     // image-only options are the whole point of figure questions.
     let keptOptionIdx: number[] = [];
+    let isDangling: (v: any) => boolean = () => false;
     if (newQuestionType === "single" || newQuestionType === "multi") {
       keptOptionIdx = newQuestionOptions
         .map((_, i) => i)
         .filter((i) => !isRichTextEmpty(newQuestionOptions[i]) || !!newQuestionOptionImages[i]);
-      if (keptOptionIdx.length < 2) {
+      if (keptOptionIdx.length < 2 && !draft) {
         toast({
           title: "Missing Options",
           description: "Please add at least 2 options (text or image) for a choice-type question.",
@@ -1399,10 +1428,11 @@ export default function ExamDetail() {
         return false;
       }
       // Dropping blank rows shifts indices — the correct answer must survive.
-      const correctVals = Array.isArray(newQuestionCorrect) ? newQuestionCorrect : [newQuestionCorrect];
       const kept = new Set(keptOptionIdx.map(String));
-      const dangling = correctVals.some((v) => /^\d+$/.test(String(v)) && !kept.has(String(v)));
-      if (dangling) {
+      isDangling = (v: any) => /^\d+$/.test(String(v)) && !kept.has(String(v));
+      const correctVals = Array.isArray(newQuestionCorrect) ? newQuestionCorrect : [newQuestionCorrect];
+      const dangling = correctVals.some(isDangling);
+      if (dangling && !draft) {
         toast({
           title: "Correct Answer Points to an Empty Option",
           description: "The selected correct option has no text or image. Fill it in or pick another.",
@@ -1416,11 +1446,15 @@ export default function ExamDetail() {
       // Remap index-based correct answers onto the filtered option order.
       const idxMap = new Map(keptOptionIdx.map((oldI, newI) => [String(oldI), String(newI)]));
       const remapCorrect = (v: any) => (idxMap.has(String(v)) ? idxMap.get(String(v)) : v);
+      // A draft may point its answer at an option that was left blank and is
+      // therefore about to be dropped. Store no key rather than an index into
+      // nothing — a stale index would grade every candidate wrong in silence,
+      // whereas an empty key is exactly what the publish gate looks for.
       const remappedCorrect =
         (newQuestionType === "single" || newQuestionType === "multi")
           ? (Array.isArray(newQuestionCorrect)
-              ? newQuestionCorrect.map(remapCorrect)
-              : remapCorrect(newQuestionCorrect))
+              ? newQuestionCorrect.filter((v) => !isDangling(v)).map(remapCorrect)
+              : (isDangling(newQuestionCorrect) ? "" : remapCorrect(newQuestionCorrect)))
           : newQuestionCorrect;
 
       // Prepare question data with proper defaults
@@ -1860,11 +1894,14 @@ export default function ExamDetail() {
     }, 100);
   };
 
-  const handleUpdateQuestion = async () => {
+  // See handleAddQuestion for what `draft` means: persist the current state,
+  // incomplete or not. Publishing is the gate that demands completeness.
+  const handleUpdateQuestion = async (opts?: { draft?: boolean }) => {
     if (!editingQuestionId || !section) return false;
+    const draft = opts?.draft === true;
 
     // Validate passage content for passage-based questions
-    if (questionFormat === "passage") {
+    if (questionFormat === "passage" && !draft) {
       const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
       const hasPassageText = strippedPassageText !== '';
       const hasPassageImage = passageImage !== null && passageImage !== '';
@@ -1885,7 +1922,10 @@ export default function ExamDetail() {
     const strippedText = newQuestionText ? newQuestionText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
     const hasQuestionText = strippedText !== '';
     const hasQuestionImages = newQuestionImages && newQuestionImages.length > 0;
-    if (!hasQuestionText && !hasQuestionImages) {
+    // A draft may legitimately have nothing but options typed so far. It may
+    // also have nothing at all — an existing row the author blanked out — and
+    // that still saves, because refusing would trap them on the page.
+    if (!hasQuestionText && !hasQuestionImages && !draft) {
       toast({
         title: "Missing Question Content",
         description: "Please provide either question text or an image before saving.",
@@ -1899,7 +1939,7 @@ export default function ExamDetail() {
       ? newQuestionCorrect.length > 0
       : newQuestionCorrect !== null && newQuestionCorrect !== undefined && newQuestionCorrect.toString().trim() !== "";
 
-    if (!hasCorrectAnswer) {
+    if (!hasCorrectAnswer && !draft) {
       toast({
         title: "Missing Answer",
         description: "Please specify the correct answer before updating the question.",
@@ -1911,11 +1951,12 @@ export default function ExamDetail() {
     // Validate options for single/multi choice questions.
     // Text OR an attached image counts as "filled" (figure questions).
     let keptOptionIdx: number[] = [];
+    let isDangling: (v: any) => boolean = () => false;
     if (newQuestionType === "single" || newQuestionType === "multi") {
       keptOptionIdx = newQuestionOptions
         .map((_, i) => i)
         .filter((i) => !isRichTextEmpty(newQuestionOptions[i]) || !!newQuestionOptionImages[i]);
-      if (keptOptionIdx.length < 2) {
+      if (keptOptionIdx.length < 2 && !draft) {
         toast({
           title: "Missing Options",
           description: "Please add at least 2 options (text or image) for a choice-type question.",
@@ -1924,10 +1965,11 @@ export default function ExamDetail() {
         return false;
       }
       if (!isMultiLang || isPrimaryLanguage) {
-        const correctVals = Array.isArray(newQuestionCorrect) ? newQuestionCorrect : [newQuestionCorrect];
         const kept = new Set(keptOptionIdx.map(String));
-        const dangling = correctVals.some((v) => /^\d+$/.test(String(v)) && !kept.has(String(v)));
-        if (dangling) {
+        isDangling = (v: any) => /^\d+$/.test(String(v)) && !kept.has(String(v));
+        const correctVals = Array.isArray(newQuestionCorrect) ? newQuestionCorrect : [newQuestionCorrect];
+        const dangling = correctVals.some(isDangling);
+        if (dangling && !draft) {
           toast({
             title: "Correct Answer Points to an Empty Option",
             description: "The selected correct option has no text or image. Fill it in or pick another.",
@@ -1952,11 +1994,15 @@ export default function ExamDetail() {
       // Only save structural fields when editing in primary language
       if (!isMultiLang || isPrimaryLanguage) {
         updateData.answer_type = newQuestionType;
+        // Answers pointing at options that were left blank (and are therefore
+        // dropped below) are cleared rather than stored as stale indices — an
+        // empty key is what the publish gate flags; a wrong index grades every
+        // candidate wrong without a word.
         updateData.correct_answer =
           (newQuestionType === "single" || newQuestionType === "multi")
             ? (Array.isArray(newQuestionCorrect)
-                ? newQuestionCorrect.map(remapCorrect)
-                : remapCorrect(newQuestionCorrect))
+                ? newQuestionCorrect.filter((v) => !isDangling(v)).map(remapCorrect)
+                : (isDangling(newQuestionCorrect) ? "" : remapCorrect(newQuestionCorrect)))
             : newQuestionCorrect;
       }
 
@@ -4159,7 +4205,7 @@ export default function ExamDetail() {
                       <h3 className="text-xs font-bold uppercase tracking-widest text-primary">Question Details</h3>
                       {editingQuestionId && (
                         <div className="flex flex-col gap-2">
-                          <Button onClick={handleUpdateQuestion} size="sm" className="rounded-lg btn-primary-glow">
+                          <Button onClick={() => handleUpdateQuestion()} size="sm" className="rounded-lg btn-primary-glow">
                             <Save className="mr-2 h-4 w-4" />
                             Update
                           </Button>
@@ -4197,7 +4243,7 @@ export default function ExamDetail() {
                         setNewQuestionImages(newImages);
                       }}
                       onImageUpload={handleImageUpload}
-                      onAdd={editingQuestionId ? handleUpdateQuestion : handleAddQuestion}
+                      onAdd={() => (editingQuestionId ? handleUpdateQuestion() : handleAddQuestion())}
                       showImageUpload={true}
                       isEditing={!!editingQuestionId}
                       lang={activeLanguage}
