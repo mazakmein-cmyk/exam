@@ -31,6 +31,12 @@ export function TransliterateTextarea({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout>();
+  // The last value that went through this component's own handlers, and a
+  // counter that orphans in-flight suggestion fetches. Together they let the
+  // effect below tell "the user typed" from "someone set value from outside"
+  // (a template fill, a generated instruction, an undo).
+  const lastInternalValue = useRef(value);
+  const fetchEpochRef = useRef(0);
 
   const isIndicLang = lang && lang !== "en";
 
@@ -54,8 +60,13 @@ export function TransliterateTextarea({
       return;
     }
 
+    // A fetch belongs to the text it was typed into. If the field is filled
+    // programmatically while this is in flight, the reset effect bumps the
+    // epoch and this resolution must not reopen the dropdown over new text.
+    const epoch = ++fetchEpochRef.current;
     try {
       const results = await getTransliterationSuggestions(word, lang, 5);
+      if (epoch !== fetchEpochRef.current) return;
       if (results.length > 0) {
         setSuggestions(results);
         setShowSuggestions(true);
@@ -74,6 +85,7 @@ export function TransliterateTextarea({
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     const cursorPos = e.target.selectionStart || newValue.length;
+    lastInternalValue.current = newValue;
     onValueChange(newValue);
 
     if (!isIndicLang) return;
@@ -94,6 +106,7 @@ export function TransliterateTextarea({
     const before = value.substring(0, wordStart);
     const after = value.substring(wordStart + currentWord.length);
     const newValue = before + suggestion + after;
+    lastInternalValue.current = newValue;
     onValueChange(newValue);
     setSuggestions([]);
     setShowSuggestions(false);
@@ -141,6 +154,7 @@ export function TransliterateTextarea({
           const before = value.substring(0, wordStart);
           const after = value.substring(wordStart + currentWord.length);
           const newValue = before + suggestions[activeIndex] + ' ' + after;
+          lastInternalValue.current = newValue;
           onValueChange(newValue);
           setSuggestions([]);
           setShowSuggestions(false);
@@ -162,6 +176,23 @@ export function TransliterateTextarea({
         rest.onKeyDown?.(e as any);
     }
   }, [showSuggestions, suggestions, activeIndex, applySuggestion, rest, value, wordStart, currentWord, onValueChange]);
+
+  // A value change that did not come through the handlers above is a
+  // programmatic write — a template fill, a generated instruction, an undo.
+  // Every piece of transliteration state (the current word, its offsets, the
+  // dropdown, any debounced or in-flight fetch) describes text that is no
+  // longer in the box; acting on it would splice a suggestion into the new
+  // text at the old word's position. Reset it all.
+  useEffect(() => {
+    if (value === lastInternalValue.current) return;
+    lastInternalValue.current = value;
+    fetchEpochRef.current++;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setCurrentWord("");
+    setWordStart(0);
+  }, [value]);
 
   // Close suggestions on outside click
   useEffect(() => {

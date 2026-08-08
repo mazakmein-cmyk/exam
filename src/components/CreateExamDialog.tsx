@@ -12,6 +12,9 @@ import { useToast } from "@/hooks/use-toast";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import InstructionTemplateAction from "@/components/exam/InstructionTemplateAction";
+import GenerateExamInstruction from "@/components/exam/GenerateExamInstruction";
+import { rowsForText } from "@/lib/instructionTemplates";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English" },
@@ -44,6 +47,13 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
   const [loading, setLoading] = useState(false);
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const { toast } = useToast();
+
+  // Which language the text fields here are being written in. This dialog has no
+  // per-language tabs — it writes one translation — so it is English unless the
+  // exam is Hindi-only. Named because the template button has to agree with the
+  // textarea about it, or it fills the wrong language.
+  const instructionLang =
+    selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en";
 
   const toggleLanguage = (langCode: string) => {
     setSelectedLanguages((prev) => {
@@ -146,9 +156,12 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
           description: examDescription || null,
           instruction: generalInstruction || null,
           exam_instruction: examSpecificInstruction || null,
-          description_translations: examDescription ? { en: examDescription } : {},
-          instruction_translations: generalInstruction ? { en: generalInstruction } : {},
-          exam_instruction_translations: examSpecificInstruction ? { en: examSpecificInstruction } : {},
+          // Keyed by the language the text was actually written in. Hardcoding
+          // "en" here buried a Hindi-only exam's text under a key its editor
+          // never reads — the hi tab rendered empty while the DB held the text.
+          description_translations: examDescription ? { [instructionLang]: examDescription } : {},
+          instruction_translations: generalInstruction ? { [instructionLang]: generalInstruction } : {},
+          exam_instruction_translations: examSpecificInstruction ? { [instructionLang]: examSpecificInstruction } : {},
           exam_category: examCategory || null,
           supported_languages: selectedLanguages,
           primary_language: primaryLanguage,
@@ -313,9 +326,10 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
         description: examDescription || null,
         instruction: generalInstruction || null,
         exam_instruction: examSpecificInstruction || null,
-        description_translations: examDescription ? { en: examDescription } : {},
-        instruction_translations: generalInstruction ? { en: generalInstruction } : {},
-        exam_instruction_translations: examSpecificInstruction ? { en: examSpecificInstruction } : {},
+        // Keyed by instructionLang — see the PDF path above for why.
+        description_translations: examDescription ? { [instructionLang]: examDescription } : {},
+        instruction_translations: generalInstruction ? { [instructionLang]: generalInstruction } : {},
+        exam_instruction_translations: examSpecificInstruction ? { [instructionLang]: examSpecificInstruction } : {},
         exam_category: examCategory || null,
         supported_languages: selectedLanguages,
         primary_language: primaryLanguage,
@@ -423,7 +437,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                 <Label htmlFor="exam-description" className="text-sm font-medium">Description <span className="text-destructive">*</span></Label>
                 <TransliterateTextarea
                   id="exam-description"
-                  lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
+                  lang={instructionLang}
                   placeholder="Brief description of the exam..."
                   value={examDescription}
                   onValueChange={(text) => setExamDescription(text)}
@@ -433,27 +447,81 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="general-instruction" className="text-sm font-medium">General Instruction <span className="text-destructive">*</span></Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="general-instruction" className="text-sm font-medium">General Instruction <span className="text-destructive">*</span></Label>
+                  <InstructionTemplateAction
+                    lang={instructionLang}
+                    value={generalInstruction}
+                    onFill={(text) => setGeneralInstruction(text)}
+                  />
+                </div>
                 <TransliterateTextarea
                   id="general-instruction"
-                  lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
+                  lang={instructionLang}
                   placeholder="General instructions for all candidates..."
                   value={generalInstruction}
                   onValueChange={(text) => setGeneralInstruction(text)}
-                  rows={2}
+                  // Grows for filled-in template text: a seven-line template in a
+                  // two-row box shows two lines, and resize-none leaves no way out.
+                  // ~90 chars per visual row at this dialog's width.
+                  rows={rowsForText(generalInstruction, 2, 14, 90)}
                   className="resize-none placeholder:text-muted-foreground/50"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="exam-instruction" className="text-sm font-medium">Exam Instruction</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="exam-instruction" className="text-sm font-medium">Exam Instruction</Label>
+                  <GenerateExamInstruction
+                    lang={instructionLang}
+                    value={examSpecificInstruction}
+                    onFill={(text) => setExamSpecificInstruction(text)}
+                    // At create time the exam is only a form: no questions, no
+                    // marking scheme, and no navigation mode CHOSEN — the DB
+                    // will default to locked, but a default is a setting, not
+                    // a promise, and text claiming "sat in order" outlives a
+                    // later flip of the switch. So the mode is null and the
+                    // engine writes only what is decided: the sections and
+                    // the languages. The editor's button regenerates the
+                    // fuller text later.
+                    collectFacts={() => ({
+                      sections: sections.map((s) => ({
+                        name: s.name,
+                        minutes: Number.isFinite(s.time_minutes) && s.time_minutes > 0 ? s.time_minutes : null,
+                        questionCount: null,
+                      })),
+                      allowSectionSwitching: null,
+                      totalMinutes: null,
+                      marking: null,
+                      answerTypes: null,
+                      languageNames:
+                        selectedLanguages.length > 1
+                          ? selectedLanguages.map((code) => {
+                              const l = AVAILABLE_LANGUAGES.find((x) => x.code === code);
+                              return l ? (instructionLang === "hi" ? l.nativeLabel : l.label) : code;
+                            })
+                          : null,
+                    })}
+                    onError={(message) => toast({ title: "Nothing generated", description: message })}
+                    // The default tooltip promises timing and marking — facts
+                    // this dialog cannot deliver yet. Promise only what the
+                    // create-time generation actually writes.
+                    titles={{
+                      fill: "Write a starting instruction from the sections you've added. The exam editor can regenerate the full version — timing, marking, question counts — once they exist.",
+                      replace:
+                        "Replace this text with a starting instruction written from the sections you've added. You can undo.",
+                    }}
+                  />
+                </div>
                 <TransliterateTextarea
                   id="exam-instruction"
-                  lang={selectedLanguages.includes("hi") && !selectedLanguages.includes("en") ? "hi" : "en"}
+                  lang={instructionLang}
                   placeholder="Specific instructions for the exam..."
                   value={examSpecificInstruction}
                   onValueChange={(text) => setExamSpecificInstruction(text)}
-                  rows={2}
+                  // Grows for generated text — see rowsForText.
+                  // ~90 chars per visual row at this dialog's width.
+                  rows={rowsForText(examSpecificInstruction, 2, 14, 90)}
                   className="resize-none placeholder:text-muted-foreground/50"
                 />
               </div>

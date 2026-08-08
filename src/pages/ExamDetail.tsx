@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Clock, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
@@ -36,6 +36,8 @@ import {
   upsertSectionDefault,
   upsertQuestionConfig,
   getExamScoringDefault,
+  getSectionScoringDefaults,
+  getQuestionScoringConfigs,
 } from "@/services/scoringService";
 const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
 import SnipOptionDialog from "@/components/SnipOptionDialog";
@@ -72,8 +74,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import MarksConfigPanel from "@/components/marks/MarksConfigPanel";
 import { useMarksModule } from "@/hooks/useMarksModule";
 import { MarksQuestionBadge } from "@/components/marks/MarksQuestionBadge";
-import { formatMarks } from "@/services/scoringEngine";
+import { formatMarks, type ScoringConfig } from "@/services/scoringEngine";
 import SectionNavigationControl from "@/components/exam/SectionNavigationControl";
+import MinutesField from "@/components/exam/MinutesField";
+import InstructionTemplateAction from "@/components/exam/InstructionTemplateAction";
+import GenerateExamInstruction, { type ExamFacts } from "@/components/exam/GenerateExamInstruction";
+import { rowsForText } from "@/lib/instructionTemplates";
 import { navigationCopyPatch, readNavigationSettings, saveNavigationSettings } from "@/lib/examSettings";
 import { sumSectionMinutes } from "@/lib/examNavigation.js";
 
@@ -99,6 +105,8 @@ type Exam = {
   /** Section navigation mode — absent means the migration has not been applied. */
   allow_section_switching?: boolean;
   total_time_minutes?: number | null;
+  /** What candidates can actually sit — publishing can select a subset of supported_languages. */
+  published_languages?: string[] | null;
 };
 
 type Section = {
@@ -274,6 +282,130 @@ export default function ExamDetail() {
     }
     return m;
   }, [questions, marksModule.resolveQuestionConfig]);
+
+  // ── "Generate from exam" on the Exam Instruction field ──────────────────
+  // The facts the engine wants are NOT all in this page's state: `questions`
+  // holds only the selected section, and the marks maps in marksModule cover
+  // only its question ids. So the counts, the answer-type mix, and the full
+  // override picture are fetched here, at click time — always current, never a
+  // second copy of state to keep honest through every add/delete path.
+  const collectExamFacts = async (): Promise<ExamFacts> => {
+    const sectionIds = sections.map((s) => s.id);
+    if (sectionIds.length === 0) {
+      // Nothing to count; the engine will answer null and the button will say so.
+      return {
+        sections: [],
+        allowSectionSwitching,
+        totalMinutes: null,
+        marking: null,
+        answerTypes: null,
+        languageNames: null,
+      };
+    }
+
+    // The same filter the runner uses to build the paper (ExamSimulator does
+    // .eq("is_excluded", false)), so these counts are what a candidate sees.
+    // Paged, because PostgREST caps a single response (1000 rows by default)
+    // and a silently truncated page would undercount a big paper — the one
+    // failure mode a counting query must not have.
+    const fetchQuestionRows = async (ids: string[]) => {
+      const PAGE = 1000;
+      const rows: { id: string; section_id: string; answer_type: string }[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("parsed_questions")
+          .select("id, section_id, answer_type")
+          .eq("is_excluded", false)
+          .in("section_id", ids)
+          .order("id")
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        rows.push(...((data ?? []) as typeof rows));
+        if (!data || data.length < PAGE) return rows;
+      }
+    };
+    const rows = await fetchQuestionRows(sectionIds);
+
+    // Scoring override rows live on PRIMARY-language sections/questions only
+    // (the marks panel edits primary rows; the runner maps a secondary sitting
+    // back to them) — so on a secondary tab the overrides must be looked up by
+    // the primary ids, or every paper reads as uniformly marked from Hindi.
+    const primarySectionIds = allSections
+      .filter((s) => (s.language || "en") === primaryLanguage)
+      .map((s) => s.id);
+    const overrideSectionIds = primarySectionIds.length > 0 ? primarySectionIds : sectionIds;
+    const overrideQuestionIds =
+      overrideSectionIds === sectionIds
+        ? rows.map((r) => r.id)
+        : (await fetchQuestionRows(overrideSectionIds)).map((r) => r.id);
+
+    const [examDefault, sectionDefaults, questionOverrides] = await Promise.all([
+      examId ? getExamScoringDefault(examId) : Promise.resolve(null),
+      getSectionScoringDefaults(overrideSectionIds),
+      getQuestionScoringConfigs(overrideQuestionIds),
+    ]);
+
+    const countBySection = new Map<string, number>();
+    const answerTypes: Record<string, number> = {};
+    for (const row of rows) {
+      countBySection.set(row.section_id, (countBySection.get(row.section_id) || 0) + 1);
+      answerTypes[row.answer_type] = (answerTypes[row.answer_type] || 0) + 1;
+    }
+
+    // "Apply to All" materialises override rows whose values EQUAL the exam
+    // default, so uniformity is a value comparison, never a row count.
+    const overrides = [...sectionDefaults.values(), ...questionOverrides.values()];
+    const sameAsDefault = (c: ScoringConfig) =>
+      examDefault !== null &&
+      c.marks_correct === examDefault.marks_correct &&
+      c.marks_wrong === examDefault.marks_wrong &&
+      c.marks_skipped === examDefault.marks_skipped &&
+      c.mcq_mode === examDefault.mcq_mode &&
+      c.mcq_wrong_penalty === examDefault.mcq_wrong_penalty &&
+      c.rounding_strategy === examDefault.rounding_strategy;
+
+    return {
+      sections: sections.map((s) => ({
+        name: s.name,
+        minutes: Number.isFinite(s.time_minutes) && s.time_minutes > 0 ? s.time_minutes : null,
+        questionCount: countBySection.get(s.id) ?? 0,
+      })),
+      allowSectionSwitching,
+      // The runner's rule (totalExamMinutes): the explicit total wins, else the
+      // section sum — and a sum of 0 is "unknown", not a zero-minute paper.
+      totalMinutes: totalTimeMinutes ?? (sumSectionMinutes(sections) || null),
+      marking:
+        examDefault === null
+          ? null
+          : {
+              correct: examDefault.marks_correct,
+              wrong: examDefault.marks_wrong,
+              skipped: examDefault.marks_skipped,
+              mcqMode: examDefault.mcq_mode,
+              mcqWrongPenalty: examDefault.mcq_wrong_penalty,
+              uniform: overrides.every(sameAsDefault),
+            },
+      scoredWithoutDefault: examDefault === null && overrides.length > 0,
+      answerTypes,
+      // Candidates choose from published_languages, not supported_languages —
+      // publishing can select a subset (a broken variant's switch is disabled),
+      // and telling a candidate to "choose your language" on an intro page
+      // that offers no chooser names a choice that does not exist. Before
+      // publishing there is nothing better than the supported list.
+      languageNames: (() => {
+        const candidateLangs =
+          exam?.is_published && (exam.published_languages?.length ?? 0) > 0
+            ? (exam.published_languages as string[])
+            : supportedLanguages;
+        if (candidateLangs.length <= 1) return null;
+        return candidateLangs.map((code) => {
+          const l = AVAILABLE_LANGUAGES.find((x) => x.code === code);
+          // The Hindi instruction names the languages the Hindi way.
+          return l ? (activeLanguage === "hi" ? l.nativeLabel : l.label) : code;
+        });
+      })(),
+    };
+  };
 
   // --- Validation helper: returns true if a question has detectable issues ---
   // Returns all validation errors for a question as human-readable strings.
@@ -1059,11 +1191,19 @@ export default function ExamDetail() {
           }
         : prev
     );
+    // A stored Exam Instruction was written for the OLD mode — its timing
+    // sentences ("sat in order", "one clock") are now the wrong half of the
+    // intro screen. The one place that knows both facts is right here.
+    const hasInstructionText = Object.values(examSpecificInstructionTrans).some((text) => text.trim());
     toast({
       title: next ? "Section switching on" : "Section switching off",
-      description: next
-        ? "Students get one clock for the paper and can move between sections."
-        : "Students sit one section at a time, each on its own clock.",
+      description:
+        (next
+          ? "Students get one clock for the paper and can move between sections."
+          : "Students sit one section at a time, each on its own clock.") +
+        (hasInstructionText
+          ? " Your Exam Instruction text may describe the old mode — use Generate from exam to rewrite it."
+          : ""),
     });
   };
 
@@ -3122,22 +3262,42 @@ export default function ExamDetail() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">General Instruction <span className="text-destructive">*</span></Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">General Instruction <span className="text-destructive">*</span></Label>
+                    <InstructionTemplateAction
+                      lang={activeLanguage}
+                      value={generalInstructionTrans[activeLanguage] || ""}
+                      onFill={(text) => setGeneralInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
+                    />
+                  </div>
                   <TransliterateTextarea
                     lang={activeLanguage}
                     value={generalInstructionTrans[activeLanguage] || ""}
                     onValueChange={(text) => setGeneralInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
-                    rows={4}
+                    // Grows for filled-in template text — see rowsForText.
+                    // ~40 chars per visual row in this sidebar column.
+                    rows={rowsForText(generalInstructionTrans[activeLanguage] || "", 4, 16, 40)}
                     placeholder={`General instructions for all candidates in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Exam Instruction</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Exam Instruction</Label>
+                    <GenerateExamInstruction
+                      lang={activeLanguage}
+                      value={examSpecificInstructionTrans[activeLanguage] || ""}
+                      onFill={(text) => setExamSpecificInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
+                      collectFacts={collectExamFacts}
+                      onError={(message) => toast({ title: "Nothing generated", description: message })}
+                    />
+                  </div>
                   <TransliterateTextarea
                     lang={activeLanguage}
                     value={examSpecificInstructionTrans[activeLanguage] || ""}
                     onValueChange={(text) => setExamSpecificInstructionTrans((prev) => ({ ...prev, [activeLanguage]: text }))}
-                    rows={4}
+                    // Grows for generated text — see rowsForText.
+                    // ~40 chars per visual row in this sidebar column.
+                    rows={rowsForText(examSpecificInstructionTrans[activeLanguage] || "", 4, 16, 40)}
                     placeholder={`Specific instructions for the exam in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
                 </div>
@@ -3196,6 +3356,19 @@ export default function ExamDetail() {
                   onTotalMinutesChange={handleTotalTimeChange}
                   busy={savingNavMode}
                 />
+
+                {/* The control above and the rows below are both rounded, both
+                    tinted primary when switching is on, and were 10px apart —
+                    they read as one run of cards. This says where the setting
+                    ends and the list starts, and labels what is starting. */}
+                <div className="flex items-center gap-2.5 pt-2 pb-0.5">
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+                    {sections.length} {sections.length === 1 ? "section" : "sections"}
+                  </span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
@@ -3250,7 +3423,10 @@ export default function ExamDetail() {
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <span
-                                    className="inline-flex items-center gap-1.5 rounded-md bg-muted/70 px-2 py-1 text-[11px] font-medium text-muted-foreground cursor-help"
+                                    // Same size and shape as the editable
+                                    // MinutesField it replaces, so the row reads
+                                    // as one control changing state.
+                                    className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-transparent bg-muted/70 px-2 text-[11px] font-medium text-muted-foreground cursor-help"
                                     onClick={(e) => e.stopPropagation()}
                                   >
                                     <Hourglass className="h-3 w-3" />
@@ -3265,25 +3441,13 @@ export default function ExamDetail() {
                               </Tooltip>
                             </TooltipProvider>
                           ) : (
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Clock className="h-3 w-3" />
-                              <Input
-                                className="h-6 w-14 rounded-md text-xs text-center tabular-nums"
-                                type="number"
-                                value={s.time_minutes}
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={(e) =>
-                                  handleLocalUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
-                                }
-                                onBlur={(e) =>
-                                  handleUpdateSection(s.id, { time_minutes: parseInt(e.target.value) || 0 })
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') e.currentTarget.blur();
-                                }}
-                              />
-                              <span className="font-medium">min</span>
-                            </div>
+                            <MinutesField
+                              minutes={s.time_minutes}
+                              onLocalChange={(time_minutes) =>
+                                handleLocalUpdateSection(s.id, { time_minutes })
+                              }
+                              onCommit={(time_minutes) => handleUpdateSection(s.id, { time_minutes })}
+                            />
                           )}
                         </div>
                       </SortableSectionItem>
