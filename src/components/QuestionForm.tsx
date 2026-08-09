@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TransliterateInput } from "@/components/TransliterateInput";
 import { RichTextEditor } from "@/components/RichTextEditor";
-import { htmlToPlainText, isRichTextEmpty } from "@/lib/richText";
+import { htmlToPlainText, isRichTextEmpty, isOptionFilled, countFilledOptions } from "@/lib/richText";
 import { getTransliterationSuggestions } from "@/lib/transliteration";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -2855,7 +2855,7 @@ export function QuestionForm({
                         </SelectTrigger>
                         <SelectContent>
                             {options.map((opt, idx) => (
-                                (!isRichTextEmpty(opt) || optionImages?.[idx]) && (
+                                isOptionFilled(opt, optionImages?.[idx]) && (
                                     <SelectItem key={idx} value={String(idx)}>
                                         {/* Plain text: a <select> row can't render markup */}
                                         {String.fromCharCode(65 + idx)}. {isRichTextEmpty(opt) ? "(image option)" : htmlToPlainText(opt)}
@@ -2870,7 +2870,7 @@ export function QuestionForm({
                             const idxStr = String(idx);
                             const hasImage = !!optionImages?.[idx];
                             const isBlank = isRichTextEmpty(opt);
-                            const isEmpty = isBlank && !hasImage;
+                            const isEmpty = !isOptionFilled(opt, hasImage);
                             const currentCorrect = Array.isArray(correct) ? correct.map(String) : [];
                             return (
                                 <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
@@ -2889,7 +2889,7 @@ export function QuestionForm({
                                 </div>
                             );
                         })}
-                        {options.every(opt => isRichTextEmpty(opt)) && (
+                        {countFilledOptions(options, optionImages) === 0 && (
                             <p className="text-sm text-muted-foreground">Add options above to select correct answers</p>
                         )}
                     </div>

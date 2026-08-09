@@ -107,6 +107,41 @@ export function isRichTextEmpty(value: unknown): boolean {
 }
 
 /**
+ * True when an option would show a candidate something to choose.
+ *
+ * Text is not the only content an option can carry. A figure question's answer
+ * choices are pictures with no words at all, so the rule is OR, never AND:
+ * text alone is filled, an attached image alone is filled, and both together is
+ * the ordinary labelled-diagram case. Only a row with neither is blank.
+ *
+ * Judging on `isRichTextEmpty(text)` by itself is the mistake this exists to
+ * stop — it made a snipped answer choice read as an empty slot, so the question
+ * was flagged "Only 1 option filled", greyed out in the correct-answer picker,
+ * and counted against the two-option minimum at publish.
+ */
+export function isOptionFilled(text: unknown, imageUrl?: unknown): boolean {
+  return !isRichTextEmpty(text) || !!imageUrl;
+}
+
+/**
+ * How many options a candidate would actually see.
+ *
+ * Not the same question as `options.length`: draft saves and translated rows
+ * both store option slots that are blank strings, and a blank slot renders as
+ * an unlabelled button nobody can choose. Counts content, not slots — see
+ * {@link isOptionFilled} for why an image with no text counts.
+ *
+ * `optionImageUrls` is optional on purpose: the column ships behind a
+ * hand-applied migration, so callers reading an unmigrated row pass nothing and
+ * fall back to text-only counting rather than throwing.
+ */
+export function countFilledOptions(options: unknown, optionImageUrls?: unknown): number {
+  const opts = Array.isArray(options) ? options : [];
+  const imgs = Array.isArray(optionImageUrls) ? optionImageUrls : [];
+  return opts.filter((o, i) => isOptionFilled(o, imgs[i])).length;
+}
+
+/**
  * Normalized key for comparing a stored answer value against option text.
  *
  * Answers are usually indexes, but JSON imports may store the option's TEXT.

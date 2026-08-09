@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } fro
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
-import { isRichTextEmpty } from "@/lib/richText";
+import { isRichTextEmpty, countFilledOptions } from "@/lib/richText";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { tableHasColumn } from "@/lib/dbFeatures";
 import { Button } from "@/components/ui/button";
@@ -469,10 +469,11 @@ export default function LiveExamDetail() {
     if (!hasContent) errors.push("Question is empty — add text or attach an image.");
 
     if (q.answer_type === "single" || q.answer_type === "multi") {
-      const opts = Array.isArray(q.options) ? q.options : [];
-      const filled = opts.filter((o: string) => typeof o === "string" && !isRichTextEmpty(o));
-      if (filled.length < 2) {
-        errors.push(`Only ${filled.length} option${filled.length === 1 ? "" : "s"} filled — add at least 2 answer choices.`);
+      // Same rule as the mock editor: an option is filled by text OR by an
+      // attached image. Counting text alone flagged every figure question.
+      const filledCount = countFilledOptions(q.options, q.option_image_urls);
+      if (filledCount < 2) {
+        errors.push(`Only ${filledCount} option${filledCount === 1 ? "" : "s"} filled — add at least 2 answer choices.`);
       }
     }
 

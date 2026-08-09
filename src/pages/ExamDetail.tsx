@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } fro
 import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInText, renderMathInRichText } from "@/lib/renderMath";
-import { htmlToPlainText, isRichTextEmpty } from "@/lib/richText";
+import { htmlToPlainText, isRichTextEmpty, isOptionFilled, countFilledOptions } from "@/lib/richText";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { autoSnip } from "@/services/autoSnipper";
 import { tableHasColumn } from "@/lib/dbFeatures";
@@ -461,10 +461,12 @@ export default function ExamDetail() {
     }
 
     if (q.answer_type === 'single' || q.answer_type === 'multi') {
-      const opts = Array.isArray(q.options) ? q.options : [];
-      const nonEmptyOpts = opts.filter((o: string) => typeof o === 'string' && !isRichTextEmpty(o));
-      if (nonEmptyOpts.length < 2) {
-        errors.push(`Only ${nonEmptyOpts.length} option${nonEmptyOpts.length === 1 ? '' : 's'} filled — add at least 2 answer choices.`);
+      // Content, not slots — and an option's content is text OR an image. A
+      // figure paper's choices are pictures with no words, and counting text
+      // alone put a permanent error badge on every one of them.
+      const filledCount = countFilledOptions(q.options, q.option_image_urls);
+      if (filledCount < 2) {
+        errors.push(`Only ${filledCount} option${filledCount === 1 ? '' : 's'} filled — add at least 2 answer choices.`);
       }
     }
 
@@ -3866,7 +3868,7 @@ export default function ExamDetail() {
                                             <SelectContent>
                                               {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => {
                                                 const hasImage = Array.isArray(q.option_image_urls) && !!q.option_image_urls[idx];
-                                                return !isRichTextEmpty(opt) || hasImage ? (
+                                                return isOptionFilled(opt, hasImage) ? (
                                                   <SelectItem key={idx} value={String(idx)}>
                                                     {String.fromCharCode(65 + idx)}. {!isRichTextEmpty(opt) ? htmlToPlainText(opt) : "(image option)"}
                                                   </SelectItem>
@@ -3879,7 +3881,7 @@ export default function ExamDetail() {
                                             {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => {
                                               const idxStr = String(idx);
                                               const hasImage = Array.isArray(q.option_image_urls) && !!q.option_image_urls[idx];
-                                              const isEmpty = isRichTextEmpty(opt) && !hasImage;
+                                              const isEmpty = !isOptionFilled(opt, hasImage);
                                               const draftArr = Array.isArray(inlineAnswerDraft) ? inlineAnswerDraft : [];
                                               return (
                                                 <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
@@ -3898,7 +3900,7 @@ export default function ExamDetail() {
                                                 </div>
                                               );
                                             })}
-                                            {(Array.isArray(q.options) ? q.options : []).every((opt: string) => isRichTextEmpty(opt)) && (
+                                            {countFilledOptions(q.options, q.option_image_urls) === 0 && (
                                               <p className="text-sm text-muted-foreground">No options available.</p>
                                             )}
                                           </div>
