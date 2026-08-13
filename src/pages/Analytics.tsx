@@ -420,16 +420,20 @@ export default function Analytics() {
             if (top3.length > 0) {
               // Fetch profiles for top 3 unique user IDs
               const userIds = [...new Set(top3.map(s => s.userId))];
+              // public_profiles, not profiles: RLS on the base table is own-row
+              // only (20260803030000), so reading it here returns nothing and
+              // every entry falls back to "Unknown". The view withholds
+              // full_name by design, so the handle is what we display.
               const { data: profilesData } = await supabase
-                .from('profiles')
-                .select('id, username, full_name')
+                .from('public_profiles')
+                .select('id, username')
                 .in('id', userIds);
 
               const profileMap = new Map((profilesData || []).map((p: any) => [p.id, p]));
 
               setLeaderboard(top3.map(s => {
                 const profile = profileMap.get(s.userId) as any;
-                const displayName = profile?.full_name || profile?.username || 'Unknown';
+                const displayName = profile?.username || 'Unknown';
                 const username = profile?.username || s.userId;
                 return { rank: s.rank, userId: s.userId, username, displayName, totalScore: s.totalScore, totalQuestions: s.totalQuestions, totalMarks: s.totalMarks, rankedByMarks: rankByMarks };
               }));

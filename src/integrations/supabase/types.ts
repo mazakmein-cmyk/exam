@@ -888,6 +888,16 @@ export type Database = {
           },
         ]
       }
+      public_profiles: {
+        Row: {
+          avatar_url: string | null
+          id: string | null
+          is_admin_gold: boolean | null
+          is_verified: boolean | null
+          username: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       compute_live_question_analytics: {

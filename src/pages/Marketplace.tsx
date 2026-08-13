@@ -114,8 +114,11 @@ const Marketplace = () => {
             const userIds = [...new Set(examsData.map(exam => exam.user_id))];
 
             if (userIds.length > 0) {
+                // public_profiles, not profiles: RLS on the base table is own-row
+                // only (20260803030000), so reading it here returns nothing and
+                // every byline falls back to "Unknown".
                 const { data: profiles } = await supabase
-                    .from('profiles')
+                    .from('public_profiles')
                     .select('id, username, is_verified, is_admin_gold')
                     .in('id', userIds);
 
