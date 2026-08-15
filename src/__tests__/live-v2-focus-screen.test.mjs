@@ -18,7 +18,7 @@
  * silently make a live exam unanswerable for everybody at once.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -51,7 +51,6 @@ const readMigration = (f) => readFileSync(resolve(ROOT, "supabase", "migrations"
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 
 const SQL = readMigration("20260808000000_live_v2_focus_screen.sql");
-const APPLY = readFileSync(resolve(ROOT, "supabase", "APPLY_REMAINING.sql"), "utf-8");
 const PRESENT = readSrc("pages/LiveExamPresent.tsx");
 const CONTROL = readSrc("pages/LiveExamControl.tsx");
 const STUDENT = readSrc("pages/LiveExamStudent.tsx");
@@ -186,16 +185,27 @@ test("the theme is persisted on the exam row, not held in a window", () => {
   );
 });
 
-test("the last live_session_sync in the apply file is the one carrying every setting", () => {
-  // Several sections of the paste-once file redefine live_session_sync, and
-  // whichever runs LAST is the one the database keeps. That is the only ordering
-  // property that matters, and asserting "nothing redefines it after this point"
-  // was a proxy for it that expired the moment another setting was added.
-  assert(APPLY.indexOf("present_show_options") > 0, "the focus screen section must be in the paste-once file");
+test("the last live_session_sync across the migrations carries every setting", () => {
+  // Several migrations redefine live_session_sync, and whichever runs LAST is
+  // the one the database keeps — CREATE OR REPLACE does not merge bodies. That
+  // is the only ordering property that matters, and asserting "nothing redefines
+  // it after this point" was a proxy for it that expired the moment another
+  // setting was added.
+  //
+  // This used to read supabase/APPLY_REMAINING.sql, a consolidated paste-once
+  // file. That file has been retired: its content stopped at 20260812000000, so
+  // pasting it after 20260815000000 silently reverted two function bodies. The
+  // migrations directory is now the deployment channel, and filename order IS
+  // apply order — so the last definition here is the one that wins.
+  const LATEST_SYNC = readdirSync(resolve(ROOT, "supabase", "migrations"))
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => readMigration(f))
+    .join("\n");
 
-  const defs = [...APPLY.matchAll(/CREATE OR REPLACE FUNCTION public\.live_session_sync/g)];
-  assert(defs.length > 0, "the file must define live_session_sync at least once");
-  const last = APPLY.slice(defs[defs.length - 1].index);
+  const defs = [...LATEST_SYNC.matchAll(/CREATE OR REPLACE FUNCTION public\.live_session_sync/g)];
+  assert(defs.length > 0, "the migrations must define live_session_sync at least once");
+  const last = LATEST_SYNC.slice(defs[defs.length - 1].index);
 
   for (const key of [
     "present_show_leaderboard",

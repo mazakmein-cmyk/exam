@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
+import { renderMathInHtml, renderMathInText, renderMathInRichText } from "@/lib/renderMath";
 import { isRichTextEmpty, countFilledOptions } from "@/lib/richText";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { tableHasColumn } from "@/lib/dbFeatures";
@@ -74,10 +74,10 @@ import {
   deleteLiveSection,
   updateLiveSection,
   syncLiveQuestionSectionLabels,
-  renumberLiveGlobalIndexes,
   renumberLiveGlobalIndexesRpc,
   reorderLiveSectionQuestions,
   fetchLiveQuestionGroupIds,
+  fetchLiveExamReadiness,
   deleteLiveQuestionsInSections,
   deleteLiveQuestionsByGroupIds,
   countLiveQuestions,
@@ -257,6 +257,37 @@ export default function LiveExamDetail() {
   };
 
   // ─── Section management ────────────────────────────────────
+
+  /**
+   * Re-read sections from the DB and resync page state, keeping the active
+   * section when it still exists. The JSON upload dialog creates and renames
+   * sections directly in the DB — without this, the page keeps showing its
+   * pre-dialog list until a manual browser refresh.
+   */
+  const refreshSectionsFromDb = async () => {
+    if (!liveExamId) return;
+    try {
+      const allSecs = await fetchLiveSections(liveExamId);
+      setAllSections(allSecs);
+      const filtered = allSecs.filter(s => s.language === activeLanguage);
+      setSections(filtered);
+
+      const stillActive = filtered.find(s => s.id === activeSection?.id) ?? null;
+      if (stillActive) {
+        setActiveSection(stillActive); // fresh row — name may have changed in the dialog
+      } else {
+        const next = filtered[0] ?? null;
+        setActiveSection(next);
+        if (next) {
+          await loadQuestions(next.id);
+        } else {
+          setQuestions([]);
+        }
+      }
+    } catch (error: any) {
+      console.error("refreshSectionsFromDb error:", error);
+    }
+  };
 
   const handleAddSection = async () => {
     if (!liveExamId) return;
@@ -448,7 +479,11 @@ export default function LiveExamDetail() {
         await updateLiveSection(s.id, { sort_order: s.sort_order });
       }
       // Play order follows section order — renumber global_index accordingly.
-      if (liveExamId) await renumberLiveGlobalIndexes(liveExamId);
+      // Server-side: play order IS the exam, so a renumber that fails partway
+      // is corruption. The client loop this replaces issued one UPDATE per
+      // question and could die on request 200 of 400, leaving an order that
+      // matched neither the old arrangement nor the new one.
+      if (liveExamId) await renumberLiveGlobalIndexesRpc(liveExamId);
       toast({ title: "Sections reordered" });
     } catch (error: any) {
       toast({ title: "Error saving order", description: error.message, variant: "destructive" });
@@ -841,10 +876,41 @@ export default function LiveExamDetail() {
   const handlePublish = async () => {
     if (!liveExamId || !exam) return;
 
-    // Validate: need at least 1 section with 1 question
-    if (sections.length === 0) {
-      toast({ title: "Cannot publish", description: "Add at least one section with questions.", variant: "destructive" });
-      return;
+    // Unpublishing back to draft is always allowed — it is the way OUT of a
+    // broken state, so gating it would trap a creator whose exam fails the
+    // check below.
+    const goingLive = exam.status === "draft";
+
+    if (goingLive) {
+      // The server's own readiness rule, not a second copy of it. start_live_session
+      // refuses on exactly these blockers, so anything shown here is something the
+      // creator would otherwise discover at go-live — in front of a room.
+      //
+      // Until now the entire check was `sections.length === 0`, whose message
+      // promised it looked for questions and never did.
+      try {
+        const issues = await fetchLiveExamReadiness(liveExamId);
+        const blockers = issues.filter((i) => i.severity === "blocker");
+        if (blockers.length > 0) {
+          const shown = blockers.slice(0, 3).map((b) => b.detail).join(" ");
+          toast({
+            title: `Cannot publish — ${blockers.length} issue${blockers.length > 1 ? "s" : ""} to fix`,
+            description: blockers.length > 3 ? `${shown} …and ${blockers.length - 3} more.` : shown,
+            variant: "destructive",
+          });
+          return;
+        }
+        const warnings = issues.filter((i) => i.severity === "warning");
+        if (warnings.length > 0) {
+          toast({
+            title: `Published with ${warnings.length} warning${warnings.length > 1 ? "s" : ""}`,
+            description: warnings[0].detail,
+          });
+        }
+      } catch (error: any) {
+        toast({ title: "Could not check the exam", description: error.message, variant: "destructive" });
+        return;
+      }
     }
 
     try {
@@ -1133,6 +1199,7 @@ export default function LiveExamDetail() {
     extras?: {
       snipUrls?: Map<string, string>;
       uploadedPdfUrl?: string;
+      onProgress?: (done: number, total: number) => void;
     }
   ): Promise<{ ok: boolean }> => {
     if (!exam || !liveExamId) return { ok: false };
@@ -1257,6 +1324,13 @@ export default function LiveExamDetail() {
       let totalSections = 0;
       let skippedNoCounterpart = 0;
 
+      // Progress for the dialog's blocking overlay. Counted separately from
+      // totalCreated: secondary questions with no primary counterpart are
+      // skipped, not created, yet still advance the bar to completion.
+      const totalPlanned = matchedOrdered.reduce((n, s) => n + s.accepted.length, 0);
+      let progressDone = 0;
+      extras?.onProgress?.(0, totalPlanned);
+
       for (const sec of matchedOrdered) {
         const target = dbSections.find(s => s.id === sec.matchedSectionId);
         if (!target) continue;
@@ -1351,6 +1425,8 @@ export default function LiveExamDetail() {
             maxQNo = Math.max(maxQNo, qNo);
             globalIdx += 1;
             totalCreated += 1;
+            progressDone += 1;
+            extras?.onProgress?.(progressDone, totalPlanned);
           }
         } else {
           // Secondary language: pair to primary BY POSITION. Primary owns q_no,
@@ -1381,6 +1457,8 @@ export default function LiveExamDetail() {
             // break the ordinal↔question mapping students are graded on.
             if (!primaryQ) {
               skippedNoCounterpart += 1;
+              progressDone += 1;
+              extras?.onProgress?.(progressDone, totalPlanned);
               continue;
             }
 
@@ -1423,6 +1501,8 @@ export default function LiveExamDetail() {
             }
 
             totalCreated += 1;
+            progressDone += 1;
+            extras?.onProgress?.(progressDone, totalPlanned);
           }
         }
 
@@ -2017,7 +2097,12 @@ export default function LiveExamDetail() {
                             )}
                           </div>
                           <div className="flex-1 space-y-1.5 min-w-0">
-                            <p className="text-sm font-medium leading-snug truncate">{plainText || "Question with image"}</p>
+                            {/* Same as ExamDetail: stripping tags leaves the LaTeX behind,
+                                so the preview has to render rather than print. */}
+                            <p
+                              className="text-sm font-medium leading-snug truncate [&_.katex-display]:inline [&_.katex-display]:m-0"
+                              dangerouslySetInnerHTML={{ __html: renderMathInText(plainText || "Question with image") }}
+                            />
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{q.answer_type}</span>
                               {hasImage && (
@@ -2137,11 +2222,17 @@ export default function LiveExamDetail() {
                             <div>
                               <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Correct Answer{q.answer_type === "multi" ? "s" : ""}</Label>
                               <div className="flex items-start gap-2.5 p-3 bg-success/[0.06] border border-success/25 rounded-xl">
-                                <span className="flex items-center justify-center h-5 w-5 rounded-full bg-success/15 shrink-0 mt-0.5">
+                                {/* Square for multi, circle for single — a round tick reads as "pick one". */}
+                                <span className={`flex items-center justify-center h-5 w-5 bg-success/15 shrink-0 mt-0.5 ${q.answer_type === "multi" ? "rounded-[5px]" : "rounded-full"}`}>
                                   <Check className="h-3 w-3 text-success" />
                                 </span>
                                 {Array.isArray(q.correct_answer) ? (
                                   <div className="space-y-1">
+                                    {q.answer_type === "multi" && (
+                                      <p className="text-[11px] font-semibold uppercase tracking-wide text-success/80">
+                                        All {q.correct_answer.length} must be selected
+                                      </p>
+                                    )}
                                     {q.correct_answer.map((ans: string, ansIdx: number) => {
                                       const idx = Number(ans);
                                       const resolved = !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
@@ -2535,6 +2626,7 @@ export default function LiveExamDetail() {
             supportedLanguages={liveLanguages}
             primaryLanguage={exam.primary_language || "en"}
             docsUrl="/json-upload-guide"
+            onSectionsChanged={refreshSectionsFromDb}
             dataSource={liveExamJsonSource}
             commitJson={commitLiveJson}
           />

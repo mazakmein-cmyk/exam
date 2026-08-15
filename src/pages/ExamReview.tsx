@@ -310,6 +310,9 @@ export default function ExamReview() {
         const sectionIds = sections.map((s: any) => s.id);
 
         // Fetch all attempts for this exam (all users).
+        // Submitted only, matching Analytics: an abandoned in-progress row would
+        // rank as a phantom session and, having no marks_score, would knock the
+        // whole exam off marks-ranking.
         // Cast to any because marks_score / marks_max were added by the marks-module
         // migration but the generated Supabase types in src/integrations/supabase/types.ts
         // haven't been regenerated — same workaround used elsewhere for marks columns.
@@ -317,6 +320,7 @@ export default function ExamReview() {
           .from("attempts")
           .select("id, user_id, section_id, score, total_questions, marks_score, marks_max, created_at")
           .in("section_id", sectionIds)
+          .not("submitted_at", "is", null)
           .order("created_at", { ascending: true })) as { data: any[] | null; error: any };
 
         if (!rankError && allExamAttempts && allExamAttempts.length > 0) {

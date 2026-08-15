@@ -10,6 +10,7 @@
  * so the same dialog serves both mock exams and live exams.
  */
 import { useEffect, useRef, useState, useMemo, useCallback, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { useToast } from "@/hooks/use-toast";
@@ -36,6 +37,7 @@ import {
   FileJson,
   Loader2,
   Pencil,
+  Plus,
 } from "lucide-react";
 import {
   parseExamJson,
@@ -47,10 +49,12 @@ import {
   type RepairCategory,
 } from "@/services/jsonImportParser";
 import { autoSnip, type SnipRequest } from "@/services/autoSnipper";
-import type {
-  JsonUploadDataSource,
-  LangStatus,
-  SectionMeta,
+import {
+  buildSectionCreationPlan,
+  type JsonUploadDataSource,
+  type LangStatus,
+  type NewSectionSpec,
+  type SectionMeta,
 } from "@/components/jsonUploadSources";
 
 const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
@@ -114,6 +118,13 @@ export type CommitJsonExtras = {
   snipUrls?: Map<string, string>;
   /** Public URL of the uploaded PDF (saved to matched sections' pdf_url). */
   uploadedPdfUrl?: string;
+  /**
+   * Called after each question lands so the dialog's blocking overlay can
+   * show real progress. Commit loops write row-by-row; without this the user
+   * stares at a frozen button, assumes a hang, and refreshes — truncating
+   * the import halfway.
+   */
+  onProgress?: (done: number, total: number) => void;
 };
 
 export type JsonUploadDialogProps = {
@@ -123,6 +134,14 @@ export type JsonUploadDialogProps = {
   supportedLanguages: string[];
   primaryLanguage: string;
   docsUrl?: string;
+  /**
+   * Fired after the dialog itself writes sections (inline rename, create-
+   * missing-sections). The page behind the modal renders its own cached
+   * section list — without this hook it keeps showing the pre-dialog state
+   * until a manual refresh. Import commits are the page's own code and
+   * resync themselves.
+   */
+  onSectionsChanged?: () => void | Promise<void>;
   /** Table-specific reads/writes — mockExamJsonSource or liveExamJsonSource. */
   dataSource: JsonUploadDataSource;
   commitJson: (
@@ -140,6 +159,7 @@ export default function JsonUploadDialog({
   supportedLanguages,
   primaryLanguage,
   docsUrl,
+  onSectionsChanged,
   dataSource,
   commitJson,
 }: JsonUploadDialogProps) {
@@ -154,6 +174,12 @@ export default function JsonUploadDialog({
   const [report, setReport] = useState<ParseReport | null>(null);
   const [mode, setMode] = useState<"replace" | "append">("append");
   const [committing, setCommitting] = useState(false);
+  // Stage + counts for the blocking import overlay (null = indeterminate).
+  const [commitProgress, setCommitProgress] = useState<{
+    stage: string;
+    done: number;
+    total: number;
+  } | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const [lastError, setLastError] = useState<{ code: DialogErrorCode; message: string } | null>(
     null
@@ -182,10 +208,20 @@ export default function JsonUploadDialog({
   // Section id currently being persisted by an inline rename (drives its spinner).
   const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
 
+  // ─── Create-missing-sections state (mismatch fix #1) ───
+  // Raw file text is kept so the report can be RE-parsed after sections are
+  // created — the parser skips question validation for unmatched sections, so
+  // patching matchedSectionId into the old report would import zero questions.
+  const [rawJsonText, setRawJsonText] = useState<string | null>(null);
+  const [showCreateSections, setShowCreateSections] = useState(false);
+  const [creatingSections, setCreatingSections] = useState(false);
+  // Per-section minutes drafts, keyed by JSON section name (mock exams only).
+  const [sectionTimeDrafts, setSectionTimeDrafts] = useState<Record<string, string>>({});
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (): Promise<Record<string, SectionMeta[]> | null> => {
     setLoadingStatus(true);
     try {
       const byLang = await dataSource.loadSectionsByLang(examId, supportedLanguages);
@@ -193,6 +229,7 @@ export default function JsonUploadDialog({
 
       const nextStatus = await dataSource.loadLangStatus(examId, supportedLanguages, byLang);
       setLangStatus(nextStatus);
+      return byLang;
     } catch (err: any) {
       console.error("JsonUploadDialog loadStatus error:", err);
       toast({
@@ -200,6 +237,7 @@ export default function JsonUploadDialog({
         description: err?.message ?? "Try closing and reopening the dialog.",
         variant: "destructive",
       });
+      return null;
     } finally {
       setLoadingStatus(false);
     }
@@ -247,6 +285,8 @@ export default function JsonUploadDialog({
           [lang]: (prev[lang] ?? []).map((s) => (s.id === sectionId ? { ...s, name } : s)),
         }));
         toast({ title: "Section renamed", description: `Now "${name}".` });
+        // Let the page behind the modal pick up the new name right away.
+        void onSectionsChanged?.();
         return true;
       } catch (err: any) {
         toast({
@@ -259,7 +299,7 @@ export default function JsonUploadDialog({
         setSavingSectionId(null);
       }
     },
-    [dataSource, sectionsByLang, toast]
+    [dataSource, sectionsByLang, toast, onSectionsChanged]
   );
 
   useEffect(() => {
@@ -269,6 +309,9 @@ export default function JsonUploadDialog({
       setSelectedLang(null);
       setMode("append");
       setLastError(null);
+      setRawJsonText(null);
+      setShowCreateSections(false);
+      setSectionTimeDrafts({});
       setPdfFile(null);
       setSnipping(false);
       setSnipProgress(null);
@@ -304,6 +347,39 @@ export default function JsonUploadDialog({
     const id = window.setInterval(() => setNowMs(Date.now()), 500);
     return () => window.clearInterval(id);
   }, [snipping]);
+
+  // While a commit runs, leaving truncates the import mid-write: questions
+  // land row by row, so a refresh keeps whatever happened to finish. Two
+  // guards for the two exits the overlay can't cover:
+  //  - beforeunload → native "leave site?" prompt on refresh / tab close.
+  //  - popstate sentinel → the SPA back button becomes a no-op: we park an
+  //    extra history entry and instantly re-push it whenever it's popped.
+  useEffect(() => {
+    if (!committing) return;
+
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    window.history.pushState({ jsonImportGuard: true }, "");
+    const onPopState = () => {
+      window.history.pushState({ jsonImportGuard: true }, "");
+      toast({
+        title: "Import in progress",
+        description: "Please wait — leaving now would keep only part of your questions.",
+      });
+    };
+    window.addEventListener("popstate", onPopState);
+
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("popstate", onPopState);
+      // Pop the sentinel (if still on top) so Back needs one press, not two.
+      if ((window.history.state as any)?.jsonImportGuard) window.history.back();
+    };
+  }, [committing, toast]);
 
   const handleUploadClick = (lang: string) => {
     setSelectedLang(lang);
@@ -353,6 +429,8 @@ export default function JsonUploadDialog({
     }
 
     setReport(result);
+    setRawJsonText(text);
+    setSectionTimeDrafts({});
     setMode("append");
     setView("preview");
   };
@@ -477,6 +555,7 @@ export default function JsonUploadDialog({
   const handleConfirm = async () => {
     if (!report || !selectedLang) return;
     setCommitting(true);
+    setCommitProgress(null);
     try {
       // Block confirm if images are required, not skipped, and we don't have snips yet.
       if (report.hasImageRegions && !skipImages && pdfFile && snipResults.size === 0) {
@@ -492,6 +571,7 @@ export default function JsonUploadDialog({
       // for future per-question manual re-snipping.
       let uploadedPdfUrl: string | undefined;
       if (pdfFile && !skipImages) {
+        setCommitProgress({ stage: "Uploading source PDF…", done: 0, total: 1 });
         try {
           const {
             data: { user },
@@ -531,14 +611,28 @@ export default function JsonUploadDialog({
           } = await supabase.auth.getUser();
           if (!user) throw new Error("Not signed in.");
           // Sequential to avoid hammering Supabase Storage; small batch in typical exams.
-          for (const [key, val] of snipResults) {
-            if (val.blob.size === 0) continue; // failed snip — skip upload
+          const uploadable = Array.from(snipResults.entries()).filter(
+            ([, v]) => v.blob.size > 0 // failed snips have empty blobs — skip
+          );
+          setCommitProgress({
+            stage: "Uploading question images…",
+            done: 0,
+            total: uploadable.length,
+          });
+          let uploadedCount = 0;
+          for (const [key, val] of uploadable) {
             const safeKey = key.replace(/[^A-Za-z0-9_-]/g, "_");
             const snipPath = `${user.id}/${examId}/auto-snip-${safeKey}-${Date.now()}.png`;
             // Student-visible image → public question-images bucket (with
             // automatic exam-pdfs fallback if that bucket doesn't exist yet).
             const publicUrl = await uploadQuestionImage(snipPath, val.blob);
             snipUrls.set(key, publicUrl);
+            uploadedCount++;
+            setCommitProgress({
+              stage: "Uploading question images…",
+              done: uploadedCount,
+              total: uploadable.length,
+            });
           }
         } catch (err: any) {
           toast({
@@ -551,14 +645,22 @@ export default function JsonUploadDialog({
       }
 
       // Step 3: Commit with extras.
+      setCommitProgress({
+        stage: "Creating sections & questions…",
+        done: 0,
+        total: totalAccepted,
+      });
       const res = await commitJson(report, mode, selectedLang, {
         snipUrls: snipUrls.size > 0 ? snipUrls : undefined,
         uploadedPdfUrl,
+        onProgress: (done, total) =>
+          setCommitProgress({ stage: "Creating sections & questions…", done, total }),
       });
 
       if (res.ok) {
         setView("languages");
         setReport(null);
+        setRawJsonText(null);
         setPdfFile(null);
         // Revoke blob URLs from this session.
         setPdfBlobUrl((prev) => {
@@ -573,6 +675,7 @@ export default function JsonUploadDialog({
       }
     } finally {
       setCommitting(false);
+      setCommitProgress(null);
     }
   };
 
@@ -587,6 +690,99 @@ export default function JsonUploadDialog({
         description: "Select the text manually and copy it.",
         variant: "destructive",
       });
+    }
+  };
+
+  // ─── Create-missing-sections flow ────────────────────────────────────
+  const unmatchedForCreate = useMemo(
+    () =>
+      report?.perSection
+        .filter((s) => s.matchedSectionId === null)
+        .map((s) => ({ name: s.jsonName, questionCount: s.questionCountInJson })) ?? [],
+    [report]
+  );
+
+  const isValidMinutes = (v: string | undefined): boolean => {
+    if (!v || !v.trim()) return false;
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 1 && n <= 999;
+  };
+
+  const allSectionTimesValid =
+    !dataSource.requiresSectionTime ||
+    unmatchedForCreate.every((u) => isValidMinutes(sectionTimeDrafts[u.name]));
+
+  const handleCreateSections = async () => {
+    if (!report || unmatchedForCreate.length === 0) return;
+    if (dataSource.requiresSectionTime && !allSectionTimesValid) return;
+
+    setCreatingSections(true);
+    try {
+      const specs: NewSectionSpec[] = unmatchedForCreate.map((u) => ({
+        name: u.name,
+        ...(dataSource.requiresSectionTime
+          ? { timeMinutes: Number(sectionTimeDrafts[u.name]) }
+          : {}),
+      }));
+      const rows = buildSectionCreationPlan(specs, sectionsByLang, supportedLanguages);
+      await dataSource.createSections(examId, rows);
+
+      // Refresh sections + counts, then RE-parse the same file against the new
+      // section list: the parser never validated questions inside unmatched
+      // sections, so the old report can't simply be patched.
+      const byLang = await loadStatus();
+      const lang = report.language;
+      let rematched = false;
+      if (rawJsonText && byLang) {
+        const result = parseExamJson(rawJsonText, {
+          language: lang,
+          selectedLanguage: lang,
+          isPrimary: lang === primaryLanguage,
+          supportedLanguages,
+          examSectionsForLanguage: byLang[lang] ?? [],
+        });
+        if (result.ok) {
+          setReport(result);
+          rematched = true;
+          // Newly matched sections may reference PDF images — clear old snips
+          // so the auto-snip pipeline re-runs over the full matched set.
+          setSnipResults((prev) => {
+            prev.forEach((v) => v.thumbUrl && URL.revokeObjectURL(v.thumbUrl));
+            return new Map();
+          });
+        }
+      }
+
+      setShowCreateSections(false);
+      setSectionTimeDrafts({});
+      // The page behind the modal caches its section list — sync it now so
+      // the new sections are already there when the dialog closes.
+      void onSectionsChanged?.();
+      if (rematched) {
+        toast({
+          title: `${specs.length} section${specs.length === 1 ? "" : "s"} created`,
+          description:
+            supportedLanguages.length > 1
+              ? `Created in every language (${supportedLanguages.map(langLabel).join(", ")}) — review below, then confirm the import.`
+              : "The JSON now matches — review below, then confirm the import.",
+        });
+      } else {
+        // Sections exist but the preview couldn't refresh — tell the user how
+        // to get back to a clean state instead of leaving a stale mismatch.
+        toast({
+          title: "Sections created",
+          description: "Couldn't refresh this preview — go back and upload the file again.",
+          variant: "destructive",
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Couldn't create sections",
+        description: err?.message ?? "Try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setCreatingSections(false);
     }
   };
 
@@ -699,7 +895,9 @@ export default function JsonUploadDialog({
             onBack={() => {
               setView("languages");
               setReport(null);
+              setRawJsonText(null);
             }}
+            onCreateSectionsClick={() => setShowCreateSections(true)}
             onConfirm={handleConfirm}
             confirmDisabled={confirmDisabled}
             confirmLabel={confirmLabel}
@@ -727,6 +925,121 @@ export default function JsonUploadDialog({
           className="hidden"
           onChange={handlePdfPick}
         />
+
+        {/* Create-missing-sections modal — mismatch fix #1. Cancel/X writes
+            nothing; sections are only created on the Create button. */}
+        {showCreateSections && report && (
+          <Dialog
+            open
+            onOpenChange={(o) => {
+              if (!o && !creatingSections) setShowCreateSections(false);
+            }}
+          >
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Plus className="h-5 w-5 text-primary" />
+                  Create missing sections
+                </DialogTitle>
+                <DialogDescription>
+                  {dataSource.requiresSectionTime
+                    ? "These sections from your JSON will be added to this exam. Set a time for each — it's required."
+                    : "These sections from your JSON will be added to this exam. Question timers come from the JSON itself."}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {unmatchedForCreate.map((u) => {
+                  const draft = sectionTimeDrafts[u.name] ?? "";
+                  const invalid =
+                    dataSource.requiresSectionTime && draft.trim() !== "" && !isValidMinutes(draft);
+                  return (
+                    <div
+                      key={u.name}
+                      className="flex items-center justify-between gap-3 rounded-md border p-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate" title={u.name}>
+                          {u.name}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {u.questionCount} question{u.questionCount === 1 ? "" : "s"} in JSON
+                        </div>
+                      </div>
+                      {dataSource.requiresSectionTime && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <input
+                            type="number"
+                            min={1}
+                            max={999}
+                            step={1}
+                            value={draft}
+                            onChange={(e) =>
+                              setSectionTimeDrafts((prev) => ({
+                                ...prev,
+                                [u.name]: e.target.value,
+                              }))
+                            }
+                            disabled={creatingSections}
+                            placeholder="e.g. 60"
+                            aria-label={`Time in minutes for ${u.name}`}
+                            className={`w-24 rounded-md border bg-background px-2 py-1.5 text-sm text-right outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 ${
+                              invalid ? "border-red-500" : ""
+                            }`}
+                          />
+                          <span className="text-xs text-muted-foreground">min</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {dataSource.requiresSectionTime && !allSectionTimesValid && (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Enter a whole number of minutes (1–999) for every section to continue.
+                </p>
+              )}
+
+              {supportedLanguages.length > 1 && (
+                <div className="flex items-start gap-2 rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-300">
+                  <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>
+                    Each section is also created in{" "}
+                    <strong>
+                      {supportedLanguages
+                        .filter((l) => l !== (report.language ?? ""))
+                        .map(langLabel)
+                        .join(", ")}
+                    </strong>{" "}
+                    with the same name, so translations stay paired. Rename those from the upload
+                    screen when you add that language's JSON.
+                  </span>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowCreateSections(false)}
+                  disabled={creatingSections}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleCreateSections}
+                  disabled={creatingSections || !allSectionTimesValid || unmatchedForCreate.length === 0}
+                >
+                  {creatingSections && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Create {unmatchedForCreate.length} section
+                  {unmatchedForCreate.length === 1 ? "" : "s"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
 
         {/* Re-snip overlay — uses PdfSnipper to manually crop a single question */}
         {resnipForKey && pdfBlobUrl && (
@@ -764,6 +1077,58 @@ export default function JsonUploadDialog({
             </DialogContent>
           </Dialog>
         )}
+
+        {/* Import-in-progress shield. Full-screen and portaled to <body> so it
+            sits above the whole app and nothing else is clickable while rows
+            are being written. DialogContent is transformed (centering), which
+            would re-anchor a `fixed` child to the dialog box — hence the
+            portal. Refresh/Back are separately guarded by the effects above. */}
+        {committing &&
+          createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-sm"
+              role="alertdialog"
+              aria-modal="true"
+              aria-label="Import in progress — do not close this tab"
+            >
+              <div className="mx-4 w-full max-w-md rounded-lg border bg-card p-6 shadow-xl">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" />
+                  <p className="text-sm font-semibold">
+                    {commitProgress?.stage ?? "Importing…"}
+                  </p>
+                  {commitProgress && commitProgress.total > 0 && (
+                    <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                      {commitProgress.done}/{commitProgress.total}
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+                  {commitProgress && commitProgress.total > 0 ? (
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{
+                        width: `${Math.min(100, Math.round((commitProgress.done / commitProgress.total) * 100))}%`,
+                      }}
+                    />
+                  ) : (
+                    <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
+                  )}
+                </div>
+
+                <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    <strong>Don't refresh, press Back, or close this tab.</strong> Questions are
+                    written one by one — leaving now would keep only part of your sections and
+                    questions.
+                  </span>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
       </DialogContent>
     </Dialog>
   );
@@ -1101,6 +1466,7 @@ function PreviewView({
   copyState,
   onCopyPrompt,
   onBack,
+  onCreateSectionsClick,
   onConfirm,
   confirmDisabled,
   confirmLabel,
@@ -1132,6 +1498,7 @@ function PreviewView({
   copyState: "idle" | "copied";
   onCopyPrompt: (prompt: string) => void;
   onBack: () => void;
+  onCreateSectionsClick: () => void;
   onConfirm: () => void;
   confirmDisabled: boolean;
   confirmLabel: string;
@@ -1281,8 +1648,24 @@ function PreviewView({
               </div>
             </div>
 
+            {/* Fastest fix — create the missing sections right here. Primary
+                uploads only: sections born from a secondary upload would have
+                no primary counterpart, so their questions could never pair. */}
+            {report.isPrimary && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-400 bg-white p-3 dark:bg-amber-950/40">
+                <div className="text-sm text-amber-900 dark:text-amber-200">
+                  <strong>Fastest fix:</strong> add {report.unmatchedSections.length === 1 ? "this section" : "these sections"} to the exam now.
+                </div>
+                <Button type="button" size="sm" onClick={onCreateSectionsClick}>
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Create {report.unmatchedSections.length} missing section
+                  {report.unmatchedSections.length === 1 ? "" : "s"}…
+                </Button>
+              </div>
+            )}
+
             <p className="text-sm text-amber-900 mb-2">
-              <strong>Two ways to fix this:</strong>
+              <strong>{report.isPrimary ? "Or fix it another way:" : "Two ways to fix this:"}</strong>
             </p>
             <ol className="text-sm text-amber-900 space-y-1 mb-3 list-decimal pl-5">
               <li>Rename your <strong>exam</strong> sections (in this app) to match the JSON, or</li>

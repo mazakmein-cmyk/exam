@@ -602,7 +602,7 @@ const ExamIntro = () => {
                       <div className="mx-auto w-full max-w-7xl">
                         <div className="flex items-center gap-2">
                             <span className="text-[10px] font-bold text-[#A855F7] uppercase tracking-widest bg-[#6C3EF4]/10 border border-[#6C3EF4]/20 px-2 py-0.5 rounded-full">
-                                {isPreview ? "Preview" : "Exam"}
+                                {isPreview ? "Student view" : "Exam"}
                             </span>
                             <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                                 Step {step + 1} of 2 · {step === 0 ? "Before you begin" : "Exam instructions"}
@@ -628,15 +628,27 @@ const ExamIntro = () => {
                       <div className="mx-auto w-full max-w-7xl space-y-5">
                       {step === 0 ? (
                         <>
-                        {/* Creator preview notice — a preview is never scored or saved */}
+                        {/* Creator "student view" notice. The old copy led with the
+                            disclaimer — what the mode is *not*. That answers a
+                            question the creator never asked and leaves them with no
+                            idea what to look for. Lead instead with the promise
+                            (this is your students' screen, word for word), give
+                            them three concrete things to judge, and demote the
+                            not-scored fact to the reassurance it actually is. */}
                         {isPreview && (
                             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 flex items-start gap-3">
                                 <Eye className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-                                <div className="space-y-0.5">
-                                    <h3 className="font-semibold text-foreground text-sm">Preview mode</h3>
+                                <div className="space-y-1.5">
+                                    <h3 className="font-semibold text-foreground text-sm">
+                                        This is exactly what your students will see
+                                    </h3>
                                     <p className="text-xs text-muted-foreground leading-relaxed">
-                                        You're viewing your own exam as a creator. Nothing you answer here is
-                                        scored, saved, or counted in analytics.
+                                        Read it the way they will — cold, with the clock running. Do the
+                                        instructions answer their questions before question 1? Is the time
+                                        fair? Does every language read right?
+                                    </p>
+                                    <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                                        Nothing here is scored or saved — answer freely and leave whenever you like.
                                     </p>
                                 </div>
                             </div>
@@ -727,7 +739,8 @@ const ExamIntro = () => {
                                 )}
                                 <p className="text-sm text-muted-foreground leading-relaxed">
                                     This paper has no instructions of its own beyond the general ones on the
-                                    previous screen. The clock starts when you press {isPreview ? "Preview" : "Start"}.
+                                    previous screen. The clock starts when you press{" "}
+                                    {isPreview ? "Start as a student" : "Start"}.
                                 </p>
                             </div>
                         )}
@@ -883,9 +896,16 @@ const ExamIntro = () => {
                             <div className="lg:col-span-2 rounded-xl border border-border/60 bg-secondary/30 p-4 space-y-3">
                                 <h3 className="font-semibold text-foreground flex items-center gap-2 text-sm">
                                     <Globe className="h-4 w-4 text-[#6C3EF4]" />
-                                    Choose Your Language
+                                    {isPreview ? "Which language are you checking?" : "Choose Your Language"}
                                 </h3>
-                                <p className="text-xs text-muted-foreground">This exam is available in multiple languages. Select your preferred language to begin.</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {isPreview
+                                        // A translated paper is the thing most worth
+                                        // sitting through, and the one a creator is
+                                        // least likely to think of. Say so here.
+                                        ? "Your students pick one of these and never see the others. Sit each one at least once — a translation that reads oddly only shows up under the clock."
+                                        : "This exam is available in multiple languages. Select your preferred language to begin."}
+                                </p>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                     {publishedLanguages.map((langCode) => {
                                         const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === langCode);
@@ -995,7 +1015,7 @@ const ExamIntro = () => {
                                         className="shrink-0 h-11 px-6 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-base shadow-lg shadow-[#6C3EF4]/30 hover:shadow-xl hover:shadow-[#6C3EF4]/40 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
                                     >
                                         {isPreview ? <Eye className="h-5 w-5" /> : <BookOpen className="h-5 w-5" />}
-                                        {isPreview ? "Preview Exam" : "Start Exam"}
+                                        {isPreview ? "Start as a student" : "Start Exam"}
                                     </button>
                                 </div>
                             </>

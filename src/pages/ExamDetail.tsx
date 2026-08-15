@@ -661,6 +661,48 @@ export default function ExamDetail() {
     setQuestions(questionsData || []);
   };
 
+  /**
+   * Re-read sections from the DB and resync page state, keeping the active
+   * section when it still exists. The JSON upload dialog creates and renames
+   * sections directly in the DB — without this, the page keeps showing its
+   * pre-dialog list until a manual browser refresh.
+   */
+  const refreshSectionsFromDb = async () => {
+    if (!examId) return;
+    const { data, error } = await supabase
+      .from("sections")
+      .select("*")
+      .eq("exam_id", examId)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (error) {
+      console.error("refreshSectionsFromDb error:", error);
+      return;
+    }
+    const allSecs = (data || []) as Section[];
+    setAllSections(allSecs);
+
+    // Same language filter + legacy fallback as fetchExamData.
+    let currentSections = allSecs.filter(s => (s as any).language === activeLanguage);
+    if (currentSections.length === 0 && allSecs.length > 0) {
+      currentSections = allSecs.filter(s => !(s as any).language || (s as any).language === "en");
+    }
+    setSections(currentSections);
+
+    const stillActive = currentSections.find(s => s.id === section?.id) ?? null;
+    if (stillActive) {
+      setSection(stillActive); // fresh row — name/time may have changed in the dialog
+    } else {
+      const next = currentSections[0] ?? null;
+      setSection(next);
+      if (next) {
+        fetchQuestions(next.id);
+      } else {
+        setQuestions([]);
+      }
+    }
+  };
+
   const handleSaveExam = async (): Promise<boolean> => {
     if (!exam) return false;
 
@@ -2307,6 +2349,7 @@ export default function ExamDetail() {
     extras?: {
       snipUrls?: Map<string, string>;
       uploadedPdfUrl?: string;
+      onProgress?: (done: number, total: number) => void;
     }
   ): Promise<{ ok: boolean }> => {
     if (!exam || !examId) return { ok: false };
@@ -2333,6 +2376,20 @@ export default function ExamDetail() {
     }
 
     try {
+      // Sections can be created and renamed from inside the dialog moments
+      // before this runs, so resolve sibling/group lookups against a fresh
+      // read — the page's cached allSections predates the dialog (same rule
+      // as commitLiveJson). A stale lookup here silently skips the second-
+      // language placeholder propagation for dialog-created sections.
+      const { data: freshSecRows, error: freshSecErr } = await supabase
+        .from("sections")
+        .select("*")
+        .eq("exam_id", examId)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
+      if (freshSecErr) throw freshSecErr;
+      const dbSections = (freshSecRows || []) as Section[];
+
       const sectionIdsForLang = report.perSection
         .filter((s) => s.matchedSectionId)
         .map((s) => s.matchedSectionId!) as string[];
@@ -2356,7 +2413,7 @@ export default function ExamDetail() {
 
         // Primary replace → also delete siblings linked by question_group_id
         if (isPrimary && groupIds.length > 0) {
-          const siblingSectionIds = allSections
+          const siblingSectionIds = dbSections
             .filter((s) => s.language !== language)
             .map((s) => s.id);
           if (siblingSectionIds.length > 0) {
@@ -2372,6 +2429,11 @@ export default function ExamDetail() {
 
       let totalCreated = 0;
       let totalSections = 0;
+
+      // Every accepted question counts once toward the dialog's progress bar,
+      // sibling-language writes included in its step.
+      const totalPlanned = matched.reduce((n, s) => n + s.accepted.length, 0);
+      extras?.onProgress?.(0, totalPlanned);
 
       // Persist the AI's image_region so auto-snip can be RE-RUN after import
       // (bad crop / skipped images are otherwise unrecoverable — the bbox used
@@ -2407,7 +2469,7 @@ export default function ExamDetail() {
       for (const sec of matched) {
         const matchedSectionId = sec.matchedSectionId!;
         const accepted = sec.accepted;
-        const matchedSec = allSections.find((s) => s.id === matchedSectionId);
+        const matchedSec = dbSections.find((s) => s.id === matchedSectionId);
 
         // Compute startQNo for append (Replace cleared the section)
         let startQNo = 1;
@@ -2424,7 +2486,7 @@ export default function ExamDetail() {
 
         if (isPrimary) {
           const siblingSections = matchedSec?.section_group_id
-            ? allSections.filter(
+            ? dbSections.filter(
                 (s) =>
                   s.section_group_id === matchedSec!.section_group_id &&
                   s.id !== matchedSectionId
@@ -2503,12 +2565,13 @@ export default function ExamDetail() {
               }
             }
             totalCreated++;
+            extras?.onProgress?.(totalCreated, totalPlanned);
           }
         } else {
           // Secondary: pair to primary by position; permissive
           let primaryQuestions: any[] = [];
           if (matchedSec?.section_group_id) {
-            const primSec = allSections.find(
+            const primSec = dbSections.find(
               (s) =>
                 s.section_group_id === matchedSec.section_group_id &&
                 s.language === primaryLanguage
@@ -2588,6 +2651,7 @@ export default function ExamDetail() {
               } as any);
             }
             totalCreated++;
+            extras?.onProgress?.(totalCreated, totalPlanned);
           }
         }
 
@@ -2643,7 +2707,9 @@ export default function ExamDetail() {
         }
       }
 
-      // [4] Refresh active section's questions + marks
+      // [4] Refresh active section's questions + marks, and resync the page's
+      // section list — sections may have been created/renamed in the dialog,
+      // and the creator shouldn't need a browser refresh to see them.
       if (section) {
         const { data: refreshedQs } = await supabase
           .from("parsed_questions")
@@ -2653,6 +2719,7 @@ export default function ExamDetail() {
         setQuestions((refreshedQs || []) as any);
       }
       await marksModule.refresh();
+      await refreshSectionsFromDb();
 
       toast({
         title: "Import complete",
@@ -3065,9 +3132,9 @@ export default function ExamDetail() {
           {supportedLanguages.length > 1 ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground">
+                <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground" title="Sit your own paper the way a student will — pick the language to check">
                   <Eye className="mr-2 h-4 w-4" />
-                  Preview <ChevronDown className="ml-1 h-3 w-3 opacity-60" />
+                  Student view <ChevronDown className="ml-1 h-3 w-3 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
@@ -3083,16 +3150,16 @@ export default function ExamDetail() {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
+            <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground" title="Sit your own paper the way a student will" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
               <Eye className="mr-2 h-4 w-4" />
-              Preview
+              Student view
             </Button>
           )}
 
           {supportedLanguages.length > 1 ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground">
+                <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground" aria-label="Student view" title="Sit your own paper the way a student will">
                   <Eye className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -3109,7 +3176,7 @@ export default function ExamDetail() {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
+            <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground" aria-label="Student view" title="Sit your own paper the way a student will" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
               <Eye className="h-4 w-4" />
             </Button>
           )}
@@ -3664,7 +3731,16 @@ export default function ExamDetail() {
                                     const displayText = questionSectionMatch
                                       ? questionSectionMatch[1].replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim()
                                       : q.text.replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim();
-                                    return <p className="text-sm font-medium leading-snug truncate">{displayText || 'Question with passage'}</p>;
+                                    // Tags are stripped for a one-line preview, but the LaTeX
+                                    // inside survives that strip — printed raw it reads
+                                    // "$(Use~\pi=\frac{22}{7})$" while the expanded Question
+                                    // Text box right below shows it properly rendered.
+                                    return (
+                                      <p
+                                        className="text-sm font-medium leading-snug truncate [&_.katex-display]:inline [&_.katex-display]:m-0"
+                                        dangerouslySetInnerHTML={{ __html: renderMathInText(displayText || 'Question with passage') }}
+                                      />
+                                    );
                                   })() : (
                                     <p className="text-sm font-medium leading-snug">Question with image</p>
                                   )}
@@ -3797,11 +3873,19 @@ export default function ExamDetail() {
                                         )}
                                         <div>
                                           <Label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question Text</Label>
-                                          <div className="text-sm leading-relaxed p-3.5 bg-muted/40 border border-border/60 rounded-xl" dangerouslySetInnerHTML={{
-                                            __html: renderMathInHtml(hasPassageSection && questionSectionMatch
-                                              ? questionSectionMatch[1]
-                                              : q.text)
-                                          }} />
+                                          {/* The question as typed: editor markup stripped, LaTeX
+                                              left as source. The row above shows how it READS;
+                                              this shows what was WRITTEN — which the renderer hides,
+                                              since it silently repairs import damage like the eaten
+                                              \f of \frac. Styling spans are the editor's noise, not
+                                              the author's text, so they come out. */}
+                                          <div className="text-sm leading-relaxed p-3.5 bg-muted/40 border border-border/60 rounded-xl break-words">
+                                            {htmlToPlainText(
+                                              hasPassageSection && questionSectionMatch
+                                                ? questionSectionMatch[1]
+                                                : q.text
+                                            )}
+                                          </div>
                                         </div>
                                       </>
                                     );
@@ -3877,23 +3961,34 @@ export default function ExamDetail() {
                                             </SelectContent>
                                           </Select>
                                         ) : q.answer_type === "multi" ? (
+                                          /*
+                                            Square tick boxes, sized and rounded explicitly: `rounded-sm`
+                                            resolves off --radius (0.875rem), which on a 16px control is a
+                                            full circle, so the stock checkbox read as a single-answer radio.
+                                          */
                                           <div className="space-y-2 border border-border/70 rounded-xl p-3 bg-muted/30">
+                                            <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                                              <ListChecks className="h-3.5 w-3.5" />
+                                              Multiple correct — tick every option that is right
+                                            </p>
                                             {(Array.isArray(q.options) ? q.options : []).map((opt: string, idx: number) => {
                                               const idxStr = String(idx);
                                               const hasImage = Array.isArray(q.option_image_urls) && !!q.option_image_urls[idx];
                                               const isEmpty = !isOptionFilled(opt, hasImage);
                                               const draftArr = Array.isArray(inlineAnswerDraft) ? inlineAnswerDraft : [];
+                                              const isChecked = draftArr.includes(idxStr);
                                               return (
                                                 <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
                                                   <Checkbox
                                                     id={`inline-opt-${q.id}-${idx}`}
-                                                    checked={draftArr.includes(idxStr)}
+                                                    className="h-[18px] w-[18px] rounded-[4px]"
+                                                    checked={isChecked}
                                                     onCheckedChange={() => toggleInlineMultiAnswer(idx)}
                                                     disabled={isEmpty}
                                                   />
                                                   <label
                                                     htmlFor={`inline-opt-${q.id}-${idx}`}
-                                                    className="text-sm font-medium leading-none cursor-pointer"
+                                                    className={`text-sm leading-none cursor-pointer ${isChecked ? "font-semibold text-foreground" : "font-medium"}`}
                                                   >
                                                     {String.fromCharCode(65 + idx)}. {!isRichTextEmpty(opt) ? htmlToPlainText(opt) : hasImage ? "(image option)" : "(empty)"}
                                                   </label>
@@ -3922,11 +4017,17 @@ export default function ExamDetail() {
                                       </div>
                                     ) : (
                                       <div className="flex items-start gap-2.5 p-3 bg-success/[0.06] border border-success/25 rounded-xl">
-                                        <span className="flex items-center justify-center h-5 w-5 rounded-full bg-success/15 shrink-0 mt-0.5">
+                                        {/* Square for multi, circle for single — same grammar as the picker. */}
+                                        <span className={`flex items-center justify-center h-5 w-5 bg-success/15 shrink-0 mt-0.5 ${q.answer_type === "multi" ? "rounded-[5px]" : "rounded-full"}`}>
                                           <Check className="h-3 w-3 text-success" />
                                         </span>
                                         {Array.isArray(q.correct_answer) ? (
                                           <div className="space-y-1">
+                                            {q.answer_type === "multi" && (
+                                              <p className="text-[11px] font-semibold uppercase tracking-wide text-success/80">
+                                                All {q.correct_answer.length} must be selected
+                                              </p>
+                                            )}
                                             {q.correct_answer.map((ans: string, ansIdx: number) => {
                                               const idx = Number(ans);
                                               const resolved = !isNaN(idx) && Array.isArray(q.options) && idx >= 0 && idx < q.options.length
@@ -4582,6 +4683,7 @@ export default function ExamDetail() {
           supportedLanguages={supportedLanguages}
           primaryLanguage={primaryLanguage}
           docsUrl="/json-upload-guide"
+          onSectionsChanged={refreshSectionsFromDb}
           dataSource={mockExamJsonSource}
           commitJson={commitJson}
         />

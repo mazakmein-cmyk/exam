@@ -16,7 +16,7 @@
  *       and zooms the whole question in front of the class.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -51,7 +51,19 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\
 const SQL = readMigration("20260810000000_live_v2_present_reveal_answer.sql");
 const SECURITY_SQL = readMigration("20260729020000_live_exam_security.sql");
 const FOUNDATION_SQL = readMigration("20260802000000_live_v2_foundations.sql");
-const APPLY = readFileSync(resolve(ROOT, "supabase", "APPLY_REMAINING.sql"), "utf-8");
+/**
+ * Every migration, concatenated in filename order — which IS apply order.
+ *
+ * Replaces a read of supabase/APPLY_REMAINING.sql, a consolidated paste-once
+ * file now retired: its content stopped at 20260812000000, so pasting it after
+ * 20260815000000 re-ran two older function bodies and reverted that fix without
+ * an error. The migrations directory cannot fall behind itself.
+ */
+const APPLY_ORDER = readdirSync(resolve(ROOT, "supabase", "migrations"))
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => readMigration(f))
+  .join("\n");
 const PRESENT = readSrc("pages/LiveExamPresent.tsx");
 const CONTROL = readSrc("pages/LiveExamControl.tsx");
 const STUDENT = readSrc("pages/LiveExamStudent.tsx");
@@ -285,7 +297,19 @@ test("the setting is persisted by the control room and previewed over the channe
 
 test("live_session_sync carries it, or a reloaded projector loses the setting", () => {
   assert(/'present_reveal_answer',\s+v_exam\.present_reveal_answer/.test(SQL), "the RPC must return it");
-  assert(APPLY.includes("present_reveal_answer"), "and the paste-once file must contain this migration");
+  // Was: "and the paste-once file must contain this migration", against
+  // supabase/APPLY_REMAINING.sql. That file is retired — its content stopped at
+  // 20260812000000, so re-pasting it after 20260815000000 silently reverted two
+  // function bodies. What actually has to hold is that the LAST definition of
+  // live_session_sync still returns this key, since CREATE OR REPLACE does not
+  // merge and only the final one survives.
+  const lastSyncDef = APPLY_ORDER.slice(
+    APPLY_ORDER.lastIndexOf("CREATE OR REPLACE FUNCTION public.live_session_sync")
+  );
+  assert(
+    lastSyncDef.includes("present_reveal_answer"),
+    "the final live_session_sync drops it — the projector would silently lose the setting"
+  );
 });
 
 test("the redefinition did not quietly drop what it inherited", () => {

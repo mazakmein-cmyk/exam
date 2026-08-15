@@ -1,4 +1,4 @@
-import { useEffect, useState, Fragment, useMemo } from "react";
+import { useEffect, useState, Fragment, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
@@ -61,6 +61,18 @@ interface QuestionStats {
 
 import { useUserRole } from "@/hooks/use-user-role";
 
+/**
+ * Read an object-shaped correct answer ({ answer: ... } / { value: ... }).
+ * Tested against null/undefined rather than truthiness: a legitimate answer of
+ * 0 (a NAT question answered zero), false, or "" would otherwise read as
+ * "no answer stored" and mark every student wrong forever.
+ */
+const readObjectAnswer = (o: any) =>
+  o?.answer !== undefined && o?.answer !== null ? o.answer : o?.value;
+
+/** True when a stored correct answer is actually present (0 and "" count). */
+const hasAnswerValue = (v: any) => v !== null && v !== undefined && v !== "";
+
 export default function Analytics() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -79,9 +91,16 @@ export default function Analytics() {
   // Rank data for student history: maps attemptId -> { rank, total }
   const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
   // Maps examId -> Set of firstSectionIds (used for session-based history grouping)
-  const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, Set<string>>>({}); 
+  const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, Set<string>>>({});
+  // True once the rank pass has finished, however it finished. An empty
+  // firstSectionsByExamId is a legitimate result (every attempted exam
+  // unpublished, sections deleted, query failed), so it cannot double as
+  // "still loading" or the history list spins forever.
+  const [ranksResolved, setRanksResolved] = useState(false);
   // Creator leaderboard: top 3 sessions ranked by marks (when available) or score
   const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; username: string; displayName: string; totalScore: number; totalQuestions: number; totalMarks: number; rankedByMarks: boolean }[]>([]);
+  // Monotonic tag for in-flight fetches; see fetchData.
+  const fetchSeqRef = useRef(0);
   const toggleSection = (sectionName: string) => {
     const newCollapsed = new Set(collapsedSections);
     if (newCollapsed.has(sectionName)) {
@@ -105,6 +124,22 @@ export default function Analytics() {
   }, [examId, role, roleLoading]);
 
   const fetchData = async () => {
+    // This component is reused across exams — only the ?examId changes — so
+    // every load must (a) clear the previous exam's data up front, because some
+    // setters below only run when the new exam has data, and (b) tag itself, so
+    // a slower earlier request can't land on top of a newer one.
+    const mySeq = ++fetchSeqRef.current;
+    const isStale = () => fetchSeqRef.current !== mySeq;
+
+    setLeaderboard([]);
+    setQuestionStats([]);
+    setAttempts([]);
+    setExamName("");
+    setFirstSectionIds(new Set());
+    setLastSectionIds(new Set());
+    setExamRanks({});
+    setFirstSectionsByExamId({});
+
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
@@ -166,17 +201,28 @@ export default function Analytics() {
               )
             `)
             .eq("section.exam_id", examId)
-            .order("submitted_at", { ascending: false }),
+            // nullsFirst: false is load-bearing, not cosmetic. Postgres sorts
+            // DESC as NULLS FIRST, and an attempt row is created at section
+            // start with submitted_at NULL — so every abandoned attempt sorts
+            // ahead of every completed one and, once the exam outgrows the
+            // 1000-row cap, progressively evicts the real data this whole
+            // dashboard is computed from.
+            .order("submitted_at", { ascending: false, nullsFirst: false }),
           supabase
             .from("parsed_questions")
             .select(`
               *,
               section:sections!inner(id, name, exam_id, sort_order)
             `)
+            // Match what ExamSimulator actually serves (it filters identically):
+            // counting excluded questions here inflates every attempt's
+            // denominator and silently deflates everyone's accuracy.
+            .eq("is_excluded", false)
             .eq("section.exam_id", examId),
         ]);
 
         if (examError) throw examError;
+        if (isStale()) return;
         setExamName(examData.name);
         const examCreatorId = examData.user_id; // Store creator ID to filter out their attempts
 
@@ -272,7 +318,7 @@ export default function Analytics() {
             } else {
               // Fallback: re-grade only for legacy responses with null is_correct
               const question = questionsById.get(r.question_id);
-              if (question && question.correct_answer) {
+              if (question && hasAnswerValue(question.correct_answer)) {
                 const selected = r.selected_answer;
                 const correct = question.correct_answer;
                 let isCorrect = false;
@@ -286,8 +332,8 @@ export default function Analytics() {
                       isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
                     }
                   } else if (typeof correct === 'object' && correct !== null) {
-                    const val = (correct as any).answer || (correct as any).value;
-                    isCorrect = normalize(val) === normalize(selected);
+                    const val = readObjectAnswer(correct);
+                    isCorrect = hasAnswerValue(val) && normalize(val) === normalize(selected);
                   } else {
                     isCorrect = normalize(selected) === normalize(correct);
                   }
@@ -315,6 +361,7 @@ export default function Analytics() {
         const correctedAttemptsById = new Map<string, any>();
         correctedAttempts.forEach((a: any) => correctedAttemptsById.set(a.id, a));
 
+        if (isStale()) return;
         setAttempts(correctedAttempts);
 
         // --- Compute Top 3 Leaderboard for Creator View ---
@@ -431,10 +478,16 @@ export default function Analytics() {
 
               const profileMap = new Map((profilesData || []).map((p: any) => [p.id, p]));
 
+              if (isStale()) return;
+
               setLeaderboard(top3.map(s => {
                 const profile = profileMap.get(s.userId) as any;
-                const displayName = profile?.username || 'Unknown';
-                const username = profile?.username || s.userId;
+                const displayName = profile?.username || 'Deleted user';
+                // attempts.user_id has no FK to profiles, so a deleted account
+                // leaves its attempts (and its Top-3 slot) behind. Never fall
+                // back to s.userId: that publishes the raw auth UUID as a
+                // "username" on the creator's leaderboard.
+                const username = profile?.username || '—';
                 return { rank: s.rank, userId: s.userId, username, displayName, totalScore: s.totalScore, totalQuestions: s.totalQuestions, totalMarks: s.totalMarks, rankedByMarks: rankByMarks };
               }));
             }
@@ -496,7 +549,7 @@ export default function Analytics() {
 
               if (r.is_correct !== null && r.is_correct !== undefined) {
                 isCorrect = r.is_correct === true;
-              } else if (stat.correctAnswer) {
+              } else if (hasAnswerValue(stat.correctAnswer)) {
                 // Fallback: re-grade only for null is_correct (legacy data)
                 const selected = r.selected_answer;
                 const correct = stat.correctAnswer;
@@ -510,8 +563,8 @@ export default function Analytics() {
                       isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
                     }
                   } else if (typeof correct === 'object' && correct !== null) {
-                    const val = (correct as any).answer || (correct as any).value;
-                    isCorrect = normalize(val) === normalize(selected);
+                    const val = readObjectAnswer(correct);
+                    isCorrect = hasAnswerValue(val) && normalize(val) === normalize(selected);
                   } else {
                     isCorrect = normalize(selected) === normalize(correct);
                   }
@@ -524,7 +577,14 @@ export default function Analytics() {
                 stat.unansweredCount++;
               } else {
                 stat.wrongCount++;
-                const ansKey = Array.isArray(r.selected_answer) ? r.selected_answer.join(",") : String(r.selected_answer);
+                // selected_answer is client-supplied JSONB and the responses
+                // INSERT policy only checks attempt ownership — it never bounds
+                // shape or size. Cap the key before it becomes an object
+                // property and gets rendered into the misconceptions panel.
+                const ansKey = (Array.isArray(r.selected_answer)
+                  ? r.selected_answer.join(",")
+                  : String(r.selected_answer)
+                ).slice(0, 120);
                 stat.commonWrongAnswers[ansKey] = (stat.commonWrongAnswers[ansKey] || 0) + 1;
               }
             }
@@ -564,12 +624,34 @@ export default function Analytics() {
             const rankMap: Record<string, { rank: number; total: number }> = {};
             const firstSectionsMap: Record<string, Set<string>> = {};
 
-            const { data: allExamSections } = await supabase
-              .from("sections")
-              .select("id, exam_id, sort_order, created_at, language")
-              .in("exam_id", examIds)
-              .order("sort_order", { ascending: true })
-              .order("created_at", { ascending: true });
+            // Chunked: every id is serialized into the query string, and an
+            // active aspirant accumulates enough exams (and sections, doubled
+            // by bilingual papers) to blow past the URL length ceiling — at
+            // which point the request 414s and every rank badge disappears.
+            // Ordering is redone in JS because it can't hold across chunks.
+            const ID_CHUNK = 100;
+            const fetchInChunks = async (
+              ids: string[],
+              run: (slice: string[]) => any
+            ): Promise<any[]> => {
+              const out: any[] = [];
+              for (let i = 0; i < ids.length; i += ID_CHUNK) {
+                const { data: chunkData, error: chunkError } = await run(ids.slice(i, i + ID_CHUNK));
+                if (chunkError) throw chunkError;
+                if (chunkData) out.push(...chunkData);
+              }
+              return out;
+            };
+
+            const allExamSections = (await fetchInChunks(examIds, (slice) =>
+              supabase
+                .from("sections")
+                .select("id, exam_id, sort_order, created_at, language")
+                .in("exam_id", slice)
+            )).sort((a, b) =>
+              (a.sort_order ?? 0) - (b.sort_order ?? 0) ||
+              new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            );
 
             if (allExamSections && allExamSections.length > 0) {
               // Group sections by exam_id
@@ -598,14 +680,22 @@ export default function Analytics() {
               });
 
               // Batch-fetch ALL attempts for ALL sections in ONE query.
+              // Submitted attempts only: an abandoned in-progress row is created
+              // the moment a student clicks Start, and counting it would both add
+              // a phantom session to the "/total" denominator and — since it has
+              // no marks_score — drop the whole exam off marks-ranking.
               // marks_score / marks_max are cast because the marks-module columns
               // aren't in the generated Supabase types yet (same workaround as
               // ExamReview's rank query).
-              const { data: allAttemptsBatch } = (await supabase
-                .from("attempts")
-                .select("id, user_id, section_id, score, marks_score, marks_max, created_at")
-                .in("section_id", allSectionIds)
-                .order("created_at", { ascending: true })) as { data: any[] | null };
+              const allAttemptsBatch = (await fetchInChunks(allSectionIds, (slice) =>
+                supabase
+                  .from("attempts")
+                  .select("id, user_id, section_id, score, marks_score, marks_max, created_at")
+                  .in("section_id", slice)
+                  .not("submitted_at", "is", null)
+              )).sort((a, b) =>
+                new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+              );
 
               if (allAttemptsBatch && allAttemptsBatch.length > 0) {
                 // Build a reverse lookup: section_id -> exam_id
@@ -727,6 +817,8 @@ export default function Analytics() {
           }
         } catch (rankErr) {
           console.error("Error computing history ranks:", rankErr);
+        } finally {
+          setRanksResolved(true);
         }
       }
 
@@ -738,7 +830,12 @@ export default function Analytics() {
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      // A superseded fetch must not clear the spinner the newer one is showing,
+      // or the page flashes its (deliberately reset) empty state mid-load.
+      if (!isStale()) setLoading(false);
+      // Backstop for the paths that never reach the rank pass at all — no
+      // signed-in user, the attempts query throwing, the creator branch.
+      setRanksResolved(true);
     }
   };
 
@@ -752,8 +849,13 @@ export default function Analytics() {
 
   // Compute student history ranking sessions globally
   const studentSessionsList = useMemo(() => {
-    if (examId || attempts.length === 0 || Object.keys(firstSectionsByExamId).length === 0) return [];
-    
+    if (examId || attempts.length === 0) return [];
+    // No early return on an empty firstSectionsByExamId. It is empty whenever the
+    // rank pass found nothing to group by — every attempted exam unpublished, its
+    // sections deleted, or the query failed — and bailing here left the student
+    // staring at an empty panel. Falling through instead sends every attempt down
+    // the orphan path, so they get one row per attempt: ungrouped, but their data.
+
     // Session-based grouping: a new session starts each time the user
     // hits the first section of an exam. Sorted by created_at ascending
     // so sessions are detected in chronological order.
@@ -795,6 +897,7 @@ export default function Analytics() {
             allAttemptIds: [att.id],
             totalMarks: marksValue,
             sessionHasMarks: hasMarks,
+            sortTs: new Date(att.submitted_at || att.created_at).getTime() || 0,
           };
         } else if (cur) {
           // Continue current session
@@ -805,6 +908,11 @@ export default function Analytics() {
           cur.allAttemptIds.push(att.id);
           cur.totalMarks += marksValue;
           if (!hasMarks) cur.sessionHasMarks = false;
+          // A session sorts by when it finished, i.e. its latest section.
+          cur.sortTs = Math.max(
+            cur.sortTs || 0,
+            new Date(att.submitted_at || att.created_at).getTime() || 0
+          );
         } else {
           // Orphan: no first section seen yet — treat as its own session
           orphans.push(att);
@@ -826,14 +934,18 @@ export default function Analytics() {
           allAttemptIds: [att.id],
           totalMarks: hasMarks ? Number((att as any).marks_score) : 0,
           sessionHasMarks: hasMarks,
+          sortTs: new Date(att.submitted_at || att.created_at).getTime() || 0,
         });
       });
     });
 
-    // Sort most recent first
-    sessionsList.sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+    // Sort most recent first, on the real timestamp — never on `date`.
+    // `date` is a toLocaleDateString() string, and re-parsing it is doubly
+    // broken: on en-IN "2/7/2026" (2 July) parses as 7 February, so rows land
+    // months out of place rather than merely unsorted; and a day-granularity
+    // key makes every session on the same day compare equal, leaving the
+    // oldest sitting at the top of a "most recent first" list.
+    sessionsList.sort((a, b) => (b.sortTs || 0) - (a.sortTs || 0));
 
     return sessionsList;
   }, [attempts, examId, firstSectionsByExamId]);
@@ -873,7 +985,6 @@ export default function Analytics() {
   const totalTimeSpentQs = validAttempts.reduce((sum, a) => sum + (Math.round((a.avg_time_per_question || 0) * (a.total_questions || 0))), 0);
   const avgTimePerQuestion = totalAttemptedQs > 0 ? totalTimeSpentQs / totalAttemptedQs : 0;
   
-  const bestScore = Math.max(...validAttempts.map((a) => a.accuracy_percentage), 0);
 
   // For Student View: Trend of accuracy over attempts
   // For Creator View: Trend of average accuracy over time (grouped by day)
@@ -1054,9 +1165,9 @@ export default function Analytics() {
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        title="My Analytics | MockSetu"
-        description="View your personal mock test performance analytics on MockSetu."
-        path="/analytics"
+        title={examId ? "Exam Analytics | MockSetu" : "My Analytics | MockSetu"}
+        description={examId ? "In-depth insights and metrics for your exam on MockSetu." : "View your personal mock test performance analytics on MockSetu."}
+        path={examId ? `/analytics?examId=${examId}` : "/analytics"}
         noindex
       />
       <div className="max-w-7xl mx-auto p-6">
@@ -1553,6 +1664,8 @@ export default function Analytics() {
                               <img
                                 src={url}
                                 alt={`Question ${question.q_no} Image ${idx + 1}`}
+                                loading="lazy"
+                                decoding="async"
                                 className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
                               />
                             </div>
@@ -1563,7 +1676,9 @@ export default function Analytics() {
                           <img
                             src={question.imageUrl}
                             alt={`Question ${question.q_no}`}
-                            className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
+                            loading="lazy"
+                                decoding="async"
+                                className="max-w-full max-h-[300px] h-auto rounded-md object-contain"
                           />
                         </div>
                       ) : null
@@ -1584,7 +1699,7 @@ export default function Analytics() {
                           if (Array.isArray(correctVal)) {
                             isCorrect = correctVal.some((c: any) => normalize(c) === normalize(option));
                           } else if (typeof correctVal === 'object' && correctVal !== null) {
-                            const val = (correctVal as any).answer || (correctVal as any).value;
+                            const val = readObjectAnswer(correctVal);
                             isCorrect = normalize(val) === normalize(option);
                           } else {
                             isCorrect = normalize(correctVal) === normalize(option);
@@ -1623,7 +1738,7 @@ export default function Analytics() {
                           __html: renderMathInRichText(Array.isArray(question.correctAnswer)
                             ? question.correctAnswer.join(", ")
                             : (typeof question.correctAnswer === 'object'
-                              ? (question.correctAnswer.answer || JSON.stringify(question.correctAnswer))
+                              ? (hasAnswerValue(readObjectAnswer(question.correctAnswer)) ? String(readObjectAnswer(question.correctAnswer)) : JSON.stringify(question.correctAnswer))
                               : String(question.correctAnswer)))
                         }}
                       />
@@ -1653,6 +1768,8 @@ export default function Analytics() {
                           <img
                             src={url}
                             alt={`Question Image ${idx + 1}`}
+                            loading="lazy"
+                            decoding="async"
                             className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
                           />
                         </div>
@@ -1663,7 +1780,9 @@ export default function Analytics() {
                       <img
                         src={selectedQuestion.imageUrl}
                         alt="Question"
-                        className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
+                        loading="lazy"
+                            decoding="async"
+                            className="max-w-full max-h-[400px] h-auto rounded-md object-contain"
                       />
                     </div>
                   ) : null
@@ -1684,7 +1803,7 @@ export default function Analytics() {
                       if (Array.isArray(correctVal)) {
                         isCorrect = correctVal.some((c: any) => normalize(c) === normalize(option));
                       } else if (typeof correctVal === 'object' && correctVal !== null) {
-                        const val = (correctVal as any).answer || (correctVal as any).value;
+                        const val = readObjectAnswer(correctVal);
                         isCorrect = normalize(val) === normalize(option);
                       } else {
                         isCorrect = normalize(correctVal) === normalize(option);
@@ -1731,7 +1850,7 @@ export default function Analytics() {
                     {Array.isArray(selectedQuestion.correctAnswer)
                       ? selectedQuestion.correctAnswer.join(", ")
                       : (typeof selectedQuestion.correctAnswer === 'object'
-                        ? (selectedQuestion.correctAnswer.answer || JSON.stringify(selectedQuestion.correctAnswer))
+                        ? (hasAnswerValue(readObjectAnswer(selectedQuestion.correctAnswer)) ? String(readObjectAnswer(selectedQuestion.correctAnswer)) : JSON.stringify(selectedQuestion.correctAnswer))
                         : String(selectedQuestion.correctAnswer))}
                   </span>
                 </div>
@@ -1753,7 +1872,7 @@ export default function Analytics() {
                   <h3 className="text-lg font-semibold mb-2 text-foreground">No history yet</h3>
                   <p className="text-muted-foreground text-sm max-w-sm">When you take exams, your detailed performance tracking and score history will appear here.</p>
                 </div>
-              ) : Object.keys(firstSectionsByExamId).length === 0 ? (
+              ) : !ranksResolved ? (
                 <div className="flex items-center justify-center py-12">
                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                 </div>

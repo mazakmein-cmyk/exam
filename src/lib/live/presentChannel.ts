@@ -19,13 +19,25 @@
  *                        the two leaderboard/river switches, plus the stage theme
  *                        (Q16) and the two reveal switches: show the choices at
  *                        all (Q15) and turn the correct one green when time is up
- *                        (Q15b)
+ *                        (Q15b) — and the display language
  *   celebrate            fire confetti now (Phase 4)
  *
  * Note that config does not break the rule. Every one of those settings lives in
  * a column on live_exams and reaches the projector on its own through the sync;
  * the intent only buys back the round trip. If the channel is missing entirely
  * the switches still work, just a beat later.
+ *
+ * `language` is the one field with no column behind it, and it is the exception
+ * the rule can afford. It is a per-session, per-room reading choice rather than a
+ * property of the exam (see lib/live/liveLanguage.ts for why it is not stored),
+ * so the projector remembers it in localStorage instead of re-reading it from a
+ * row. That keeps the safety property intact: a wall whose control window is
+ * closed still knows its language across its own reload, and a wall that never
+ * heard an intent falls back to the exam's primary language — the one that is
+ * always fully populated. The cost is that a projector opened on a SECOND
+ * machine starts in the primary language until the creator touches the switch,
+ * which is the same limit BroadcastChannel already puts on every other intent
+ * here.
  *
  * BroadcastChannel is same-origin, same-browser, and sub-millisecond, which is
  * exactly the scope of the chosen design: one laptop, two windows, an HDMI
@@ -68,6 +80,14 @@ export type PresentIntent =
        * and the creator flicks the switch again thinking it missed.
        */
       theme?: StageTheme;
+      /**
+       * Language code the wall should render its questions in.
+       *
+       * Unlike its neighbours this is not a preview of a pending write — there is
+       * no write. It is the change itself, which is why the receiver persists it
+       * rather than letting the next sync clear it like the others.
+       */
+      language?: string;
     }
   /** B14 (Phase 4): fire the celebration now. */
   | { t: "celebrate"; seq: number };

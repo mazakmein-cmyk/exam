@@ -111,6 +111,11 @@ import {
   type StageTheme,
 } from "@/lib/live/stageTheme";
 import {
+  readDisplayLanguage,
+  resolveLiveLanguage,
+  writeDisplayLanguage,
+} from "@/lib/live/liveLanguage";
+import {
   fetchAllLiveQuestionsStudent,
   fetchLiveExam,
   fetchPublicLeaderboard,
@@ -216,6 +221,23 @@ export default function LiveExamPresent() {
    * push lane, long after the render that set up the fetch.
    */
   const wantsKeyRef = useRef(false);
+  /**
+   * The language the room is reading off the wall, as last decided by the creator.
+   *
+   * Unlike every other creator-controlled setting on this page it does not arrive
+   * through the session sync, because it is not on the exam row — it is a choice
+   * about the room in front of them today, not a property of the exam. It arrives
+   * as a `config` intent from the control room and is remembered here per exam,
+   * which is what lets the projector reload, or outlive a closed cockpit, without
+   * flipping the wall back to English mid-session.
+   *
+   * Null means nothing has ever been chosen on this browser; it resolves to the
+   * exam's primary language, the only one guaranteed to have a row for every
+   * question.
+   */
+  const [wallLanguage, setWallLanguage] = useState<string | null>(() =>
+    readDisplayLanguage(liveExamId)
+  );
 
   // ─── Load ──────────────────────────────────────────────────
 
@@ -241,14 +263,6 @@ export default function LiveExamPresent() {
         const examData = await fetchLiveExam(liveExamId);
         if (cancelled) return;
         setExam(examData);
-        // The student-safe question view: it has no correct_answer column at
-        // all, so this page cannot reveal an answer even by accident.
-        const qs = await fetchAllLiveQuestionsStudent(
-          liveExamId,
-          examData.primary_language || "en"
-        );
-        if (cancelled) return;
-        setQuestions(qs);
         void loadStandings();
       } catch (err: any) {
         if (!cancelled) setLoadError(err?.message || "Could not open this exam.");
@@ -259,6 +273,50 @@ export default function LiveExamPresent() {
       cancelled = true;
     };
   }, [liveExamId, loadStandings]);
+
+  /**
+   * What the exam supports decides what the remembered code is allowed to be. A
+   * stale "hi" for an exam that is now English-only would fetch zero sections and
+   * put a blank frame on a projector.
+   */
+  const language = resolveLiveLanguage(
+    wallLanguage,
+    exam?.supported_languages,
+    exam?.primary_language
+  );
+
+  /**
+   * Questions, in the language the creator chose — reloaded when they change it.
+   *
+   * Separate from the exam load because it runs again mid-session. Ordering is
+   * (global_index, q_no, id) in every language and matches the server's own
+   * ordinals, so `session.currentQuestionIndex` addresses the same question here
+   * whichever language is loaded; nothing else on this page has to know.
+   *
+   * The previous array is deliberately NOT cleared while the new one is in
+   * flight. A blank wall for the length of a request, in front of a room, is a
+   * worse answer than one more beat of the old language.
+   */
+  useEffect(() => {
+    if (!liveExamId || !exam) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // The student-safe question view: it has no correct_answer column at
+        // all, so this page cannot reveal an answer even by accident.
+        const qs = await fetchAllLiveQuestionsStudent(liveExamId, language);
+        if (cancelled || qs.length === 0) return;
+        setQuestions(qs);
+      } catch {
+        /* Keep whatever is already on the wall. */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [liveExamId, exam, language]);
 
   // ─── Session ───────────────────────────────────────────────
 
@@ -418,6 +476,19 @@ export default function LiveExamPresent() {
           revealAnswer: intent.revealAnswer ?? cur.revealAnswer,
           theme: intent.theme ?? cur.theme,
         }));
+        /**
+         * Language is held outside `configPreview` on purpose.
+         *
+         * That object is an optimistic preview, cleared the moment the row lands
+         * — correct for the five settings that have a column behind them, and
+         * exactly wrong here, where the intent is the only carrier there is. A
+         * language kept in there would revert to primary on the next sync, which
+         * is to say roughly a second after the creator switched it, on the wall.
+         */
+        if (intent.language) {
+          setWallLanguage(intent.language);
+          writeDisplayLanguage(liveExamId, intent.language);
+        }
       }
     }
   );

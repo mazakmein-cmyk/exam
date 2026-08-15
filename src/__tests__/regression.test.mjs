@@ -76,14 +76,26 @@ test("analyticsTs: FOR loop with sequential awaits per exam is REMOVED", () => {
   );
 });
 
-test("analyticsTs: Single batch sections query uses .in('exam_id', examIds)", () => {
+// Both rank queries are still driven by the whole id list in one pass (no
+// per-exam N+1), but the list is now sliced into fixed chunks: every id is
+// serialized into the query string, so an aspirant with enough exams would
+// otherwise overflow the URL length ceiling and 414.
+test("analyticsTs: sections rank query batches over the full examIds list", () => {
   const src = readSrc("pages/Analytics.tsx");
-  assertContains(src, '.in("exam_id", examIds)', "Batch sections query not found");
+  assertContains(src, "fetchInChunks(examIds", "Batched sections query not found");
+  assertContains(src, '.in("exam_id", slice)', "Chunked sections .in() not found");
 });
 
-test("analyticsTs: Single batch attempts query uses .in('section_id', allSectionIds)", () => {
+test("analyticsTs: attempts rank query batches over the full allSectionIds list", () => {
   const src = readSrc("pages/Analytics.tsx");
-  assertContains(src, '.in("section_id", allSectionIds)', "Batch attempts query not found");
+  assertContains(src, "fetchInChunks(allSectionIds", "Batched attempts query not found");
+  assertContains(src, '.in("section_id", slice)', "Chunked attempts .in() not found");
+});
+
+test("analyticsTs: chunked rank fetches surface errors instead of dropping ranks", () => {
+  const src = readSrc("pages/Analytics.tsx");
+  // A silently-ignored error here made every rank badge vanish with no toast.
+  assertContains(src, "if (chunkError) throw chunkError;", "Chunk error check not found");
 });
 
 test("analyticsTs: sectionToExam reverse lookup Map is built", () => {
@@ -393,6 +405,43 @@ test("renderMath: renderMathInRichText routes HTML vs plain text", () => {
     src,
     "looksLikeHtml(s) ? renderMathInHtml(s) : renderMathInText(s)",
     "rich-text renderer must fall back to the escaping path for plain options"
+  );
+});
+
+test("renderMath: collapsed question previews render math instead of printing source", () => {
+  // A one-line preview strips HTML tags to flatten the row — but the LaTeX in
+  // the text survives that strip. Printed raw, the collapsed row read
+  // "$(Use~\\pi=\\frac{22}{7})$" while the expanded Question Text box directly
+  // below it showed the same string properly rendered.
+  const cases = [
+    ["pages/ExamDetail.tsx", "renderMathInText(displayText || 'Question with passage')"],
+    ["pages/LiveExamDetail.tsx", 'renderMathInText(plainText || "Question with image")'],
+  ];
+  for (const [file, expected] of cases) {
+    const src = readSrc(file);
+    assertContains(src, expected, `${file}: the collapsed preview must render its text, not print it`);
+    assert(
+      !/truncate">\{(plainText|displayText)/.test(src),
+      `${file}: a raw {text} dump in the collapsed row shows LaTeX source`
+    );
+  }
+});
+
+test("renderMath: the Question Text detail box shows the stored source, not rendered output", () => {
+  // Deliberately the inverse of the collapsed row above it. The row shows how
+  // the question READS; this box shows what is STORED, because the renderer
+  // repairs import damage on the fly (a control char where \frac's \f was) and
+  // a creator auditing an imported paper would never see the corruption.
+  const src = readSrc("pages/ExamDetail.tsx");
+  const box = src.slice(src.indexOf(">Question Text</Label>"));
+  const inner = box.slice(0, box.indexOf("</div>"));
+  assert(
+    !inner.includes("dangerouslySetInnerHTML"),
+    "the Question Text box must print its value, not render it"
+  );
+  assert(
+    inner.includes("htmlToPlainText("),
+    "editor markup (<span style=…>) is the editor's noise, not the author's text — strip it, keep the LaTeX"
   );
 });
 

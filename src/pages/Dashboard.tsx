@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, Users, BarChart, FileText, Radio } from "lucide-react";
+import { LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, Users, BarChart, FileText, Radio, Eye } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
@@ -715,8 +715,8 @@ const Dashboard = () => {
                               Share
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
-                              <BookOpen className="mr-2 h-4 w-4" />
-                              Preview Exam
+                              <Eye className="mr-2 h-4 w-4" />
+                              Sit it as a student
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleDuplicateExam(exam)}>
                               <Copy className="mr-2 h-4 w-4" />

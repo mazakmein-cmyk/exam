@@ -126,6 +126,12 @@ const ExamSimulator = () => {
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [showSectionCompleteDialog, setShowSectionCompleteDialog] = useState(false);
   const questionStartTimeRef = useRef(Date.now());
+  // Re-entrancy latch for submitExam. The timer's auto-submit and a manual
+  // Submit can fire in the same second (the confirm dialog stays mounted while
+  // the auto-submit save is in flight), and responses has no
+  // (attempt_id, question_id) unique constraint — two concurrent saves would
+  // insert a full duplicate set and double every score computed from them.
+  const submittingRef = useRef(false);
   // Absolute wall-clock end time, shared with the Web Worker
   const examEndTimeRef = useRef(0);
   // Web Worker for background-accurate countdown (not throttled by browser)
@@ -847,6 +853,10 @@ const ExamSimulator = () => {
 
   const handleAutoSubmit = async () => {
     timerWorkerRef.current?.postMessage({ type: "STOP" });
+    // Close the confirm dialog first: left open it stays clickable for the whole
+    // network duration of the save below, which is exactly how a manual Submit
+    // ends up racing this one.
+    setShowSubmitDialog(false);
     updateQuestionTime();
     await submitExam();
     toast({
@@ -863,20 +873,28 @@ const ExamSimulator = () => {
   });
 
   const submitExam = async () => {
+    // One submission at a time — see submittingRef.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
     // Creator preview: nothing is graded, stored, or queued for a later sign-in.
     if (isPreview) {
-      toast({
-        title: "Preview finished",
-        description: "Previews aren't scored or saved.",
-      });
+      submittingRef.current = false;
+      // No toast at all. The student's toast here says their answers were
+      // saved, which would be false, and any creator-only replacement would be
+      // one more thing to read that they were already told on the intro screen.
+      // The section-complete dialog below is the student's, unchanged.
       setShowSectionCompleteDialog(true);
       return;
     }
 
     // Calculate time for current question synchronously (state updates are async)
     const currentQuestion = questions[currentQuestionIndex];
+    // Clamped at 0, matching updateQuestionTime's `timeSpent <= 0` guard: a
+    // device clock stepping backwards mid-question would otherwise persist a
+    // negative time_spent_seconds, which every downstream time average sums raw.
     const currentQuestionTimeSpent = currentQuestion
-      ? Math.floor((Date.now() - questionStartTimeRef.current) / 1000)
+      ? Math.max(0, Math.floor((Date.now() - questionStartTimeRef.current) / 1000))
       : 0;
 
     // Create updated questionStates with current question's time included
@@ -965,6 +983,10 @@ const ExamSimulator = () => {
       setShowSectionCompleteDialog(true);
     } catch (error) {
       console.error("Error submitting exam:", error);
+      // Release the latch only on failure, so the student can retry. On success
+      // it stays held: the section-complete dialog is terminal, and a second
+      // save would duplicate every response row.
+      submittingRef.current = false;
       toast({
         title: "Error",
         description: "Failed to submit exam",
@@ -1039,8 +1061,20 @@ const ExamSimulator = () => {
               const idxStr = String(idx);
               return (
                 <label key={idx} htmlFor={`option-${idx}`} className="flex items-center space-x-2 border p-3 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
+                  {/*
+                    Squared off explicitly: `rounded-sm` resolves off --radius
+                    (0.875rem), which on a 16px control is a full circle, so this
+                    multi-select question looked exactly like a pick-one radio.
+
+                    The square carries the "pick as many as apply" meaning; the
+                    marker inside is a dot rather than a tick, because a tick on
+                    the option a student just chose reads as "correct" and the
+                    key is not revealed mid-attempt.
+                  */}
                   <Checkbox
                     id={`option-${idx}`}
+                    indicator="dot"
+                    className="h-[18px] w-[18px] rounded-[4px]"
                     checked={selectedValues.includes(idxStr)}
                     onCheckedChange={(checked) => {
                       if (checked) {
@@ -1162,7 +1196,7 @@ const ExamSimulator = () => {
         <div className="absolute top-6 left-6">
           <Button variant="ghost" onClick={() => navigate(isPreview ? `/exam/${examId}` : "/analytics")}>
             <ArrowLeft className="mr-2 h-4 w-4" />
-            {isPreview ? "Back to Editor" : "Back to Dashboard"}
+            {isPreview ? "Back to editing" : "Back to Dashboard"}
           </Button>
         </div>
         <Card className="max-w-md w-full">
@@ -1226,21 +1260,14 @@ const ExamSimulator = () => {
                 </p>
               </div>
             )}
-            {isPreview && (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2">
-                <Eye className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  <span className="font-semibold text-foreground">Preview mode.</span>{" "}
-                  This is your own exam — answers aren't scored or saved, and no attempt is recorded.
-                </p>
-              </div>
-            )}
+            {/* No creator notice here, and no creator wording on the button.
+                The mode is explained once, on the intro screen, and from that
+                point on the creator reads the student's screens word for word —
+                which is the only way a preview can tell them how the paper
+                actually lands. The one exception is an exit that would
+                otherwise lie: see "Back to editing" above and at the end. */}
             <Button onClick={handleStartSection} className="w-full" size="lg">
-              {isPreview
-                ? "Start Preview"
-                : isFreeNav && allSections.length > 1
-                  ? "Start Exam"
-                  : "Start Section"}
+              {isFreeNav && allSections.length > 1 ? "Start Exam" : "Start Section"}
             </Button>
           </CardContent>
         </Card>
@@ -1299,9 +1326,16 @@ const ExamSimulator = () => {
               </span>
             )}
             {isPreview && (
-              <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+              // Amber, still: this badge's job is to say "you are not in the
+              // normal mode", and brand purple would read as ordinary chrome.
+              // Only the word changes — from what the mode isn't to whose eyes
+              // the creator is borrowing.
+              <span
+                className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400"
+                title="You're seeing your students' screen"
+              >
                 <Eye className="h-3 w-3" />
-                Preview
+                Student view
               </span>
             )}
           </div>
@@ -1476,7 +1510,7 @@ const ExamSimulator = () => {
                   onClick={() => setShowSubmitDialog(true)}
                 >
                   <Check className="h-3.5 w-3.5 mr-1.5" />
-                  {isPreview ? "End Preview" : "Submit Exam"}
+                  Submit Exam
                 </Button>
               </div>
             </div>
@@ -1837,18 +1871,14 @@ const ExamSimulator = () => {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {isPreview
-                ? "End Preview?"
-                : isFreeNav && allSections.length > 1
-                  ? "Submit the whole paper?"
-                  : "Submit Section?"}
+              {isFreeNav && allSections.length > 1
+                ? "Submit the whole paper?"
+                : "Submit Section?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {isPreview
-                ? "This ends the preview. Nothing is scored or saved."
-                : isFreeNav && allSections.length > 1
-                  ? "This submits every section at once. You cannot change your answers afterwards."
-                  : "Are you sure you want to submit this section? You cannot change your answers after submission."}
+              {isFreeNav && allSections.length > 1
+                ? "This submits every section at once. You cannot change your answers afterwards."
+                : "Are you sure you want to submit this section? You cannot change your answers after submission."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -1900,47 +1930,33 @@ const ExamSimulator = () => {
             // to hand over to — the only way on is the results.
             <>
               <AlertDialogHeader>
-                <AlertDialogTitle>
-                  {isPreview ? "Preview Finished" : "Exam Submitted!"}
-                </AlertDialogTitle>
+                <AlertDialogTitle>Exam Submitted!</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {isPreview ? (
-                    <>That's the whole paper. Nothing was scored or saved.</>
-                  ) : (
-                    <>
-                      All {perSectionSummary.length} section
-                      {perSectionSummary.length === 1 ? "" : "s"} submitted —{" "}
-                      <strong className="tabular-nums">{paperAnswered} of {paperTotal}</strong>{" "}
-                      questions answered.
-                    </>
-                  )}
+                  All {perSectionSummary.length} section
+                  {perSectionSummary.length === 1 ? "" : "s"} submitted —{" "}
+                  <strong className="tabular-nums">{paperAnswered} of {paperTotal}</strong>{" "}
+                  questions answered.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogAction onClick={handleFinishExam}>
-                  {isPreview ? "Back to Editor" : "View Results"}
+                  {isPreview ? "Back to editing" : "View Results"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </>
           ) : (
             <>
               <AlertDialogHeader>
-                <AlertDialogTitle>{isPreview ? "Preview Finished" : "Section Completed!"}</AlertDialogTitle>
+                <AlertDialogTitle>Section Completed!</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {isPreview ? (
-                    <>You've reached the end of <strong>{section?.name}</strong>. Nothing was scored or saved.</>
-                  ) : (
-                    <>You have successfully completed <strong>{section?.name}</strong>.</>
-                  )}
+                  <>You have successfully completed <strong>{section?.name}</strong>.</>
                   {allSections.find(s => s.id === sectionId)?.id !== allSections[allSections.length - 1]?.id ? (
                     <p className="mt-2">
                       Click below to proceed.
                     </p>
                   ) : (
                     <p className="mt-2">
-                      {isPreview
-                        ? "That's every section of this exam."
-                        : "You have completed all sections of the exam."}
+                      You have completed all sections of the exam.
                     </p>
                   )}
                 </AlertDialogDescription>
@@ -1952,7 +1968,7 @@ const ExamSimulator = () => {
                   </AlertDialogAction>
                 ) : (
                   <AlertDialogAction onClick={handleFinishExam}>
-                    {isPreview ? "Back to Editor" : "Finish Exam"}
+                    {isPreview ? "Back to editing" : "Finish Exam"}
                   </AlertDialogAction>
                 )}
               </AlertDialogFooter>

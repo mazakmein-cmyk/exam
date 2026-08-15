@@ -60,6 +60,14 @@ export type LiveTransport = "connecting" | "push" | "poll";
 export type LiveSessionState = {
   status: LiveExamStatus | null;
   currentQuestionIndex: number;
+  /**
+   * The open question's name tag, or null to match by position.
+   *
+   * Only ever set from the same observation that set currentQuestionIndex — see
+   * the merge in applyObservation. A tag from a previous index is worse than no
+   * tag: it names the question the room has already left.
+   */
+  currentQuestionGroupId: string | null;
   unlockedAt: string | null;
   extraSeconds: number;
   scheduledStartAt: string | null;
@@ -104,6 +112,7 @@ type ObservationLane = "push" | "poll";
 const INITIAL_STATE: LiveSessionState = {
   status: null,
   currentQuestionIndex: -1,
+  currentQuestionGroupId: null,
   unlockedAt: null,
   extraSeconds: 0,
   scheduledStartAt: null,
@@ -304,6 +313,13 @@ export function useLiveSession(
     (next: {
       status: LiveExamStatus;
       currentQuestionIndex: number;
+      /**
+       * Optional on the same terms as the projector settings below, but merged
+       * differently — see applyObservation. Only the sync lane can supply it:
+       * the tag is derived from the question list, so the exam row the push lane
+       * receives simply does not carry one.
+       */
+      currentQuestionGroupId?: string | null;
       unlockedAt: string | null;
       extraSeconds: number;
       scheduledStartAt: string | null;
@@ -403,6 +419,24 @@ export function useLiveSession(
           ...cur,
           status: next.status,
           currentQuestionIndex: next.currentQuestionIndex,
+          // NOT `??`, unlike the projector settings below, and the difference
+          // matters. For those, "the payload was silent" means "keep what we
+          // had" — a setting nobody touched should not flip. A name tag is the
+          // opposite: it belongs to the index it arrived with. The push lane
+          // reads the exam row, which has no tag because the tag is derived
+          // from the question list, so it always leaves this undefined. Carrying
+          // the previous tag forward across an unlock would therefore point
+          // every client at the question the room has just left.
+          // So: keep it only while the index is unchanged, otherwise drop to
+          // null and let clients match by position until the next sync lands
+          // (750ms–8s). Position is what they did before this existed, so the
+          // gap degrades to today's behaviour rather than to something wrong.
+          currentQuestionGroupId:
+            next.currentQuestionGroupId !== undefined
+              ? next.currentQuestionGroupId
+              : next.currentQuestionIndex === cur.currentQuestionIndex
+                ? cur.currentQuestionGroupId
+                : null,
           unlockedAt: next.unlockedAt,
           extraSeconds: next.extraSeconds,
           scheduledStartAt: next.scheduledStartAt,
@@ -473,6 +507,12 @@ export function useLiveSession(
         applyObservation({
           status: sync.status,
           currentQuestionIndex: sync.current_question_index,
+          // `?? null`, not left undefined: this lane always knows the answer, so
+          // a missing key means the database predates the migration that adds it
+          // and there genuinely is no tag — which is null, "match by position".
+          // Leaving it undefined would instead mean "unknown", and the merge
+          // would keep a tag from a previous index.
+          currentQuestionGroupId: sync.current_question_group_id ?? null,
           unlockedAt: sync.current_question_unlocked_at,
           extraSeconds: sync.current_question_extra_seconds ?? 0,
           scheduledStartAt: sync.scheduled_start_at,
@@ -692,6 +732,7 @@ function shallowEqualState(a: LiveSessionState, b: LiveSessionState): boolean {
   return (
     a.status === b.status &&
     a.currentQuestionIndex === b.currentQuestionIndex &&
+    a.currentQuestionGroupId === b.currentQuestionGroupId &&
     a.unlockedAt === b.unlockedAt &&
     a.extraSeconds === b.extraSeconds &&
     a.scheduledStartAt === b.scheduledStartAt &&

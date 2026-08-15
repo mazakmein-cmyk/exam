@@ -2865,24 +2865,39 @@ export function QuestionForm({
                         </SelectContent>
                     </Select>
                 ) : type === "multi" ? (
+                    /*
+                      The tick boxes are squared off explicitly, and that is the whole
+                      point of this block. `rounded-sm` resolves against --radius
+                      (0.875rem), which on a 16px control is more than half its width —
+                      so the default checkbox rendered as a perfect circle and a
+                      multi-correct key was indistinguishable from the single-answer
+                      radio. A square with a tick is the only affordance that says
+                      "more than one of these can be right" before the user clicks.
+                    */
                     <div className="space-y-2 border rounded-md p-3">
+                        <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                            <CheckSquare className="h-3.5 w-3.5" />
+                            Multiple correct — tick every option that is right
+                        </p>
                         {options.map((opt, idx) => {
                             const idxStr = String(idx);
                             const hasImage = !!optionImages?.[idx];
                             const isBlank = isRichTextEmpty(opt);
                             const isEmpty = !isOptionFilled(opt, hasImage);
                             const currentCorrect = Array.isArray(correct) ? correct.map(String) : [];
+                            const isChecked = currentCorrect.includes(idxStr);
                             return (
                                 <div key={idx} className={`flex items-center space-x-2 ${isEmpty ? "opacity-40" : ""}`}>
                                     <Checkbox
                                         id={`option-${idx}`}
-                                        checked={currentCorrect.includes(idxStr)}
+                                        className="h-[18px] w-[18px] rounded-[4px]"
+                                        checked={isChecked}
                                         onCheckedChange={() => handleMultiCorrectToggle(idx)}
                                         disabled={isEmpty}
                                     />
                                     <label
                                         htmlFor={`option-${idx}`}
-                                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                                        className={`text-sm leading-none cursor-pointer ${isChecked ? "font-semibold text-foreground" : "font-medium"}`}
                                     >
                                         {String.fromCharCode(65 + idx)}. {!isBlank ? htmlToPlainText(opt) : hasImage ? "(image option)" : "(empty)"}
                                     </label>

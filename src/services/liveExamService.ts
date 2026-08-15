@@ -614,49 +614,14 @@ export async function renumberLiveGlobalIndexesRpc(examId: string): Promise<void
   if (error) throw error;
 }
 
-/** @deprecated Superseded by renumberLiveGlobalIndexesRpc; kept for un-migrated callers. */
-export async function renumberLiveGlobalIndexes(examId: string): Promise<void> {
-  const sections = await fetchLiveSections(examId); // ordered by sort_order
-  if (sections.length === 0) return;
-
-  const { data, error } = await supabase
-    .from("live_questions")
-    .select("id, live_section_id, q_no, global_index")
-    .in("live_section_id", sections.map(s => s.id));
-
-  if (error) throw error;
-
-  const bySection = new Map<string, { id: string; q_no: number; global_index: number }[]>();
-  for (const q of (data || []) as { id: string; live_section_id: string; q_no: number; global_index: number }[]) {
-    const list = bySection.get(q.live_section_id) || [];
-    list.push(q);
-    bySection.set(q.live_section_id, list);
-  }
-
-  const languages = Array.from(new Set(sections.map(s => s.language)));
-  for (const lang of languages) {
-    const langSections = sections
-      .filter(s => s.language === lang)
-      .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id));
-
-    let idx = 0;
-    for (const sec of langSections) {
-      const qs = (bySection.get(sec.id) || []).sort(
-        (a, b) => a.q_no - b.q_no || a.id.localeCompare(b.id)
-      );
-      for (const q of qs) {
-        if (q.global_index !== idx) {
-          const { error: updError } = await supabase
-            .from("live_questions")
-            .update({ global_index: idx })
-            .eq("id", q.id);
-          if (updError) throw updError;
-        }
-        idx++;
-      }
-    }
-  }
-}
+// The client-side renumber loop that used to live here has been removed. It
+// computed the SAME order as renumber_live_global_indexes — both partition by
+// language and walk (section sort_order, section id, q_no, question id) — so
+// deleting it changes no ordering. What it could not do is finish: it issued
+// one UPDATE per question, so a failure partway through left a play order
+// matching neither the old arrangement nor the new one. Its last caller was
+// the section-reorder path in LiveExamDetail; keeping a non-atomic version
+// exported is how that path would quietly regress.
 
 // ─── Questions CRUD ──────────────────────────────────────────
 
@@ -913,6 +878,20 @@ export async function computeQuestionAnalytics(
 export type LiveSessionSync = {
   status: LiveExamStatus;
   current_question_index: number;
+  /**
+   * The open question's name tag (question_group_id), so a client can find it in
+   * its OWN language's list instead of counting to current_question_index.
+   *
+   * Optional for the same reason the present_* keys are: live_session_sync is
+   * redefined wholesale by each migration, so a database one migration behind
+   * omits the key entirely. Absent and null both mean "match by position", which
+   * is what every client did before this existed.
+   *
+   * Null in normal operation too — no question open, a single-language exam
+   * (nothing to translate to, so counting is already right), or no primary-language
+   * row at the current position.
+   */
+  current_question_group_id?: string | null;
   current_question_unlocked_at: string | null;
   current_question_extra_seconds: number;
   scheduled_start_at: string | null;
@@ -961,6 +940,63 @@ export type LiveSessionSync = {
   /** Creator only. */
   open_response_count: number | null;
 };
+
+// ─── Readiness ───────────────────────────────────────────────
+
+export type LiveReadinessIssue = {
+  severity: "blocker" | "warning";
+  code: string;
+  language: string | null;
+  detail: string;
+};
+
+/**
+ * Every reason this exam should not be run, from the server.
+ *
+ * The SAME function start_live_session calls to decide whether to refuse. That
+ * is the point of fetching rather than re-implementing: a checklist that
+ * disagrees with the gate is worse than no checklist, because the creator fixes
+ * what it lists and is still refused.
+ *
+ * Returns [] when the RPC is absent, i.e. a database that has not had
+ * 20260821000000 applied. An empty list reads as "nothing to report", which
+ * leaves the creator exactly where they were before this existed rather than
+ * blocking them on a check that cannot run.
+ */
+export async function fetchLiveExamReadiness(examId: string): Promise<LiveReadinessIssue[]> {
+  // Cast because src/integrations/supabase/types.ts is generated and lags the
+  // hand-applied migrations — it does not yet list this function. Regenerating
+  // it here would produce a large diff unrelated to this change.
+  const { data, error } = await (supabase as any)
+    .rpc("live_exam_readiness", { p_live_exam_id: examId });
+
+  if (error) {
+    // Two different layers can say "that function isn't here", and they word it
+    // completely differently:
+    //   42883    — PostgreSQL's undefined_function, if the call reaches the database
+    //   PGRST202 — PostgREST's "Could not find the function ... in the schema cache",
+    //              which is what you actually get, because PostgREST refuses the
+    //              request before it ever reaches Postgres
+    // The first version of this only matched 42883 and /does not exist/, and
+    // PGRST202's message says "Could not find" — so a client deployed before
+    // 20260821000000 is applied would have thrown here, and handlePublish would
+    // have refused to publish ANY live exam with "Could not check the exam".
+    // A missing check must never be worse than no check.
+    const code = (error as any).code;
+    const msg = error.message || "";
+    if (
+      code === "42883" ||
+      code === "PGRST202" ||
+      /does not exist/i.test(msg) ||
+      /could not find the function/i.test(msg) ||
+      /schema cache/i.test(msg)
+    ) {
+      return [];
+    }
+    throw error;
+  }
+  return (data || []) as unknown as LiveReadinessIssue[];
+}
 
 export async function syncLiveSession(
   examId: string,

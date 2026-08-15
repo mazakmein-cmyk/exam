@@ -142,6 +142,18 @@ import { useRehearsal, REHEARSAL_COHORT, type RehearsalSpeed } from "@/hooks/use
 import ScheduledCountdown from "@/components/live/ScheduledCountdown";
 import ScheduleControl from "@/components/live/ScheduleControl";
 import { presentWindowName } from "@/lib/live/presentChannel";
+import {
+  liveLanguageInfo,
+  readDisplayLanguage,
+  resolveLiveLanguage,
+  writeDisplayLanguage,
+} from "@/lib/live/liveLanguage";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select";
 
 /** Is this option (index) part of the stored correct answer? */
 function isCorrectOption(correctAnswer: any, i: number): boolean {
@@ -266,6 +278,42 @@ export default function LiveExamControl() {
    */
   const [showKey, setShowKey] = useState(false);
 
+  /**
+   * Which language the creator is reading — and, by the same switch, the one on
+   * the projector.
+   *
+   * Null means "not chosen on this browser yet"; it resolves to the exam's
+   * primary language below. Every read goes through `resolveLiveLanguage`, so a
+   * remembered code for an exam that no longer supports it cannot survive.
+   *
+   * This deliberately does NOT re-point the page's `questions` array. That array
+   * is the session's spine: analytics rows are keyed by the primary-language
+   * question id, unlock and undo address questions by it, and `computeStartedRef`
+   * dedupes on it. Swapping it for a translated copy would silently re-key all
+   * three mid-session — the class would see the right words and the creator would
+   * see an empty analytics panel. So the spine stays primary and only the words
+   * on screen are swapped, question by question, from `translations` below.
+   */
+  const [displayLanguage, setDisplayLanguage] = useState<string | null>(() =>
+    readDisplayLanguage(liveExamId)
+  );
+  /**
+   * The other language's rows, indexed the two ways a lookup can succeed.
+   *
+   * `question_group_id` is the real link — it is what pairs a question with its
+   * verbatim copies and what survives a re-import that renumbers everything. The
+   * positional array is the fallback for rows imported before the group id
+   * existed, and it is safe because both languages are ordered by the same
+   * (global_index, q_no, id) the server uses for its ordinals.
+   *
+   * Null whenever the creator is reading the primary language, so the merge below
+   * is a no-op on the common path rather than a map lookup per option per render.
+   */
+  const [translations, setTranslations] = useState<{
+    byGroup: Map<string, LiveQuestion>;
+    byIndex: LiveQuestion[];
+  } | null>(null);
+
   // Async callbacks read the question list through a ref so a late-arriving
   // event can never act against a stale copy.
   const questionsRef = useRef<LiveQuestion[]>([]);
@@ -352,6 +400,88 @@ export default function LiveExamControl() {
 
   const loadDataRef = useRef(loadData);
   loadDataRef.current = loadData;
+
+  // ─── Display language ──────────────────────────────────────
+
+  const primaryLanguage = exam?.primary_language || "en";
+  const supportedLanguages = useMemo(
+    () =>
+      exam?.supported_languages && exam.supported_languages.length > 0
+        ? exam.supported_languages
+        : [primaryLanguage],
+    [exam?.supported_languages, primaryLanguage]
+  );
+  const isMultiLang = supportedLanguages.length > 1;
+  const activeLanguage = resolveLiveLanguage(
+    displayLanguage,
+    exam?.supported_languages,
+    primaryLanguage
+  );
+
+  /**
+   * Pull the other language's questions once, not per question.
+   *
+   * Gated on the exam having loaded because `primaryLanguage` is unknowable until
+   * it has: firing before then would fetch "hi" for a Hindi-primary exam whose
+   * translations are the primary rows we already hold.
+   */
+  useEffect(() => {
+    if (!liveExamId || !exam) return;
+    if (activeLanguage === primaryLanguage) {
+      setTranslations(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const qs = await fetchAllLiveQuestions(liveExamId, activeLanguage);
+        if (cancelled) return;
+        const byGroup = new Map<string, LiveQuestion>();
+        qs.forEach((q) => {
+          if (q.question_group_id) byGroup.set(q.question_group_id, q);
+        });
+        setTranslations({ byGroup, byIndex: qs });
+      } catch {
+        /* The preview falls back to the primary language, which is always there.
+           A toast here would put an error on the cockpit for a reading
+           preference, mid-session, while the room is answering. */
+        if (!cancelled) setTranslations(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveExamId, exam?.id, activeLanguage, primaryLanguage]);
+
+  /**
+   * The same question, in the language being read.
+   *
+   * Only the words and the pictures move. `id`, `correct_answer`, `answer_type`
+   * and `time_seconds` are the primary row's, because those are the ones the rest
+   * of this page keys off and the ones the primary language owns by design — a
+   * secondary-language row's answer is a copy, and preferring it here would mean
+   * the key on screen could disagree with the key being marked.
+   */
+  const inActiveLanguage = useCallback(
+    (q: LiveQuestion | null | undefined, index: number): LiveQuestion | null => {
+      if (!q) return null;
+      if (!translations) return q;
+      const t =
+        (q.question_group_id ? translations.byGroup.get(q.question_group_id) : undefined) ??
+        translations.byIndex[index];
+      if (!t) return q;
+      return {
+        ...q,
+        text: t.text,
+        options: t.options,
+        option_image_urls: t.option_image_urls,
+        image_url: t.image_url,
+        image_urls: t.image_urls,
+      };
+    },
+    [translations]
+  );
 
   /** Pull the leaderboard and fold in an analytics row. */
   const absorbAnalytics = useCallback(
@@ -872,6 +1002,13 @@ export default function LiveExamControl() {
   const previewQuestion = isReviewing ? questions[previewIndex!] : currentQuestion;
   const previewAnalytics = previewQuestion ? analytics.get(previewQuestion.id) : null;
   const previewIdx = isReviewing ? previewIndex! : currentQuestionIndex;
+  /**
+   * What the preview pane draws. Same question, creator's chosen language.
+   *
+   * Everything derived below — the tally, the classification, the key — keeps
+   * reading `previewQuestion`, so switching language cannot change a number.
+   */
+  const previewDisplay = inActiveLanguage(previewQuestion, previewIdx);
 
   const sectionNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -1040,11 +1177,14 @@ export default function LiveExamControl() {
           index: idx,
           status,
           group: sectionNameFor(q),
-          title: questionPreviewText(q.text, 48),
+          // The rail is how a creator finds a question to review, so it has to be
+          // searchable in the language they are reading — a Hindi room scanning an
+          // English rail is scanning strings they never said out loud.
+          title: questionPreviewText(inActiveLanguage(q, idx)?.text ?? q.text, 48),
         };
       }),
     // sectionNameFor is re-created each render; depend on its input instead.
-    [questions, currentQuestionIndex, previewIndex, isReviewing, sectionNameById]
+    [questions, currentQuestionIndex, previewIndex, isReviewing, sectionNameById, inActiveLanguage]
   );
 
   // ─── A2 / Q2: the projector window ─────────────────────────
@@ -1055,6 +1195,26 @@ export default function LiveExamControl() {
     "control",
     presentUrl,
     presentWindowName(liveExamId || "")
+  );
+
+  /**
+   * Switch the language the creator reads — and the wall with it.
+   *
+   * No database write, and no `session.refresh()`: nothing about this lives on
+   * the exam row (see lib/live/liveLanguage.ts). The broadcast IS the change for
+   * the projector, and localStorage is what carries it across a reload of either
+   * window, so both are unconditional rather than an optimisation.
+   *
+   * Written on this side too, so the creator who reloads the cockpit alone comes
+   * back reading what they were reading.
+   */
+  const handleDisplayLanguageChange = useCallback(
+    (code: string) => {
+      setDisplayLanguage(code);
+      writeDisplayLanguage(liveExamId, code);
+      postToPresent({ t: "config", language: code });
+    },
+    [liveExamId, postToPresent]
   );
 
   /**
@@ -1908,6 +2068,71 @@ export default function LiveExamControl() {
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1.5">
+                  {/*
+                    The language switcher sits here, on the preview, rather than in
+                    the settings menu with the other projector controls. It is the
+                    only one of them that changes what the creator themselves is
+                    reading, and it is changed mid-sentence — a creator who has just
+                    switched the room to Hindi should not have to open a menu, and
+                    should be able to see the words change in the same glance.
+
+                    Only for a multi-language exam: a single-language exam would get
+                    a control with one option, which reads as a promise of a second
+                    language that does not exist.
+                  */}
+                  {isMultiLang && (
+                    <Select value={activeLanguage} onValueChange={handleDisplayLanguageChange}>
+                      {/*
+                        The trigger shows the CODE, not the label.
+
+                        "English" needs ~62px of the header before the ellipsis,
+                        and the header is already carrying Reviewing / Back to
+                        live / Show key on a laptop — so the label truncated to
+                        "Engl…", which is a control that has stopped naming its
+                        own state. The two-letter code is unambiguous at a glance
+                        (the full names are one click away in the menu), fits
+                        every language at one width, and never needs measuring.
+
+                        The flag is the same one the student picker uses. Windows
+                        draws regional-indicator pairs as bare letters rather than
+                        a flag, so it reads "GB EN" there — redundant, but never
+                        wrong, which is why the code carries the meaning and the
+                        flag is only ever decoration.
+                      */}
+                      <SelectTrigger
+                        className="h-7 w-auto gap-1.5 px-2 text-xs font-semibold"
+                        title={
+                          presentOpen
+                            ? `${liveLanguageInfo(activeLanguage)?.label || activeLanguage} — changes the preview and the focus screen together`
+                            : `${liveLanguageInfo(activeLanguage)?.label || activeLanguage} — changes the preview, and the focus screen when you open it`
+                        }
+                        aria-label={`Question language: ${liveLanguageInfo(activeLanguage)?.label || activeLanguage}`}
+                      >
+                        <span className="text-sm leading-none" aria-hidden="true">
+                          {liveLanguageInfo(activeLanguage)?.flag}
+                        </span>
+                        <span className="tracking-wide">{activeLanguage.toUpperCase()}</span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {supportedLanguages.map((code) => {
+                          const info = liveLanguageInfo(code);
+                          return (
+                            <SelectItem key={code} value={code}>
+                              <span className="flex items-center gap-2">
+                                <span>{info?.flag}</span>
+                                <span>{info?.label || code}</span>
+                                {info && info.nativeLabel !== info.label && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {info.nativeLabel}
+                                  </span>
+                                )}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  )}
                   {isReviewing && (
                     <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPreviewIndex(null)}>
                       <CornerUpLeft className="mr-1 h-3.5 w-3.5" />
@@ -1945,14 +2170,18 @@ export default function LiveExamControl() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <LiveQuestionBody text={previewQuestion.text} />
+                    <LiveQuestionBody text={(previewDisplay ?? previewQuestion).text} />
 
-                    {Array.isArray(previewQuestion.options) && (
+                    {Array.isArray((previewDisplay ?? previewQuestion).options) && (
                       <div className="space-y-2">
-                        {previewQuestion.options.map((opt: string, i: number) => {
+                        {(previewDisplay ?? previewQuestion).options.map((opt: string, i: number) => {
                           const correct = isCorrectOption(previewQuestion.correct_answer, i);
-                          const dist = previewAnalytics?.option_distribution;
-                          const count = dist ? Number(dist[String(i)] ?? dist[`"${i}"`] ?? 0) : 0;
+                          // Via the shared normaliser, not a raw key lookup: the
+                          // inline `dist[String(i)] ?? dist['"i"']` form this
+                          // replaced never matched a multi-select key (a whole
+                          // array like ["0", "2"]), so every option on those
+                          // questions rendered 0 · 0% however the class voted.
+                          const count = liveTally.counts[i] ?? 0;
                           const pct =
                             previewAnalytics && previewAnalytics.total_responses > 0
                               ? Math.round((count / previewAnalytics.total_responses) * 100)
@@ -1966,8 +2195,8 @@ export default function LiveExamControl() {
                               index={i}
                               html={opt}
                               imageUrl={
-                                Array.isArray(previewQuestion.option_image_urls)
-                                  ? previewQuestion.option_image_urls[i]
+                                Array.isArray((previewDisplay ?? previewQuestion).option_image_urls)
+                                  ? (previewDisplay ?? previewQuestion).option_image_urls![i]
                                   : null
                               }
                               visual={visual}

@@ -52,7 +52,13 @@ function LeaderboardRow({
    */
   alias?: string;
 }) {
-  const rank = participant.rank || position;
+  // The crown follows the SERVER's rank, never the row's position. rank stays
+  // null until compute_live_rankings first runs, at the first question's expiry,
+  // and the fetch orders by rank nullsFirst:false with no tiebreaker — so until
+  // then "first row" is just whoever the database happened to return first, on
+  // zero correct, on a screen that is usually projected to the whole room.
+  const serverRank = participant.rank ?? 0;
+  const rank = serverRank || position;
   const pct = maxScore > 0 ? (participant.total_correct / maxScore) * 100 : 0;
 
   return (
@@ -69,9 +75,15 @@ function LeaderboardRow({
       />
 
       <div
-        className={`relative z-10 h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[11px] font-bold tabular-nums ${medalClass(rank)}`}
+        className={`relative z-10 h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[11px] font-bold tabular-nums ${medalClass(serverRank)}`}
       >
-        {rank === 1 ? <Crown className="h-3.5 w-3.5" /> : rank <= 3 ? <Medal className="h-3.5 w-3.5" /> : rank}
+        {serverRank === 1 ? (
+          <Crown className="h-3.5 w-3.5" />
+        ) : serverRank === 2 || serverRank === 3 ? (
+          <Medal className="h-3.5 w-3.5" />
+        ) : (
+          rank
+        )}
       </div>
 
       {!dense && (

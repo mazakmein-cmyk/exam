@@ -24,7 +24,7 @@
  *   [5] The error contract reaches the client, and the client adds no ceremony.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -62,7 +62,6 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\
 
 const SQL = readMigration("20260811000000_live_v2_flush_remaining_time.sql");
 const CONTROLS_SQL = readMigration("20260804000000_live_v2_controls.sql");
-const APPLY = readFileSync(resolve(ROOT, "supabase", "APPLY_REMAINING.sql"), "utf-8");
 const CONTROL = readSrc("pages/LiveExamControl.tsx");
 const CONTROLS = readSrc("components/live/LiveTimeControls.tsx");
 const SERVICE = readSrc("services/liveExamService.ts");
@@ -186,10 +185,20 @@ test("a question already at zero is refused, not rewritten", () => {
   );
 });
 
-test("the paste-once file carries this migration", () => {
+test("the migration that backs this button is in the deployment channel", () => {
+  // Was asserted against supabase/APPLY_REMAINING.sql, a consolidated paste-once
+  // file that has since been retired — its content stopped at 20260812000000, so
+  // re-pasting it after 20260815000000 silently reverted two function bodies. The
+  // migrations directory is the channel now, and it cannot fall behind itself.
   assert(
-    APPLY.includes("end_live_question_time"),
-    "supabase/APPLY_REMAINING.sql is this project's deployment channel; a migration missing from it is a button that 404s"
+    readdirSync(resolve(ROOT, "supabase", "migrations")).some((f) =>
+      f.startsWith("20260811000000")
+    ),
+    "a migration missing from the deployment channel is a button that 404s"
+  );
+  assert(
+    /CREATE OR REPLACE FUNCTION public\.end_live_question_time/.test(SQL),
+    "and the migration has to actually define it"
   );
 });
 

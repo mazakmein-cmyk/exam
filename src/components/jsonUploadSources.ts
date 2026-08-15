@@ -9,6 +9,59 @@ import { supabase } from "@/integrations/supabase/client";
 
 export type SectionMeta = { id: string; name: string; sort_order: number };
 
+/** One section the user asked the mismatch flow to create. */
+export type NewSectionSpec = {
+  name: string;
+  /** Required when the data source has `requiresSectionTime` (mock exams). */
+  timeMinutes?: number;
+};
+
+/** One DB row of the creation plan (exam id is added by the adapter). */
+export type SectionCreationRow = {
+  name: string;
+  sort_order: number;
+  language: string;
+  section_group_id: string;
+  time_minutes?: number;
+};
+
+/**
+ * Expand section specs into per-language rows, mirroring the editors'
+ * "Add Section": every supported language gets a row and the language
+ * variants of one section share a section_group_id — that shared id is what
+ * lets the existing import code auto-fill the second language (placeholder
+ * rows on mock, verbatim copies on live).
+ *
+ * sort_order continues after the current max across ALL languages (twins
+ * share their sort_order, and max-based ordering survives deleted-section
+ * gaps, unlike count-based).
+ */
+export function buildSectionCreationPlan(
+  specs: NewSectionSpec[],
+  sectionsByLang: Record<string, SectionMeta[]>,
+  supportedLanguages: string[],
+  genGroupId: () => string = () => crypto.randomUUID()
+): SectionCreationRow[] {
+  const maxSort = Math.max(
+    -1,
+    ...supportedLanguages.flatMap((l) => (sectionsByLang[l] ?? []).map((s) => s.sort_order))
+  );
+  const rows: SectionCreationRow[] = [];
+  specs.forEach((spec, i) => {
+    const groupId = genGroupId();
+    for (const lang of supportedLanguages) {
+      rows.push({
+        name: spec.name,
+        sort_order: maxSort + 1 + i,
+        language: lang,
+        section_group_id: groupId,
+        ...(spec.timeMinutes !== undefined ? { time_minutes: spec.timeMinutes } : {}),
+      });
+    }
+  });
+  return rows;
+}
+
 export type LangStatus = {
   questionCount: number;
   sectionCount: number;
@@ -32,6 +85,18 @@ export type JsonUploadDataSource = {
 
   /** Persist a section rename (throws on failure). */
   renameSection: (sectionId: string, name: string) => Promise<void>;
+
+  /**
+   * Bulk-create sections from the mismatch flow (throws on failure).
+   * Rows come from buildSectionCreationPlan; the adapter adds the exam FK.
+   */
+  createSections: (examId: string, rows: SectionCreationRow[]) => Promise<void>;
+
+  /**
+   * Whether new sections need a mandatory time (mock exams: time_minutes).
+   * Live sections have no time column — timing is per-question time_seconds.
+   */
+  requiresSectionTime: boolean;
 
   /** Storage bucket for PDF + auto-snip uploads. */
   storageBucket: string;
@@ -114,6 +179,24 @@ export const mockExamJsonSource: JsonUploadDataSource = {
     if (error) throw error;
   },
 
+  createSections: async (examId, rows) => {
+    const { error } = await supabase.from("sections").insert(
+      rows.map((r) => ({
+        exam_id: examId,
+        name: r.name,
+        sort_order: r.sort_order,
+        language: r.language,
+        section_group_id: r.section_group_id,
+        // Mandatory in this flow; 60 is only a type-level safety net, the
+        // dialog blocks Create until every section has a valid time.
+        time_minutes: r.time_minutes ?? 60,
+      }))
+    );
+    if (error) throw error;
+  },
+
+  requiresSectionTime: true,
+
   storageBucket: "exam-pdfs",
 
   showMarks: true,
@@ -193,6 +276,23 @@ export const liveExamJsonSource: JsonUploadDataSource = {
     const { error } = await supabase.from("live_sections").update({ name }).eq("id", sectionId);
     if (error) throw error;
   },
+
+  createSections: async (examId, rows) => {
+    // No time here on purpose: live_sections has no time column. Question
+    // timers come from each question's time_seconds at import.
+    const { error } = await supabase.from("live_sections").insert(
+      rows.map((r) => ({
+        live_exam_id: examId,
+        name: r.name,
+        sort_order: r.sort_order,
+        language: r.language,
+        section_group_id: r.section_group_id,
+      }))
+    );
+    if (error) throw error;
+  },
+
+  requiresSectionTime: false,
 
   // Same bucket as mock exams — RLS keys on the `user.id` path prefix, not the
   // exam type, so the existing policy already covers live-exam uploads.

@@ -153,13 +153,25 @@ function isAnswerCorrect(selected: any, correct: any): boolean {
   return String(correct) === String(selected);
 }
 
-/** Verdict for a whole response: multi-select needs set equality, not inclusion. */
-function isResponseCorrect(selected: any, correct: any, answerType?: string | null): boolean {
-  if (isMultiAnswer(answerType)) {
-    if (selected === null || selected === undefined || correct === null || correct === undefined) return false;
-    return isSameAnswerSet(selected, correct);
+/**
+ * Verdict for a whole response, mirroring public.grade_live_answer.
+ *
+ * The SHAPE of the stored key decides, never answer_type — the server never
+ * reads answer_type, and nothing keeps the two in step. A row typed "single"
+ * whose correct_answer is ["0","2"] still demands the whole set; branching on
+ * answer_type here awarded it to a one-option pick, so the badge said
+ * "Correct" for an answer the leaderboard was counting wrong.
+ */
+function isResponseCorrect(selected: any, correct: any, _answerType?: string | null): boolean {
+  if (selected === null || selected === undefined || correct === null || correct === undefined) return false;
+  if (Array.isArray(correct)) {
+    if (Array.isArray(selected)) return isSameAnswerSet(selected, correct);
+    // A scalar against a multi-answer key is a partial answer, so wrong. A
+    // single answer stored as a 1-element array keeps the lenient match.
+    return correct.length === 1 && String(correct[0]) === String(selected);
   }
-  return isAnswerCorrect(selected, correct);
+  if (Array.isArray(selected)) return selected.length === 1 && String(selected[0]) === String(correct);
+  return String(correct) === String(selected);
 }
 
 /** Read a selection back from either shape: scalar (single) or array (multi). */
@@ -598,13 +610,56 @@ export default function LiveExamStudent() {
   const sessionStatus = session.status ?? exam?.status ?? null;
   const sessionIndex = session.currentQuestionIndex;
 
+  /**
+   * WHICH of my questions is the one the host has open.
+   *
+   * `sessionIndex` is the host's cursor — a position in the PRIMARY language's
+   * list. It is not necessarily a position in mine. Reading `questions[sessionIndex]`
+   * assumed the two lists line up, and when they do not, this is where the room
+   * splits: the host says "question 5", and a Hindi student whose list is one
+   * question short reads the translation of question 6 instead, in good faith,
+   * on the same timer, with nothing on screen suggesting otherwise.
+   *
+   * The name tag is the fix. The server publishes the open question's tag and we
+   * look for THAT, so it does not matter how the two lists line up.
+   *
+   * No tag → fall back to counting, which is exactly what this did before. That
+   * covers every single-language exam (nothing to translate to, so counting is
+   * already correct), a database that predates the migration, and the moment
+   * after an unlock arrives by Realtime, which carries no tag.
+   */
+  const myQuestionIndex = useMemo(() => {
+    const gid = session.currentQuestionGroupId;
+    if (!gid) return sessionIndex;
+    const i = questions.findIndex((q) => q.question_group_id === gid);
+    // -1 rather than a silent fall back to sessionIndex: if the open question
+    // genuinely has no counterpart in this language, showing whatever sits at
+    // that position would be the original bug wearing a new hat.
+    return i >= 0 ? i : -1;
+  }, [questions, session.currentQuestionGroupId, sessionIndex]);
+
+  /**
+   * The open question does not exist in this student's language at all.
+   *
+   * Previously this rendered as a blank card with a submit button that silently
+   * did nothing — `questions[idx]` was undefined and the handler returned early
+   * with no message. Saying so is the minimum.
+   */
+  const openMissingInMyLanguage =
+    sessionIndex >= 0 && !!session.currentQuestionGroupId && myQuestionIndex < 0;
+
   // ─── Countdown ─────────────────────────────────────────────
 
   useLiveTimerTarget({
     index: sessionIndex,
     unlockedAt: session.unlockedAt,
     extraSeconds: session.extraSeconds,
-    timeSeconds: sessionIndex >= 0 ? questions[sessionIndex]?.time_seconds ?? null : null,
+    // My row's timer, found by tag. Siblings are meant to carry the same
+    // time_seconds, but the server bounds a whole-session extension by the
+    // SHORTEST translation precisely because they can differ — so read the row
+    // this student is actually looking at rather than whatever sits at the
+    // host's position in my list.
+    timeSeconds: myQuestionIndex >= 0 ? questions[myQuestionIndex]?.time_seconds ?? null : null,
     active: sessionStatus === "live",
   });
 
@@ -671,15 +726,35 @@ export default function LiveExamStudent() {
     // Watch-only preview: the creator isn't a participant, so there is no
     // answer to record (the server would reject it anyway).
     if (isPreview) {
-      toast({ title: "Preview mode", description: "Answers aren't recorded for your own exam." });
+      // Terse on purpose: the banner under the options already explains the
+      // mode. This is just feedback that the tap did nothing.
+      toast({ title: "You're the host — answers aren't recorded" });
       return;
     }
     // The session's index, not the exam row's: the exam row is loaded once and
     // does not track unlocks, so submitting against it would send an answer for
     // whichever question was open when this page loaded.
     const idx = session.currentQuestionIndex;
-    const currentQ = questions[idx];
-    if (!currentQ || selectedAnswer === null) return;
+    // The question by NAME TAG, not by the host's position in my list — the same
+    // row that is on screen. Submitting `questions[idx]` while the student read
+    // a different row is how an answer ends up attached to a question nobody
+    // answered. `idx` is still the key for the responses map and the optimistic
+    // ordinal, because those are keyed on the canonical position the server
+    // returns, which is unchanged.
+    const currentQ = myQuestionIndex >= 0 ? questions[myQuestionIndex] : undefined;
+    if (!currentQ || selectedAnswer === null) {
+      // Previously a silent return: no toast, no error, the button just did
+      // nothing. If this language has no counterpart for the open question,
+      // say so rather than looking broken.
+      if (openMissingInMyLanguage) {
+        toast({
+          title: "Not available in your language",
+          description: "This question has no version in the language you joined with. Your host has been able to see this.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     const isMulti = isMultiAnswer(currentQ.answer_type);
     if (isMulti && (!Array.isArray(selectedAnswer) || selectedAnswer.length === 0)) return;
     // Multi answers travel as option-index strings, matching how correct_answer is stored.
@@ -735,8 +810,14 @@ export default function LiveExamStudent() {
   const isLive = sessionStatus === "live" && sessionIndex >= 0;
   const isEnded = sessionStatus === "ended";
 
+  // Stays the host's cursor. Everything keyed on it — the timer key, the
+  // analytics map, the responses map, the chip strip — is keyed on the CANONICAL
+  // position the server returns, so re-pointing it at my own list would break
+  // all four to fix one.
   const currentQuestionIndex = sessionIndex;
-  const currentQuestion = isLive ? questions[currentQuestionIndex] : null;
+  // The question on screen, resolved by name tag. This is the line the whole
+  // change exists for.
+  const currentQuestion = isLive && myQuestionIndex >= 0 ? questions[myQuestionIndex] : null;
   /**
    * Gate on the countdown store having caught up with the index. For the one
    * render between an unlock arriving and the target being set, the question is
@@ -1869,6 +1950,29 @@ export default function LiveExamStudent() {
               </div>
             )}
 
+            {/* The open question has no version in this student's language.
+                Structurally impossible on a well-formed exam — the publish gate
+                exists to keep it that way — but when it does happen the student
+                used to get a blank card and a submit button that silently did
+                nothing. Naming it costs one panel and turns "the app is broken"
+                into something they can tell the host about. */}
+            {isLive && openMissingInMyLanguage && (
+              <div id="live-current-question" className={paneVisible("question")}>
+                <div className="overflow-hidden rounded-2xl border border-amber-300 bg-amber-50 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
+                  <div className="space-y-2 p-4 sm:p-6">
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                      This question isn't available in your language
+                    </p>
+                    <p className="text-sm text-amber-700 dark:text-amber-400">
+                      Question {currentQuestionIndex + 1} hasn't been translated for this exam, so
+                      there's nothing to answer here. Let your host know — the rest of the exam
+                      carries on as normal, and the next question should appear shortly.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Active question */}
             {isLive && currentQuestion && (
               <div id="live-current-question" className={paneVisible("question")}>
@@ -1960,7 +2064,7 @@ export default function LiveExamStudent() {
                   {isPreview && !isLocked && (
                     <div className="border-t border-border/60 bg-amber-500/10 px-4 py-3 text-center text-sm font-medium text-amber-700 dark:text-amber-400 sm:px-6">
                       <Lock className="mr-1.5 inline h-4 w-4" />
-                      Preview — you're the creator, so answers aren't recorded
+                      This is your students' screen — you're the host, so answers aren't recorded
                     </div>
                   )}
 

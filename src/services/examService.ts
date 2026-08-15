@@ -41,9 +41,17 @@ export const saveExamAttempt = async ({
     let totalQuestions = questions.length;
     let totalTimeOnQuestions = 0;
 
+    // Object-shaped correct answers ({ answer: ... } / { value: ... }) are read
+    // with an explicit null/undefined test, never truthiness: a legitimate
+    // answer of 0 (or false, or "") would otherwise read as "no answer stored"
+    // and grade every submission wrong.
+    const objectAnswer = (o: any) =>
+        o?.answer !== undefined && o?.answer !== null ? o.answer : o?.value;
+
     const responses = questions.map((q) => {
         const state = questionStates[q.id];
-        const selectedAnswer = state?.selectedAnswer || null;
+        // `??`, not `||`: a selected answer of 0 is a real choice, not a blank.
+        const selectedAnswer = state?.selectedAnswer ?? null;
         const timeSpent = state?.timeSpentSeconds || 0;
         totalTimeOnQuestions += timeSpent;
 
@@ -65,8 +73,9 @@ export const saveExamAttempt = async ({
                 }
             } else if (typeof correctAnswer === 'object' && correctAnswer !== null) {
                 // Handle potential simplified JSON structure { "answer": "A" }
-                const val = (correctAnswer as any).answer || (correctAnswer as any).value;
-                isCorrect = normalize(val) === normalize(selectedAnswer);
+                const val = objectAnswer(correctAnswer);
+                isCorrect = val !== undefined && val !== null
+                    && normalize(val) === normalize(selectedAnswer);
             } else {
                 // Direct comparison (normalized)
                 isCorrect = normalize(selectedAnswer) === normalize(correctAnswer);
@@ -141,7 +150,10 @@ export const saveExamAttempt = async ({
     // Actually, usually fetching for analytics joins distinct responses. 
     // Let's rely on standard insert.
 
-    const { error: matchError } = await supabase.from("responses").upsert(responsesWithId, { onConflict: 'attempt_id, question_id' }); // Adding optimistic conflict handling if constrained
+    // No space after the comma: PostgREST splits on_conflict on commas without
+    // trimming, so 'attempt_id, question_id' names a column called " question_id"
+    // and the upsert can never match the intended constraint.
+    const { error: matchError } = await supabase.from("responses").upsert(responsesWithId, { onConflict: 'attempt_id,question_id' }); // Adding optimistic conflict handling if constrained
     // If no constraint, upsert works as insert if no conflict.
 
     if (matchError) {
