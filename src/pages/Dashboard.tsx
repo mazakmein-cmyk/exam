@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import CreateExamDialog from "@/components/CreateExamDialog";
 import ExamTypeDialog from "@/components/ExamTypeDialog";
 import CreateLiveExamDialog from "@/components/CreateLiveExamDialog";
-import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCount, type LiveExam } from "@/services/liveExamService";
+import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCount, type LiveExam, type LiveExamStatus } from "@/services/liveExamService";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import { navigationCopyPatch } from "@/lib/examSettings";
 import { copyTimingGroups } from "@/lib/timingGroupSettings";
@@ -68,6 +68,8 @@ const Dashboard = () => {
   const [activeTab, setActiveTab] = useState<"mock" | "live">(
     searchParams.get("tab") === "live" ? "live" : "mock"
   );
+  const [publishFilter, setPublishFilter] = useState<"all" | "published" | "unpublished">("all");
+  const [liveStatusFilter, setLiveStatusFilter] = useState<"all" | LiveExamStatus>("all");
   const [liveExams, setLiveExams] = useState<LiveExam[]>([]);
   const [liveParticipantCounts, setLiveParticipantCounts] = useState<Record<string, number>>({});
   const [liveLoading, setLiveLoading] = useState(false);
@@ -86,6 +88,20 @@ const Dashboard = () => {
 
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  const publishedCount = exams.filter((e) => e.is_published).length;
+  const unpublishedCount = exams.length - publishedCount;
+  const filteredExams =
+    publishFilter === "all"
+      ? exams
+      : exams.filter((e) => (publishFilter === "published" ? e.is_published : !e.is_published));
+
+  const liveStatusCounts = liveExams.reduce(
+    (acc, e) => ({ ...acc, [e.status]: (acc[e.status] ?? 0) + 1 }),
+    {} as Record<LiveExamStatus, number>
+  );
+  const filteredLiveExams =
+    liveStatusFilter === "all" ? liveExams : liveExams.filter((e) => e.status === liveStatusFilter);
 
   // Get user initial for avatar
   const getUserInitial = () => {
@@ -627,7 +643,8 @@ const Dashboard = () => {
         </div>
 
         {/* Tab Toggle: Mock Exams | Live Exams */}
-        <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit mb-6 border border-border/50">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit border border-border/50">
           <button
             onClick={() => handleTabChange("mock")}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
@@ -652,6 +669,59 @@ const Dashboard = () => {
           </button>
         </div>
 
+        {/* Publish status filter (mock exams only) */}
+        {activeTab === "mock" && exams.length > 0 && (
+          <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit border border-border/50">
+            {([
+              { key: "all", label: "All", count: exams.length },
+              { key: "published", label: "Published", count: publishedCount },
+              { key: "unpublished", label: "Unpublished", count: unpublishedCount },
+            ] as const).map(({ key, label, count }) => (
+              <button
+                key={key}
+                onClick={() => setPublishFilter(key)}
+                aria-pressed={publishFilter === key}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  publishFilter === key
+                    ? "bg-background text-foreground shadow-sm border border-border/60"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+                <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Status filter (live exams only) */}
+        {activeTab === "live" && liveExams.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit border border-border/50">
+            {([
+              { key: "all", label: "All", count: liveExams.length },
+              { key: "draft", label: "Draft", count: liveStatusCounts.draft ?? 0 },
+              { key: "published", label: "Published", count: liveStatusCounts.published ?? 0 },
+              { key: "live", label: "Live", count: liveStatusCounts.live ?? 0 },
+              { key: "ended", label: "Ended", count: liveStatusCounts.ended ?? 0 },
+            ] as const).map(({ key, label, count }) => (
+              <button
+                key={key}
+                onClick={() => setLiveStatusFilter(key)}
+                aria-pressed={liveStatusFilter === key}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  liveStatusFilter === key
+                    ? "bg-background text-foreground shadow-sm border border-border/60"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+                <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        </div>
+
         {/* ─── Mock Exams Tab ─── */}
         {activeTab === "mock" && (
           <>
@@ -671,9 +741,24 @@ const Dashboard = () => {
                   Create Your First Exam
                 </Button>
               </div>
+            ) : filteredExams.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-card/40 py-20 px-6 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#6C3EF4]/15 to-[#A855F7]/8 border border-[#6C3EF4]/15 flex items-center justify-center mb-4">
+                  <FileText className="h-8 w-8 text-[#A855F7]/70" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2 text-foreground">
+                  No {publishFilter} exams
+                </h3>
+                <p className="text-muted-foreground text-sm mb-6 max-w-xs">
+                  You have {exams.length} exam{exams.length === 1 ? "" : "s"}, but none are {publishFilter}.
+                </p>
+                <Button variant="outline" onClick={() => setPublishFilter("all")}>
+                  Show all exams
+                </Button>
+              </div>
             ) : (
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {exams.map((exam) => (
+                {filteredExams.map((exam) => (
                   <Card key={exam.id} className="flex flex-col justify-between group hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 border-border/60">
                     <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                       <div className="space-y-1">
@@ -785,9 +870,24 @@ const Dashboard = () => {
                   Create Your First Live Exam
                 </Button>
               </div>
+            ) : filteredLiveExams.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-card/40 py-20 px-6 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/15 to-teal-500/8 border border-emerald-500/15 flex items-center justify-center mb-4">
+                  <Radio className="h-8 w-8 text-emerald-500/70" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2 text-foreground">
+                  No {liveStatusFilter} live exams
+                </h3>
+                <p className="text-muted-foreground text-sm mb-6 max-w-xs">
+                  You have {liveExams.length} live exam{liveExams.length === 1 ? "" : "s"}, but none are {liveStatusFilter}.
+                </p>
+                <Button variant="outline" onClick={() => setLiveStatusFilter("all")}>
+                  Show all live exams
+                </Button>
+              </div>
             ) : (
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {liveExams.map((exam) => (
+                {filteredLiveExams.map((exam) => (
                   <Card key={exam.id} className="flex flex-col justify-between group hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 border-border/60">
                     <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                       <div className="space-y-1">
