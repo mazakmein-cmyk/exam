@@ -753,9 +753,22 @@ test("the creator's preview is the candidate's screen, with no extra notes", () 
   );
 
   // The editor still says the stored text is stale — that is where it is fixed.
+  // The timing audit now feeds one combined notice (describeInstructionNotice)
+  // rather than rendering on its own, so the pin follows it there.
   const editor = readSrc("pages/ExamDetail.tsx");
-  assertContains(editor, "auditInstructionTiming(text, {");
-  assertContains(editor, "{timingDrift && (");
+  assertContains(editor, "auditInstructionDrift({", "the editor still audits the stored text");
+  assertContains(readSrc("lib/instructionDrift.js"), "auditInstructionTiming(text, {");
+  assertContains(editor, "{instructionNotice && (");
+
+  // And it renders ABOVE the collapse guard: a warning inside a card the
+  // creator has collapsed is a warning nobody reads.
+  const noticeAt = editor.indexOf("{instructionNotice && (");
+  const collapseAt = editor.indexOf("{!isExamDetailsCollapsed && (");
+  assert(noticeAt > 0 && collapseAt > 0, "both the notice and the collapse guard still exist");
+  assert(
+    noticeAt < collapseAt,
+    "the notice sits above the collapse guard, so collapsing the card cannot hide it"
+  );
 });
 
 test("nobody starts an exam without accepting the declaration", () => {

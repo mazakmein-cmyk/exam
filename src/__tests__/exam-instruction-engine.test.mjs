@@ -405,6 +405,10 @@ console.log("\n[6] Wiring (static)");
 
 const GEN = readSrc("components/exam/GenerateExamInstruction.tsx");
 const DETAIL = readSrc("pages/ExamDetail.tsx");
+// The facts collector moved out of the editor so the publish dialog could ask
+// the same question from the Dashboard, where no editor state exists. These
+// invariants belong to the collection, so they follow it to its new home.
+const FACTS = readSrc("services/examInstructionFacts.ts");
 const DIALOG = readSrc("components/CreateExamDialog.tsx");
 
 test("the generate action never gives up its place to Undo", () => {
@@ -432,13 +436,13 @@ test("filling an empty field is offered no undo", () => {
 
 test("the editor counts questions with the runner's own filter", () => {
   assert(
-    /\.select\("id, section_id, answer_type"\)[\s\S]{0,80}\.eq\("is_excluded", false\)/.test(DETAIL),
+    /\.select\("id, section_id, answer_type"\)[\s\S]{0,80}\.eq\("is_excluded", false\)/.test(FACTS),
     "ExamSimulator builds the paper with .eq(is_excluded,false); counting without it inflates every number a candidate reads"
   );
 });
 
 test("the count query pages past PostgREST's response cap", () => {
-  const collect = DETAIL.slice(DETAIL.indexOf("const collectExamFacts"), DETAIL.indexOf("const getQuestionErrors"));
+  const collect = FACTS.slice(FACTS.indexOf("export async function collectExamFacts"));
   assert(
     /\.range\(from, from \+ PAGE - 1\)/.test(collect) && /data\.length < PAGE/.test(collect),
     "a single unbounded select is silently truncated at max-rows (1000 by default) — an undercount, not an error"
@@ -447,7 +451,7 @@ test("the count query pages past PostgREST's response cap", () => {
 });
 
 test("scoring overrides are looked up by primary-language ids", () => {
-  const collect = DETAIL.slice(DETAIL.indexOf("const collectExamFacts"), DETAIL.indexOf("const getQuestionErrors"));
+  const collect = FACTS.slice(FACTS.indexOf("export async function collectExamFacts"));
   assert(
     /primarySectionIds/.test(collect) && /getSectionScoringDefaults\(overrideSectionIds\)/.test(collect),
     "override rows live on primary-language sections/questions; querying by the Hindi tab's ids returns nothing and every paper reads as uniformly marked"
@@ -459,9 +463,9 @@ test("scoring overrides are looked up by primary-language ids", () => {
 });
 
 test("the languages line reads what candidates can sit, not what the editor supports", () => {
-  const collect = DETAIL.slice(DETAIL.indexOf("const collectExamFacts"), DETAIL.indexOf("const getQuestionErrors"));
+  const collect = FACTS.slice(FACTS.indexOf("export async function collectExamFacts"));
   assert(
-    /is_published && \(exam\.published_languages\?\.length \?\? 0\) > 0/.test(collect),
+    /isPublished && \(publishedLanguages\?\.length \?\? 0\) > 0/.test(collect),
     "publishing can select a subset; 'choose your language' naming an unpublished one describes a chooser that does not exist"
   );
 });
@@ -474,7 +478,7 @@ test("flipping section switching warns about the stored instruction text", () =>
 });
 
 test("uniformity is a value comparison, not a row count", () => {
-  const collect = DETAIL.slice(DETAIL.indexOf("const collectExamFacts"), DETAIL.indexOf("const getQuestionErrors"));
+  const collect = FACTS.slice(FACTS.indexOf("export async function collectExamFacts"));
   assert(collect.length > 0, "collectExamFacts moved — this slice found nothing");
   assert(
     /rounding_strategy === examDefault\.rounding_strategy/.test(collect),
@@ -488,7 +492,7 @@ test("uniformity is a value comparison, not a row count", () => {
 
 test("the editor's whole-paper clock follows the runner's fallback rule", () => {
   assert(
-    /totalMinutes: totalTimeMinutes \?\? \(sumSectionMinutes\(sections\) \|\| null\)/.test(DETAIL),
+    /totalMinutes: totalTimeMinutes \?\? \(sumSectionMinutes\(sections\) \|\| null\)/.test(FACTS),
     "totalExamMinutes prefers the explicit total, falls back to the section sum, and treats 0 as unknown"
   );
 });

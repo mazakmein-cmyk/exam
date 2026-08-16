@@ -82,8 +82,17 @@ import GenerateExamInstruction, { type ExamFacts } from "@/components/exam/Gener
 import { rowsForText } from "@/lib/instructionTemplates";
 import { navigationCopyPatch, readNavigationSettings, saveNavigationSettings } from "@/lib/examSettings";
 import { sumSectionMinutes } from "@/lib/examNavigation.js";
-import { auditInstructionTiming, describeTimingDrift } from "@/lib/instructionTimingAudit.js";
-import { reconcileTimingLine } from "@/lib/examInstructionEngine.js";
+import { collectExamFacts as collectInstructionFacts } from "@/services/examInstructionFacts";
+import { auditInstructionDrift } from "@/lib/instructionDrift.js";
+import { auditInstructionShape } from "@/lib/examInstructionEngine.js";
+import {
+  describeInstructionNotice,
+  dismissInstructionReview,
+  hasMeaningfulText,
+  instructionsNeedReview,
+  markInstructionsReviewed,
+  markInstructionsUnreviewed,
+} from "@/lib/instructionFreshness.js";
 import {
   copyTimingGroups,
   createTimingGroup,
@@ -363,175 +372,120 @@ export default function ExamDetail() {
    * generation needs — see GenerateExamInstruction on why it shows no
    * "up to date" tick.
    */
-  const timingDrift = useMemo(() => {
-    const text = examSpecificInstructionTrans[activeLanguage] || "";
-    // Grouped papers audit against UNIT clocks (pools once per group, solo
-    // clocks as-is) — a grouped member's own minutes is a number no candidate
-    // ever sees, so prose claiming it must be flagged, not allowed.
-    const units =
-      !allowSectionSwitching && timingGroups.length > 0
-        ? timingUnits(sections, timingGroups, resolvedGroupIds)
-        : [];
-    const drift = describeTimingDrift(
-      auditInstructionTiming(text, {
-        allowSectionSwitching,
-        totalMinutes: totalTimeMinutes,
-        sectionMinutes: sections.map((s) => s.time_minutes),
-        unitMinutes: hasGroupUnits(units) ? units.map((u) => u.minutes) : null,
-      })
-    );
-    if (!drift) return null;
-    // Whether the intro can fix this sentence for candidates on the fly, which
-    // decides what to ask of the creator: regenerate the whole text, or edit a
-    // sentence only they can rewrite.
-    const { changed: autoCorrected } = reconcileTimingLine(
-      text,
-      {
-        sections: sections.map((s) => ({
-          name: s.name,
-          minutes: s.time_minutes,
-          questionCount: null,
-          groupId: resolvedGroupIds.get(s.id) ?? null,
-        })),
-        allowSectionSwitching,
-        totalMinutes: totalTimeMinutes,
+  const timingDrift = useMemo(
+    () =>
+      auditInstructionDrift({
+        text: examSpecificInstructionTrans[activeLanguage] || "",
+        sections,
+        resolvedGroupIds,
+        timingGroups,
         groups: instructionGroupFacts,
-        marking: null,
-        answerTypes: null,
-        languageNames: null,
-      },
-      activeLanguage
-    );
-    return { drift, autoCorrected };
-  }, [examSpecificInstructionTrans, activeLanguage, allowSectionSwitching, totalTimeMinutes, sections, timingGroups, resolvedGroupIds, instructionGroupFacts]);
+        allowSectionSwitching,
+        totalMinutes: totalTimeMinutes,
+        lang: activeLanguage,
+      }),
+    [examSpecificInstructionTrans, activeLanguage, allowSectionSwitching, totalTimeMinutes, sections, timingGroups, resolvedGroupIds, instructionGroupFacts]
+  );
 
   // ── "Generate from exam" on the Exam Instruction field ──────────────────
-  // The facts the engine wants are NOT all in this page's state: `questions`
-  // holds only the selected section, and the marks maps in marksModule cover
-  // only its question ids. So the counts, the answer-type mix, and the full
-  // override picture are fetched here, at click time — always current, never a
-  // second copy of state to keep honest through every add/delete path.
-  const collectExamFacts = async (): Promise<ExamFacts> => {
-    const sectionIds = sections.map((s) => s.id);
-    if (sectionIds.length === 0) {
-      // Nothing to count; the engine will answer null and the button will say so.
-      return {
-        sections: [],
-        allowSectionSwitching,
-        totalMinutes: null,
-        marking: null,
-        answerTypes: null,
-        languageNames: null,
-      };
-    }
-
-    // The same filter the runner uses to build the paper (ExamSimulator does
-    // .eq("is_excluded", false)), so these counts are what a candidate sees.
-    // Paged, because PostgREST caps a single response (1000 rows by default)
-    // and a silently truncated page would undercount a big paper — the one
-    // failure mode a counting query must not have.
-    const fetchQuestionRows = async (ids: string[]) => {
-      const PAGE = 1000;
-      const rows: { id: string; section_id: string; answer_type: string }[] = [];
-      for (let from = 0; ; from += PAGE) {
-        const { data, error } = await supabase
-          .from("parsed_questions")
-          .select("id, section_id, answer_type")
-          .eq("is_excluded", false)
-          .in("section_id", ids)
-          .order("id")
-          .range(from, from + PAGE - 1);
-        if (error) throw error;
-        rows.push(...((data ?? []) as typeof rows));
-        if (!data || data.length < PAGE) return rows;
-      }
-    };
-    const rows = await fetchQuestionRows(sectionIds);
-
-    // Scoring override rows live on PRIMARY-language sections/questions only
-    // (the marks panel edits primary rows; the runner maps a secondary sitting
-    // back to them) — so on a secondary tab the overrides must be looked up by
-    // the primary ids, or every paper reads as uniformly marked from Hindi.
-    const primarySectionIds = allSections
-      .filter((s) => (s.language || "en") === primaryLanguage)
-      .map((s) => s.id);
-    const overrideSectionIds = primarySectionIds.length > 0 ? primarySectionIds : sectionIds;
-    const overrideQuestionIds =
-      overrideSectionIds === sectionIds
-        ? rows.map((r) => r.id)
-        : (await fetchQuestionRows(overrideSectionIds)).map((r) => r.id);
-
-    const [examDefault, sectionDefaults, questionOverrides] = await Promise.all([
-      examId ? getExamScoringDefault(examId) : Promise.resolve(null),
-      getSectionScoringDefaults(overrideSectionIds),
-      getQuestionScoringConfigs(overrideQuestionIds),
-    ]);
-
-    const countBySection = new Map<string, number>();
-    const answerTypes: Record<string, number> = {};
-    for (const row of rows) {
-      countBySection.set(row.section_id, (countBySection.get(row.section_id) || 0) + 1);
-      answerTypes[row.answer_type] = (answerTypes[row.answer_type] || 0) + 1;
-    }
-
-    // "Apply to All" materialises override rows whose values EQUAL the exam
-    // default, so uniformity is a value comparison, never a row count.
-    const overrides = [...sectionDefaults.values(), ...questionOverrides.values()];
-    const sameAsDefault = (c: ScoringConfig) =>
-      examDefault !== null &&
-      c.marks_correct === examDefault.marks_correct &&
-      c.marks_wrong === examDefault.marks_wrong &&
-      c.marks_skipped === examDefault.marks_skipped &&
-      c.mcq_mode === examDefault.mcq_mode &&
-      c.mcq_wrong_penalty === examDefault.mcq_wrong_penalty &&
-      c.rounding_strategy === examDefault.rounding_strategy;
-
-    return {
-      sections: sections.map((s) => ({
-        name: s.name,
-        minutes: Number.isFinite(s.time_minutes) && s.time_minutes > 0 ? s.time_minutes : null,
-        questionCount: countBySection.get(s.id) ?? 0,
-        groupId: resolvedGroupIds.get(s.id) ?? null,
-      })),
+  // The collection itself lives in services/examInstructionFacts so the publish
+  // dialog can ask the same question from the Dashboard, where none of this
+  // page's state exists. What stays here is only what is genuinely this page's:
+  // which tab is open, and which sections that tab shows.
+  const collectExamFacts = async (): Promise<ExamFacts> =>
+    collectInstructionFacts({
+      examId,
+      sections,
+      allSections,
+      primaryLanguage,
       allowSectionSwitching,
-      // The runner's rule (totalExamMinutes): the explicit total wins, else the
-      // section sum — and a sum of 0 is "unknown", not a zero-minute paper.
-      totalMinutes: totalTimeMinutes ?? (sumSectionMinutes(sections) || null),
-      // Timing groups, named in the active language — so the generated Hindi
-      // instruction says सत्र I where the Hindi player screens say सत्र I.
+      totalTimeMinutes,
+      resolvedGroupIds,
       groups: instructionGroupFacts,
-      marking:
-        examDefault === null
-          ? null
-          : {
-              correct: examDefault.marks_correct,
-              wrong: examDefault.marks_wrong,
-              skipped: examDefault.marks_skipped,
-              mcqMode: examDefault.mcq_mode,
-              mcqWrongPenalty: examDefault.mcq_wrong_penalty,
-              uniform: overrides.every(sameAsDefault),
-            },
-      scoredWithoutDefault: examDefault === null && overrides.length > 0,
-      answerTypes,
-      // Candidates choose from published_languages, not supported_languages —
-      // publishing can select a subset (a broken variant's switch is disabled),
-      // and telling a candidate to "choose your language" on an intro page
-      // that offers no chooser names a choice that does not exist. Before
-      // publishing there is nothing better than the supported list.
-      languageNames: (() => {
-        const candidateLangs =
-          exam?.is_published && (exam.published_languages?.length ?? 0) > 0
-            ? (exam.published_languages as string[])
-            : supportedLanguages;
-        if (candidateLangs.length <= 1) return null;
-        return candidateLangs.map((code) => {
-          const l = AVAILABLE_LANGUAGES.find((x) => x.code === code);
-          // The Hindi instruction names the languages the Hindi way.
-          return l ? (activeLanguage === "hi" ? l.nativeLabel : l.label) : code;
-        });
-      })(),
+      lang: activeLanguage,
+      supportedLanguages,
+      isPublished: !!exam?.is_published,
+      publishedLanguages: (exam?.published_languages as string[]) ?? null,
+    });
+
+  /**
+   * Has the paper's SHAPE moved on since this text was written?
+   *
+   * Unlike the timing audit above, this cannot be answered from state: the
+   * editor holds only the selected section's questions, so the counts come from
+   * the same fetch generation uses. Debounced and gated on there being text to
+   * contradict, so typing in the field does not queue a round trip per
+   * keystroke, and an exam with no instructions never pays for one at all.
+   */
+  const [shapeDrift, setShapeDrift] = useState<{ stated: string; expected: string } | null>(null);
+  useEffect(() => {
+    const text = examSpecificInstructionTrans[activeLanguage] || "";
+    if (!hasMeaningfulText(text) || sections.length === 0) {
+      setShapeDrift(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const facts = await collectExamFacts();
+        if (!cancelled) setShapeDrift(auditInstructionShape(text, facts, activeLanguage));
+      } catch {
+        // A count we could not read is not a claim we can disprove. Leave the
+        // last answer standing rather than clearing a warning on a flaky fetch.
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
     };
-  };
+    // collectExamFacts is rebuilt every render and is deliberately not a dep —
+    // the values it closes over are all listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examSpecificInstructionTrans, activeLanguage, sections, questions, allowSectionSwitching, totalTimeMinutes]);
+
+  /**
+   * The instructions notice: everything we can prove, plus the nudge for what
+   * we cannot. Re-read from storage on every relevant change so dismissing it
+   * or saving the field takes effect without a reload.
+   */
+  const [reviewEpoch, setReviewEpoch] = useState(0);
+  const instructionNotice = useMemo(() => {
+    // Edits count the moment they are typed, not when they are saved. The flag
+    // is only cleared on save (that is when we know what changed), but telling
+    // someone to go read a field they are visibly in the middle of rewriting is
+    // the banner talking over them.
+    const beingWritten =
+      JSON.stringify(generalInstructionTrans) !==
+        JSON.stringify(initialExamDataRef.current.instruction_translations) ||
+      JSON.stringify(examSpecificInstructionTrans) !==
+        JSON.stringify(initialExamDataRef.current.exam_instruction_translations);
+    // A field holding "." or "-" is empty in every way that matters, and the
+    // audits are silent on it for the best of reasons — there is no sentence in
+    // "." to contradict. Only worth saying once the paper has something to
+    // describe; on a brand-new exam it would be nagging about work not started.
+    const paperHasContent = sections.length > 0;
+    return describeInstructionNotice({
+      timingDrift,
+      shapeDrift,
+      blank: {
+        examInstruction:
+          paperHasContent && !hasMeaningfulText(examSpecificInstructionTrans[activeLanguage] || ""),
+        generalInstruction:
+          paperHasContent && !hasMeaningfulText(generalInstructionTrans[activeLanguage] || ""),
+      },
+      needsReview: !beingWritten && !!examId && instructionsNeedReview(examId),
+      hasText: hasMeaningfulText(examSpecificInstructionTrans[activeLanguage] || ""),
+    });
+  }, [
+    sections,
+    timingDrift,
+    shapeDrift,
+    examId,
+    generalInstructionTrans,
+    examSpecificInstructionTrans,
+    activeLanguage,
+    reviewEpoch,
+  ]);
 
   // --- Validation helper: returns true if a question has detectable issues ---
   // Returns all validation errors for a question as human-readable strings.
@@ -841,6 +795,16 @@ export default function ExamDetail() {
       return false;
     }
 
+    // Did this save touch the instructions, or only everything around them?
+    // Read before the ref is reset below — afterwards there is nothing to
+    // compare against. Both fields count: a creator who rewrote the General
+    // Instruction has plainly just read the pair of them.
+    const instructionsTouched =
+      JSON.stringify(generalInstructionTrans) !==
+        JSON.stringify(initialExamDataRef.current.instruction_translations) ||
+      JSON.stringify(examSpecificInstructionTrans) !==
+        JSON.stringify(initialExamDataRef.current.exam_instruction_translations);
+
     setSaving(true);
     try {
       // Update Exam
@@ -873,6 +837,15 @@ export default function ExamDetail() {
       return false;
     } finally {
       setSaving(false);
+    }
+
+    // The instructions were either just written, or just left behind while the
+    // exam around them changed. Only the second case needs saying — and only
+    // once, until they are next written.
+    if (exam?.id) {
+      if (instructionsTouched) markInstructionsReviewed(exam.id);
+      else markInstructionsUnreviewed(exam.id);
+      setReviewEpoch((n) => n + 1);
     }
 
     // Update initial Ref after successful save to reset dirty state
@@ -3818,6 +3791,56 @@ export default function ExamDetail() {
                 )}
               </Button>
             </CardHeader>
+
+            {/* Generated text is a snapshot; the paper keeps moving. Flipping
+                the mode already toasts about this, but a toast is gone in four
+                seconds and the wrong sentence stays for months — and the student
+                sees it next to the panel that contradicts it.
+
+                It sits ABOVE the collapse, not inside it, and at the top of the
+                card rather than under the field it describes: a warning the
+                creator has to scroll to, or expand a card to find, is a warning
+                that arrives after the decision it was meant to inform. */}
+            {instructionNotice && (
+              <div className="px-5 pb-4">
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      <span className="font-semibold text-foreground">{instructionNotice.headline} </span>
+                      {instructionNotice.body}
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {/* The field this is about is unrendered while the card is
+                          collapsed, so "edit it below" would be pointing at
+                          nothing. Offer the way back to it instead. */}
+                      {isExamDetailsCollapsed && (
+                        <button
+                          type="button"
+                          onClick={() => setIsExamDetailsCollapsed(false)}
+                          className="text-[11px] font-semibold text-amber-700 underline hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300"
+                        >
+                          Open Exam Details
+                        </button>
+                      )}
+                      {instructionNotice.dismissible && exam?.id && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            dismissInstructionReview(exam.id);
+                            setReviewEpoch((n) => n + 1);
+                          }}
+                          className="text-[11px] font-semibold text-muted-foreground underline hover:text-foreground"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {!isExamDetailsCollapsed && (
               <CardContent className="space-y-4 px-5 pb-5 pt-1">
                 <div className="space-y-1.5">
@@ -3877,23 +3900,6 @@ export default function ExamDetail() {
                     rows={rowsForText(examSpecificInstructionTrans[activeLanguage] || "", 4, 16, 40)}
                     placeholder={`Specific instructions for the exam in ${AVAILABLE_LANGUAGES.find(l => l.code === activeLanguage)?.label || 'this language'}...`}
                   />
-
-                  {/* Generated text is a snapshot; the paper keeps moving. Flipping
-                      the mode already toasts about this, but a toast is gone in
-                      four seconds and the wrong sentence stays for months — and
-                      the student sees it next to the panel that contradicts it. */}
-                  {timingDrift && (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5">
-                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-                      <p className="text-[11px] leading-snug text-muted-foreground">
-                        <span className="font-semibold text-foreground">Out of date. </span>
-                        {timingDrift.drift}{" "}
-                        {timingDrift.autoCorrected
-                          ? "Candidates are shown the corrected sentence, but the counts and marking in this text may be stale too — Generate from exam to refresh all of it."
-                          : "This wording is yours, so it is shown to candidates exactly as written. Edit it, or use Generate from exam."}
-                      </p>
-                    </div>
-                  )}
                 </div>
 
               </CardContent>
@@ -5352,6 +5358,23 @@ export default function ExamDetail() {
           isPublishing={publishAction.isPublishing}
           onSuccess={(isPublishing, publishedLangs) => {
             setExam(prev => prev ? { ...prev, is_published: isPublishing, published_languages: publishedLangs } as any : null);
+          }}
+          onInstructionsRegenerated={(translations) => {
+            // The dialog wrote the row. This page is holding its own copy, and
+            // its next Save would put the old text straight back over the new
+            // one — so take the dialog's version as the new baseline, for the
+            // field AND for the dirty check that decides whether there is
+            // anything to save at all.
+            setExamSpecificInstructionTrans(translations);
+            initialExamDataRef.current = {
+              ...initialExamDataRef.current,
+              exam_instruction_translations: translations,
+            };
+            // Freshly written from the paper — there is nothing left to review.
+            if (exam?.id) {
+              markInstructionsReviewed(exam.id);
+              setReviewEpoch((n) => n + 1);
+            }
           }}
           onNavigateToQuestion={async (sectionId, qNo) => {
             setShowPublishDialog(false);

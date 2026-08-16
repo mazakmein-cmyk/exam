@@ -3,6 +3,22 @@ import { supabase } from "@/integrations/supabase/client";
 import { tableHasColumn } from "@/lib/dbFeatures";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
+import { readNavigationSettings } from "@/lib/examSettings";
+import { fetchTimingGroups } from "@/lib/timingGroupSettings";
+import { groupDisplayName, resolveTimingGroupIds } from "@/lib/timingGroups.js";
+import { auditInstructionDrift } from "@/lib/instructionDrift.js";
+import {
+  auditInstructionShape,
+  canGenerateFor,
+  generateExamInstruction,
+} from "@/lib/examInstructionEngine.js";
+import {
+  describeInstructionNotice,
+  hasMeaningfulText,
+  instructionsNeedReview,
+  markInstructionsReviewed,
+} from "@/lib/instructionFreshness.js";
+import { collectExamFacts } from "@/services/examInstructionFacts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -76,6 +92,12 @@ interface PublishExamDialogProps {
   isPublishing: boolean;
   onSuccess: (isPublishing: boolean, publishedLanguages: string[]) => void;
   onNavigateToQuestion?: (sectionId: string, qNo: number) => void;
+  /**
+   * The dialog rewrote the stored Exam Instruction. The editor needs to know:
+   * it is holding its own copy in state, and its next Save would otherwise put
+   * the old text straight back over the new one.
+   */
+  onInstructionsRegenerated?: (translations: Record<string, string>) => void;
 }
 
 export default function PublishExamDialog({
@@ -86,6 +108,7 @@ export default function PublishExamDialog({
   isPublishing,
   onSuccess,
   onNavigateToQuestion,
+  onInstructionsRegenerated,
 }: PublishExamDialogProps) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -98,8 +121,39 @@ export default function PublishExamDialog({
   // distinct from the amber warning shown for partial coverage.
   const [marksWarning, setMarksWarning] = useState<{ severity: "warning" | "error"; text: string } | null>(null);
 
+  // ── The instructions disclaimer ──────────────────────────────────────────
+  // Same contract as marksWarning: advisory, never a gate. The exam editor
+  // shows this too, but a creator who publishes from the Dashboard never opens
+  // the editor — and this is the last moment before candidates read the text.
+  //
+  // `paper` is what regeneration needs and the audit already paid for, kept so
+  // the Regenerate button does not re-fetch the whole paper per click.
+  const [instructionFindings, setInstructionFindings] = useState<
+    { lang: string; langName: string; headline: string; body: string; canFix: boolean }[]
+  >([]);
+  const [paper, setPaper] = useState<{
+    exam: any;
+    allSections: any[];
+    timingGroups: any[];
+    resolvedGroupIds: Map<string, string>;
+    primaryLanguage: string;
+    supportedLanguages: string[];
+    stored: Record<string, string>;
+  } | null>(null);
+  const [regeneratingLang, setRegeneratingLang] = useState<string | null>(null);
+  // The previous text, per language, so a regeneration can be put back — the
+  // same promise the editor's Generate button makes with useUndoableFill. A
+  // one-click irreversible overwrite of someone's prose is a worse deal than
+  // the stale sentence it replaced.
+  const [undoableText, setUndoableText] = useState<Record<string, string>>({});
+
   useEffect(() => {
     if (open) {
+      // Every open starts clean. An undo offer left over from a previous open
+      // would promise to restore text that is no longer in `paper.stored`.
+      setInstructionFindings([]);
+      setUndoableText({});
+      setPaper(null);
       if (isPublishing) {
         validateExam();
       } else {
@@ -117,19 +171,30 @@ export default function PublishExamDialog({
     try {
       const supportsOptionImages = await tableHasColumn("parsed_questions", "option_image_urls");
 
+      // select("*") rather than a column list: the instruction audit needs
+      // allow_section_switching and total_time_minutes, and those arrive by
+      // hand-pasted migration — naming a column PostgREST has not seen fails
+      // the WHOLE query and would block publishing outright on an un-migrated
+      // database. The star returns whatever the live schema actually has.
       const { data: examData } = await supabase
         .from("exams")
-        .select("supported_languages, published_languages, primary_language")
+        .select("*")
         .eq("id", examId)
         .single();
 
       const supportedLangs = (examData as any)?.supported_languages || ["en"];
       setSupportedLangsToPublish(supportedLangs);
 
+      // Same reasoning for sections (timing_group_id ships behind the pending
+      // grouping migration), plus an explicit order: timingUnits coalesces only
+      // CONSECUTIVE members, so an unordered result splits a pooled group into
+      // solos and the audit compares against the wrong clocks.
       const { data: sections, error: sectionsError } = await supabase
         .from("sections")
-        .select("id, name, language, section_group_id, sort_order")
-        .eq("exam_id", examId);
+        .select("*")
+        .eq("exam_id", examId)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
 
       if (sectionsError) throw sectionsError;
 
@@ -383,6 +448,8 @@ export default function PublishExamDialog({
 
       setPublishLangErrors(errorsMap);
 
+      await auditStoredInstructions(examData, sections as any[], supportedLangs);
+
       const currentlyPublished = (examData as any)?.published_languages || [];
       setSelectedLangsForPublish(currentlyPublished.length > 0 ? currentlyPublished : []);
 
@@ -469,6 +536,278 @@ export default function PublishExamDialog({
     }
   };
 
+  /** The sections a candidate sitting `lang` actually gets, in the paper's order. */
+  const sectionsFor = (allSections: any[], lang: string, primaryLanguage: string) => {
+    const own = allSections.filter((s) => (s.language || primaryLanguage) === lang);
+    return own.length > 0 ? own : [];
+  };
+
+  /**
+   * Does the stored instruction text still describe this paper?
+   *
+   * Audited per language, but only for a language that has BOTH its own
+   * instruction text and its own section rows. Without that gate an exam with
+   * English prose and `hi` merely listed as supported would audit the English
+   * text against the English sections twice and print the same sentence under
+   * an "Hindi —" heading — and then offer a button that writes a Hindi-keyed
+   * translation the creator never authored.
+   *
+   * Failures here are swallowed: a disclaimer that could not be computed must
+   * not stop someone publishing.
+   */
+  const auditStoredInstructions = async (examRow: any, allSections: any[], supportedLangs: string[]) => {
+    try {
+      const primaryLanguage = examRow?.primary_language || "en";
+      const nav = readNavigationSettings(examRow);
+      const timingGroups = await fetchTimingGroups(examId);
+      const resolvedGroupIds = resolveTimingGroupIds(allSections, primaryLanguage);
+
+      const trans: Record<string, string> = { ...(examRow?.exam_instruction_translations || {}) };
+      if (Object.keys(trans).length === 0 && examRow?.exam_instruction) {
+        trans.en = examRow.exam_instruction;
+      }
+
+      setPaper({
+        exam: examRow,
+        allSections,
+        timingGroups,
+        resolvedGroupIds,
+        primaryLanguage,
+        supportedLanguages: supportedLangs,
+        stored: trans,
+      });
+
+      const findings: typeof instructionFindings = [];
+      for (const lang of supportedLangs) {
+        const text = (trans[lang] || "").trim();
+        const langSections = sectionsFor(allSections, lang, primaryLanguage);
+        if (!hasMeaningfulText(text) || langSections.length === 0) continue;
+
+        const groups =
+          timingGroups.length > 0
+            ? Object.fromEntries(
+                timingGroups.map((g: any) => [
+                  g.id,
+                  { name: groupDisplayName(g, lang), minutes: g.time_minutes ?? null },
+                ])
+              )
+            : null;
+
+        const timingDrift = auditInstructionDrift({
+          text,
+          sections: langSections,
+          resolvedGroupIds,
+          timingGroups,
+          groups,
+          allowSectionSwitching: nav.allow_section_switching,
+          totalMinutes: nav.total_time_minutes,
+          lang,
+        });
+
+        // The counts half needs the same fetch generation needs. Only paid for
+        // when there is text that could be contradicted.
+        let shapeDrift = null;
+        try {
+          const facts = await collectExamFacts({
+            examId,
+            sections: langSections,
+            allSections,
+            primaryLanguage,
+            allowSectionSwitching: nav.allow_section_switching,
+            totalTimeMinutes: nav.total_time_minutes,
+            resolvedGroupIds,
+            groups,
+            lang,
+            supportedLanguages: supportedLangs,
+          });
+          shapeDrift = auditInstructionShape(text, facts, lang);
+        } catch {
+          // A count we could not read is not a claim we can disprove.
+        }
+
+        const notice = describeInstructionNotice({
+          timingDrift,
+          shapeDrift,
+          needsReview: false, // per-exam, not per-language — handled once below
+          hasText: true,
+        });
+        if (notice) {
+          findings.push({
+            lang,
+            langName: getLangName(lang),
+            headline: notice.headline,
+            body: notice.body,
+            canFix: canGenerateFor(lang),
+          });
+        }
+      }
+
+      // Nothing was contradicted — because there may be nothing to contradict.
+      // Both remaining cases are facts about the exam rather than about any one
+      // language's text, so they are said once, without a language prefix.
+      //
+      // "No instruction anywhere" is asked across every language, not per
+      // language: on a two-language exam the intro falls back to the other
+      // language's text (ExamIntro prefers trans[lang] then trans.en), so a
+      // missing Hindi variant is not the same thing as a paper that tells
+      // candidates nothing at all.
+      const anyMeaningful = Object.values(trans).some((t) => hasMeaningfulText(t));
+      if (findings.length === 0 && (!anyMeaningful || instructionsNeedReview(examId))) {
+        const notice = describeInstructionNotice({
+          timingDrift: null,
+          shapeDrift: null,
+          blank: { examInstruction: !anyMeaningful && allSections.length > 0, generalInstruction: false },
+          needsReview: instructionsNeedReview(examId),
+          hasText: anyMeaningful,
+        });
+        if (notice) {
+          findings.push({
+            lang: primaryLanguage,
+            langName: "",
+            headline: notice.headline,
+            body: notice.body,
+            // Offer the fix only when there is a paper to write about and a
+            // copy pack to write it in.
+            canFix: !anyMeaningful && allSections.length > 0 && canGenerateFor(primaryLanguage),
+          });
+        }
+      }
+
+      setInstructionFindings(findings);
+    } catch {
+      setInstructionFindings([]);
+    }
+  };
+
+  /**
+   * Rewrite one language's Exam Instruction from the paper, and persist it.
+   *
+   * The editor's button writes to a textarea and waits for Save; this one has
+   * no textarea and no Save to wait for — from the Dashboard there is no editor
+   * in the session at all. So it writes the row, and keeps the previous text in
+   * state so Undo can put it back. Undo is the whole reason this is offered at
+   * all: the banner directly above it may be saying "this wording is yours".
+   */
+  const regenerateInstruction = async (lang: string) => {
+    if (!paper || regeneratingLang) return;
+    setRegeneratingLang(lang);
+    try {
+      const nav = readNavigationSettings(paper.exam);
+      const langSections = sectionsFor(paper.allSections, lang, paper.primaryLanguage);
+      const groups =
+        paper.timingGroups.length > 0
+          ? Object.fromEntries(
+              paper.timingGroups.map((g: any) => [
+                g.id,
+                { name: groupDisplayName(g, lang), minutes: g.time_minutes ?? null },
+              ])
+            )
+          : null;
+
+      // What the intro will ACTUALLY offer, which this screen alone knows: the
+      // languages ticked for publishing. Generating "available in English and
+      // Hindi — choose your language" while publishing English only would
+      // describe a chooser the candidate is never shown. Before anything is
+      // ticked, the valid languages are the best available answer.
+      const candidateLanguages =
+        selectedLangsForPublish.length > 0
+          ? selectedLangsForPublish
+          : supportedLangsToPublish.filter((l) => (publishLangErrors[l]?.length ?? 0) === 0);
+
+      const facts = await collectExamFacts({
+        examId,
+        sections: langSections,
+        allSections: paper.allSections,
+        primaryLanguage: paper.primaryLanguage,
+        allowSectionSwitching: nav.allow_section_switching,
+        totalTimeMinutes: nav.total_time_minutes,
+        resolvedGroupIds: paper.resolvedGroupIds,
+        groups,
+        lang,
+        supportedLanguages: paper.supportedLanguages,
+        candidateLanguages,
+      });
+
+      const text = generateExamInstruction(facts, lang);
+      if (!text) {
+        toast({
+          title: "Nothing generated",
+          description: "There is not enough set up on this exam to describe yet.",
+        });
+        return;
+      }
+
+      const previous = paper.stored[lang] || "";
+      const nextMap = { ...paper.stored, [lang]: text };
+      const { error } = await supabase
+        .from("exams")
+        .update({
+          exam_instruction_translations: nextMap,
+          // The same legacy-mirror rule the editor's save uses. Two writers
+          // owning one column have to agree about it, or a Hindi-primary exam
+          // ends up with an English scalar and a Hindi map that disagree.
+          exam_instruction: nextMap["en"] || nextMap[paper.primaryLanguage] || null,
+        } as never)
+        .eq("id", examId);
+      if (error) throw error;
+
+      setUndoableText((prev) => ({ ...prev, [lang]: previous }));
+      setPaper((prev) => (prev ? { ...prev, stored: nextMap } : prev));
+      setInstructionFindings((prev) => prev.filter((f) => f.lang !== lang));
+      // Written straight from the paper — nothing left for the creator to go
+      // back and check. Cleared here rather than only in the editor's callback,
+      // because publishing from the Dashboard has no editor to call back to.
+      markInstructionsReviewed(examId);
+      onInstructionsRegenerated?.(nextMap);
+      toast({
+        title: "Instructions rewritten",
+        description: `The ${getLangName(lang)} Exam Instruction now describes the paper as it stands.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Could not rewrite",
+        description: error.message || "The instructions were left as they were.",
+        variant: "destructive",
+      });
+    } finally {
+      setRegeneratingLang(null);
+    }
+  };
+
+  /** Put back exactly what was there before the regeneration. */
+  const undoRegeneration = async (lang: string) => {
+    if (!paper || regeneratingLang) return;
+    setRegeneratingLang(lang);
+    try {
+      const nextMap = { ...paper.stored, [lang]: undoableText[lang] ?? "" };
+      const { error } = await supabase
+        .from("exams")
+        .update({
+          exam_instruction_translations: nextMap,
+          exam_instruction: nextMap["en"] || nextMap[paper.primaryLanguage] || null,
+        } as never)
+        .eq("id", examId);
+      if (error) throw error;
+
+      setPaper((prev) => (prev ? { ...prev, stored: nextMap } : prev));
+      setUndoableText((prev) => {
+        const next = { ...prev };
+        delete next[lang];
+        return next;
+      });
+      onInstructionsRegenerated?.(nextMap);
+      toast({ title: "Put back", description: "The previous wording has been restored." });
+    } catch (error: any) {
+      toast({
+        title: "Could not undo",
+        description: error.message || "The rewritten text is still in place.",
+        variant: "destructive",
+      });
+    } finally {
+      setRegeneratingLang(null);
+    }
+  };
+
   const handleExecute = async () => {
     if (isPublishing && selectedLangsForPublish.length === 0) {
       toast({
@@ -549,7 +888,14 @@ export default function PublishExamDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+      {/* AlertDialogContent is fixed and vertically centred with no max height,
+          so content taller than the viewport is clipped at BOTH ends with
+          nothing to scroll it — and the footer goes with it. This dialog can
+          now carry a marks warning, a per-language instructions warning and a
+          language list at once, so an advisory banner could have put the
+          Publish button out of reach. A warning that blocks publishing is not
+          advisory, whatever the copy says. */}
+      <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
         <AlertDialogHeader>
           <AlertDialogTitle>{isPublishing ? "Publish Exam" : "Unpublish Exam"}</AlertDialogTitle>
           <AlertDialogDescription asChild>
@@ -573,6 +919,66 @@ export default function PublishExamDialog({
                       <span>{marksWarning.text}</span>
                     </div>
                   )}
+
+                  {/* The instructions disclaimer — same family as the marks
+                      warning above, and the same promise: it never gates the
+                      Publish button. It sits here because this is the last
+                      moment before candidates read the text, and a creator who
+                      publishes from the Dashboard never sees the editor's copy
+                      of this warning at all. */}
+                  {instructionFindings.map((finding) => (
+                    <div
+                      key={finding.lang + finding.headline}
+                      className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-xs text-amber-700 dark:text-amber-400"
+                    >
+                      <span className="shrink-0 mt-0.5">⚠</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="leading-relaxed">
+                          <span className="font-semibold">
+                            {finding.langName ? `${finding.langName} — ` : ""}
+                            {finding.headline}{" "}
+                          </span>
+                          {finding.body}
+                        </p>
+                        {finding.canFix && (
+                          <button
+                            type="button"
+                            disabled={regeneratingLang !== null}
+                            onClick={() => regenerateInstruction(finding.lang)}
+                            className="mt-1.5 font-semibold underline hover:text-amber-900 dark:hover:text-amber-300 disabled:opacity-50"
+                          >
+                            {regeneratingLang === finding.lang ? "Rewriting…" : "Regenerate from exam"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* The undo offer stands on its own after the warning it
+                      resolved has gone: the creator has just had prose replaced
+                      by a machine, seconds before publishing it. */}
+                  {Object.keys(undoableText).map((lang) => (
+                    <div
+                      key={`undo-${lang}`}
+                      className="flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 p-3 text-xs text-emerald-700 dark:text-emerald-400"
+                    >
+                      <span className="shrink-0 mt-0.5">✓</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="leading-relaxed">
+                          The {getLangName(lang)} Exam Instruction now describes the paper as it
+                          stands. Your previous wording was replaced.
+                        </p>
+                        <button
+                          type="button"
+                          disabled={regeneratingLang !== null}
+                          onClick={() => undoRegeneration(lang)}
+                          className="mt-1.5 font-semibold underline hover:text-emerald-900 dark:hover:text-emerald-300 disabled:opacity-50"
+                        >
+                          {regeneratingLang === lang ? "Restoring…" : "Undo — put back what was here before"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                   <div className="rounded-md border p-4 space-y-4">
                     <div className="flex items-center justify-between pb-4 border-b">
                       <span className="font-semibold text-foreground">Select All Valid</span>
@@ -662,10 +1068,13 @@ export default function PublishExamDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
+          {/* Closing mid-rewrite would leave the row changed with the undo
+              offer gone — from the Dashboard, with nothing to show what
+              happened. */}
+          <AlertDialogCancel disabled={loading || regeneratingLang !== null}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleExecute}
-            disabled={validating || loading}
+            disabled={validating || loading || regeneratingLang !== null}
             className={isPublishing ? "bg-primary" : "bg-orange-500 hover:bg-orange-600"}
           >
             {loading ? "Saving..." : isPublishing ? "Publish" : "Unpublish"}

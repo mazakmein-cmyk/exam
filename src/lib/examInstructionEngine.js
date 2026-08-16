@@ -765,3 +765,55 @@ export function dropShapeLine(text, lang = "en") {
 
   return { text: kept.join("\n"), changed: true };
 }
+
+/**
+ * Does the stored text still describe this paper's SHAPE — its sections and
+ * their question counts?
+ *
+ * Why this is separate from the timing audit
+ * ------------------------------------------
+ * instructionTimingAudit can run for free: how the paper is clocked lives in
+ * the editor's own state. Counts do not — the editor holds only the selected
+ * section's questions — so answering this needs the same round trip generation
+ * needs. That is a real cost, and it is why the timing audit was written narrow
+ * in the first place. But "I added twenty questions and the instructions still
+ * say 90" is the drift creators actually hit, and a check that never fires for
+ * it is not worth its own honesty. So: same question, one fetch, caller's call.
+ *
+ * Same proof-of-authorship rule as reconcileTimingLine and dropShapeLine — only
+ * a line matching a shape THIS engine emits, in this language, is judged, and
+ * only against the shape the generator would write today. A creator's own
+ * sentence about the sections matches nothing here and is never called stale;
+ * a line that reads "3 sections: A, B, C" when counts are now known is not
+ * contradicted either, because listing sections without counts was never a
+ * claim about how many questions they hold. Warning people about prose we
+ * cannot read is how a banner earns its way into being ignored.
+ *
+ * @param {string} text   The stored instruction copy.
+ * @param {ExamFacts} facts  The paper as it is NOW.
+ * @param {string} lang
+ * @returns {{ stated: string, expected: string }|null}
+ */
+export function auditInstructionShape(text, facts, lang = "en") {
+  if (typeof text !== "string" || !text.trim()) return null;
+  if (!canGenerateFor(lang)) return null;
+  if (!facts || !Array.isArray(facts.sections) || facts.sections.length === 0) return null;
+
+  const t = COPY[lang];
+  const expected = shapeLine(facts.sections, t);
+  if (typeof expected !== "string" || !expected.trim()) return null;
+
+  // Only the shape the generator would write TODAY. Testing every shape would
+  // flag a counts-unknown line ("3 sections: A, B, C") the moment counts became
+  // known — a sentence that is still true, just less specific than the one we
+  // would write now.
+  const shapes = paperShapes(t).filter((shape) => shape.test(expected));
+  if (shapes.length === 0) return null;
+
+  for (const line of text.split("\n")) {
+    const body = (line.match(/^(?:\s*\d+[.)]\s*)?([\s\S]*)$/) || [])[1]?.trim() || "";
+    if (!body || body === expected) continue;
+    if (shapes.some((shape) => shape.test(body))) return { stated: body, expected };
+  }
+  return null;
+}

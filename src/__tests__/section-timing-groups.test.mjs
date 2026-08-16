@@ -720,7 +720,11 @@ test("reconciliation always receives group facts — the anti-lie rule", () => {
   assertContains(introReconcile.slice(0, 2200), "groups:");
   const editor = readSrc("pages/ExamDetail.tsx");
   assertContains(editor, "groups: instructionGroupFacts");
-  assertContains(editor, "unitMinutes: hasGroupUnits(units) ? units.map((u) => u.minutes) : null");
+  // The audit itself moved to lib/instructionDrift.js so the publish dialog
+  // derives drift the same way the editor does — the unit-clock rule follows it.
+  const drift = readSrc("lib/instructionDrift.js");
+  assertContains(drift, "unitMinutes: hasGroupUnits(units) ? units.map((u) => u.minutes) : null");
+  assertContains(drift, "groups,", "the reconciler is handed group facts here too");
 });
 
 test("the builder edits structure on the primary tab only", () => {
