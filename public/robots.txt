@@ -8,6 +8,7 @@ Allow: /for-creators
 Allow: /privacy-policy
 Allow: /terms-of-service
 Allow: /mock-test/
+Allow: /ssc-mts
 Allow: /blog
 Allow: /blog/
 

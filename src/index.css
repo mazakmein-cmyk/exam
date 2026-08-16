@@ -1049,7 +1049,10 @@ div[class*="Suggestions"] {
 @media (prefers-reduced-motion: reduce) {
   .live-dot,
   .animate-pulse,
-  .animate-bounce {
+  .animate-bounce,
+  .animate-ping,
+  .animate-pulse-glow,
+  .animate-float {
     animation: none !important;
   }
 

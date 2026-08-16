@@ -41,6 +41,9 @@ const KNOWN_STATIC_PATHS = new Set([
   "/mock-test/cat",
   "/mock-test/gate",
   "/mock-test/upsc-prelims",
+  // SSC MTS hub. Articles in the SSC MTS cluster link here by design, so this
+  // path must be whitelisted or every one of them fails link validation.
+  "/ssc-mts",
 ]);
 const LEGACY_SLUGS = ["how-to-take-mock-tests", "jee-main-vs-jee-advanced", "best-mock-test-strategy-for-cat"];
 

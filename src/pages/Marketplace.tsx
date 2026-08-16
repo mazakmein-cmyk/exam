@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,12 +38,59 @@ type Exam = {
 
 import { useUserRole } from "@/hooks/use-user-role";
 
+/**
+ * Category filters live in the URL so a filtered library is a shareable link.
+ *
+ * This is what the exam landing pages point at — /marketplace?category=SSC%20MTS
+ * drops an aspirant straight into their own papers instead of the full library.
+ * Accepts both ?category=A&category=B and ?category=A,B.
+ */
+const parseCategoryParam = (params: URLSearchParams): string[] => {
+    const values = params
+        .getAll("category")
+        .flatMap((v) => v.split(","))
+        .map((v) => v.trim())
+        .filter(Boolean);
+    return Array.from(new Set(values));
+};
+
+/** "ssc-mts" and "ssc mts" both have to reach the "SSC MTS" a creator typed. */
+const normalizeCategoryKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/**
+ * Snap URL-supplied categories onto the exact casing/spacing used by the exams
+ * themselves. Without this the filter compares a hand-written query string
+ * against a creator-entered category and silently matches nothing. Returns the
+ * original array when nothing moved, so this can't trigger a pointless render.
+ */
+const canonicalizeCategories = (selected: string[], exams: Exam[]): string[] => {
+    if (selected.length === 0) return selected;
+    const known = new Map<string, string>();
+    exams.forEach((e) => {
+        if (e.exam_category) known.set(normalizeCategoryKey(e.exam_category), e.exam_category);
+    });
+    let changed = false;
+    const next = selected.map((s) => {
+        const hit = known.get(normalizeCategoryKey(s));
+        if (hit && hit !== s) {
+            changed = true;
+            return hit;
+        }
+        return s;
+    });
+    return changed ? next : selected;
+};
+
 const Marketplace = () => {
     const { role, loading: roleLoading } = useUserRole();
     const { toast } = useToast();
     const [exams, setExams] = useState<Exam[]>([]);
+    const [searchParams, setSearchParams] = useSearchParams();
     const [searchQuery, setSearchQuery] = useState("");
-    const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+    // Seeded from the URL once, on mount — the landing pages link in pre-filtered.
+    const [selectedCategories, setSelectedCategories] = useState<string[]>(() =>
+        parseCategoryParam(searchParams)
+    );
     const [loading, setLoading] = useState(true);
     const [showOnboardingModal, setShowOnboardingModal] = useState(false);
     const [activeTab, setActiveTab] = useState<"mock" | "live">("mock");
@@ -61,7 +108,13 @@ const Marketplace = () => {
 
     // Only show categories that actually have a published exam — no dead filter
     // options. (Creators still pick from the full admin list when tagging exams.)
-    const examCategories = Array.from(new Set(exams.map(e => e.exam_category).filter(Boolean))) as string[];
+    // The exception is a category that is already selected: a shared link can
+    // arrive with ?category=X before any published exam carries X, and an option
+    // you cannot see in the list is an option you cannot switch back off.
+    const examCategories = Array.from(new Set([
+        ...(exams.map(e => e.exam_category).filter(Boolean) as string[]),
+        ...selectedCategories,
+    ]));
     const categoryOptions = orderExamCategories(examCategories)
         .map(c => ({ label: c, value: c }));
 
@@ -135,8 +188,29 @@ const Marketplace = () => {
             } else {
                 setExams(examsData);
             }
+
+            // Only now do we know the real category strings, so this is the first
+            // point a URL-supplied filter can be matched to one. Functional update:
+            // this runs inside a mount-time fetch and must not close over stale state.
+            setSelectedCategories((prev) => canonicalizeCategories(prev, examsData as Exam[]));
         }
         setLoading(false);
+    };
+
+    // Keep the URL honest as the user edits filters, so the page they are looking
+    // at is always the page they can copy out of the address bar. `replace` keeps
+    // Back pointing at wherever they came from rather than at every filter tweak.
+    const handleCategoryChange = (next: string[]) => {
+        setSelectedCategories(next);
+        setSearchParams(
+            (prev) => {
+                const params = new URLSearchParams(prev);
+                params.delete("category");
+                next.forEach((c) => params.append("category", c));
+                return params;
+            },
+            { replace: true }
+        );
     };
 
     const handleTakeExam = (examId: string) => {
@@ -151,6 +225,15 @@ const Marketplace = () => {
             description: "The exam link has been copied to your clipboard.",
         });
     };
+
+    const visibleExams = exams.filter(exam => {
+        const query = searchQuery.toLowerCase();
+        const nameMatch = exam.name.toLowerCase().includes(query);
+        const categoryMatch = exam.exam_category?.toLowerCase().includes(query);
+        const textMatch = nameMatch || categoryMatch;
+        const filterMatch = selectedCategories.length === 0 || (exam.exam_category && selectedCategories.includes(exam.exam_category));
+        return textMatch && filterMatch;
+    });
 
     return (
         <div className="min-h-screen bg-background">
@@ -276,7 +359,7 @@ const Marketplace = () => {
                         <MultiSelectDropdown
                             options={categoryOptions}
                             selected={selectedCategories}
-                            onChange={setSelectedCategories}
+                            onChange={handleCategoryChange}
                             placeholder="Filter by category"
                         />
                     </div>
@@ -294,16 +377,33 @@ const Marketplace = () => {
                             <p className="text-muted-foreground mb-4">Check back later for public exams</p>
                         </CardContent>
                     </Card>
+                ) : visibleExams.length === 0 ? (
+                    /* Filters are URL-addressable now, so this branch is reachable
+                       by following a link rather than only by typing — it has to
+                       explain itself and offer the way back. */
+                    <Card>
+                        <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                            <Search className="h-16 w-16 text-muted-foreground mb-4" />
+                            <h3 className="text-lg font-semibold mb-2">No matching exams</h3>
+                            <p className="text-muted-foreground mb-5 max-w-sm text-sm">
+                                {selectedCategories.length > 0
+                                    ? `Nothing published under ${selectedCategories.join(", ")} yet. New papers get added regularly — try the full library in the meantime.`
+                                    : "No exams match your search. Try a different title or category."}
+                            </p>
+                            <Button
+                                variant="outline"
+                                onClick={() => {
+                                    setSearchQuery("");
+                                    handleCategoryChange([]);
+                                }}
+                            >
+                                Show all exams
+                            </Button>
+                        </CardContent>
+                    </Card>
                 ) : (
                     <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-                        {exams.filter(exam => {
-                            const query = searchQuery.toLowerCase();
-                            const nameMatch = exam.name.toLowerCase().includes(query);
-                            const categoryMatch = exam.exam_category?.toLowerCase().includes(query);
-                            const textMatch = nameMatch || categoryMatch;
-                            const filterMatch = selectedCategories.length === 0 || (exam.exam_category && selectedCategories.includes(exam.exam_category));
-                            return textMatch && filterMatch;
-                        }).map((exam) => (
+                        {visibleExams.map((exam) => (
                             <div key={exam.id} className="group flex flex-col justify-between rounded-xl border border-border/60 bg-card hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden">
                                 <div className="p-5">
                                     <div className="flex items-start justify-between gap-2 mb-2">

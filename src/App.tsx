@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider, Outlet } from "react-router-dom";
 import AuthStateListener from "./components/AuthStateListener";
+import GoogleAnalytics from "./components/GoogleAnalytics";
 
 // Eager: tiny + likely first hit
 import Index from "./pages/Index";
@@ -30,6 +31,7 @@ const TermsOfService = lazy(() => import("./pages/TermsOfService"));
 const ForCreators = lazy(() => import("./pages/ForCreators"));
 const JsonUploadGuide = lazy(() => import("./pages/JsonUploadGuide"));
 const ExamLandingPage = lazy(() => import("./pages/ExamLandingPage"));
+const SscMtsLanding = lazy(() => import("./pages/SscMtsLanding"));
 const Blog = lazy(() => import("./pages/Blog"));
 const BlogPost = lazy(() => import("./pages/BlogPost"));
 const LiveExamDetail = lazy(() => import("./pages/LiveExamDetail"));
@@ -58,6 +60,9 @@ const RouteFallback = () => (
 const Layout = () => (
   <>
     <AuthStateListener />
+    {/* Deliberately not on PresentLayout: that route is a projector on a wall,
+        and counting it as a session would inflate every engagement metric. */}
+    <GoogleAnalytics />
     <Suspense fallback={<RouteFallback />}>
       <Outlet />
     </Suspense>
@@ -112,6 +117,10 @@ const router = createBrowserRouter([
       { path: "/for-creators", element: <ForCreators /> },
       { path: "/json-upload-guide", element: <JsonUploadGuide /> },
       { path: "/mock-test/:examSlug", element: <ExamLandingPage /> },
+      // Standalone campaign landing page, shared directly with SSC MTS aspirants.
+      // Deliberately NOT under /mock-test/:examSlug — that route is the generic
+      // data-driven template, and this page is hand-built for one audience.
+      { path: "/ssc-mts", element: <SscMtsLanding /> },
       { path: "/blog", element: <Blog /> },
       { path: "/blog/:slug", element: <BlogPost /> },
       { path: "/live/:shareCode", element: <LiveExamStudent /> },
