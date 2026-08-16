@@ -38,11 +38,19 @@ const GoogleAnalytics = () => {
     document.head.appendChild(script);
 
     window.dataLayer = window.dataLayer || [];
-    // gtag must push `arguments` verbatim — an arrow function with rest args
-    // serialises differently and GA4 silently drops the calls.
-    function gtag(...args: unknown[]) {
-      window.dataLayer?.push(args);
-    }
+
+    // This MUST push the `arguments` object itself, not a rest-parameter array.
+    //
+    // gtag.js walks dataLayer and only recognises an entry as a command if it is
+    // an arguments object; a plain Array is silently ignored. Pushing `[...args]`
+    // therefore drops `js` and `config` on the floor, gtag.js never initialises,
+    // and the property reports zero traffic forever with no error anywhere — in
+    // the console, the network tab, or GA itself. An earlier version of this file
+    // did exactly that, so the shape below is load-bearing rather than stylistic.
+    const gtag = function () {
+      // eslint-disable-next-line prefer-rest-params
+      window.dataLayer!.push(arguments);
+    } as (...args: unknown[]) => void;
     window.gtag = gtag;
 
     gtag("js", new Date());
