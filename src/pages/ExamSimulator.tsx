@@ -43,6 +43,14 @@ import {
   totalExamMinutes,
   totalExamSeconds,
 } from "@/lib/examNavigation.js";
+import { fetchTimingGroups } from "@/lib/timingGroupSettings";
+import {
+  groupDisplayName,
+  groupPoolMinutes,
+  resolveTimingGroupIds,
+  timingUnits,
+  unitContaining,
+} from "@/lib/timingGroups.js";
 
 /** Most sections that still read as tabs at desktop width; above it, a picker. */
 const SECTION_TAB_LIMIT = 5;
@@ -105,19 +113,63 @@ const ExamSimulator = () => {
   /** Whole-paper limit in minutes — only meaningful in free mode. */
   const [totalPaperMinutes, setTotalPaperMinutes] = useState(0);
 
+  // ── Timing groups (locked mode only) ───────────────────────────────────────
+  // A "part": 2+ adjacent sections sharing one pool (sections.timing_group_id →
+  // section_timing_groups). Within the part the student moves freely — the
+  // free-mode machinery, scoped to the part's sections — on ONE clock, the
+  // pool. Between parts, locked rules hold: sat in order, a submitted part
+  // stays closed, time never carries over. Free mode ignores groups entirely
+  // (one paper-wide clock makes a pool inside it meaningless), and a database
+  // without the migration yields no groups at all — solo behavior, unchanged.
+  const [groupNav, setGroupNav] = useState(false);
+  const [unitInfo, setUnitInfo] = useState<{
+    /** Display-language label ("Session I" / "सत्र I"). */
+    name: string;
+    /** The pool, in minutes — override or member sum. */
+    minutes: number;
+    /** Members with questions, in paper order. */
+    sectionIds: string[];
+    /** First section after this part — the next part's door, or null at the end. */
+    nextSectionId: string | null;
+  } | null>(null);
+  /** Free mode and a timing part share the multi-section machinery. */
+  const multiNav = isFreeNav || groupNav;
+  /* What the standing Submit is called. Free mode ends the paper; a locked
+     section and a timing part both end the section in front of you. One
+     constant so the palette, the sheet and the intro copy cannot drift — and
+     it is declared up here because the intro screen returns before the
+     run-time state below exists. */
+  const submitLabel = isFreeNav ? "Submit Exam" : "Submit Section";
+
   const section = useMemo(
     () => allSections.find((s) => s.id === activeSectionId) ?? null,
     [allSections, activeSectionId]
   );
+  /**
+   * The sections the student can reach without leaving this page: the whole
+   * paper in free mode, the part's members in group mode, just the URL's
+   * section otherwise. Every multi-section surface below (tabs, flat walk,
+   * submit scope, summaries) reads THIS, never allSections — allSections keeps
+   * the whole paper so the between-parts hand-off knows what comes next.
+   */
+  const scopeSections = useMemo<Section[]>(() => {
+    if (isFreeNav) return allSections;
+    if (groupNav && unitInfo) {
+      return unitInfo.sectionIds
+        .map((id) => allSections.find((s) => s.id === id))
+        .filter(Boolean) as Section[];
+    }
+    return section ? [section] : [];
+  }, [isFreeNav, groupNav, unitInfo, allSections, section]);
   /** The active section's questions. Every render path below reads this. */
   const questions = useMemo<Question[]>(
     () => (activeSectionId ? questionsBySection[activeSectionId] ?? [] : []),
     [questionsBySection, activeSectionId]
   );
-  /** The paper as one ordered walk, so Previous/Next can cross a section edge. */
+  /** The reachable scope as one ordered walk, so Previous/Next can cross a section edge. */
   const flatPaper = useMemo(
-    () => (isFreeNav ? flattenPaper(allSections, questionsBySection) : []),
-    [isFreeNav, allSections, questionsBySection]
+    () => (multiNav ? flattenPaper(scopeSections, questionsBySection) : []),
+    [multiNav, scopeSections, questionsBySection]
   );
   const [hasStarted, setHasStarted] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
@@ -134,6 +186,11 @@ const ExamSimulator = () => {
   const submittingRef = useRef(false);
   // Absolute wall-clock end time, shared with the Web Worker
   const examEndTimeRef = useRef(0);
+  // The 5-minute warning fires ONCE per clock. The worker ticks every second
+  // and every tick under 300s would otherwise reopen the dialog the moment its
+  // auto-dismiss closed it — a modal on a 6-second loop for the final five
+  // minutes. Re-armed in handleStartSection alongside the clock itself.
+  const timeWarningShownRef = useRef(false);
   // Web Worker for background-accurate countdown (not throttled by browser)
   const timerWorkerRef = useRef<Worker | null>(null);
   // Always-current ref to handleAutoSubmit so the worker callback isn't stale
@@ -284,7 +341,10 @@ const ExamSimulator = () => {
       if (e.data.type === "TICK") {
         const remaining: number = e.data.remaining;
         setTimeRemaining(remaining);
-        if (remaining <= 300) setShowTimeWarning(true);
+        if (remaining <= 300 && !timeWarningShownRef.current) {
+          timeWarningShownRef.current = true;
+          setShowTimeWarning(true);
+        }
       } else if (e.data.type === "EXPIRED") {
         setTimeRemaining(0);
         handleAutoSubmitRef.current();
@@ -370,6 +430,7 @@ const ExamSimulator = () => {
         { data: allSectionsData },
         { data: sectionData },
         { data: questionsData },
+        timingGroupRows,
       ] = await Promise.all([
         supabase.auth.getUser(),
         supabase.from("exams").select("*").eq("id", examId).single(),
@@ -386,6 +447,8 @@ const ExamSimulator = () => {
           .eq("section_id", sectionId)
           .eq("is_excluded", false)
           .order("q_no", { ascending: true }),
+        // Timing groups. [] on a database without the migration — solo behavior.
+        fetchTimingGroups(examId),
       ]);
 
       const isPublicExam = examData?.is_published === true;
@@ -441,50 +504,100 @@ const ExamSimulator = () => {
         };
         let sittableSections = scopedSections;
 
+        // The timing part the URL's section sits in, if any. Locked mode only:
+        // free mode's one paper-wide clock makes a pool inside it meaningless,
+        // so groups are ignored there (kept in the DB, like section minutes).
+        const urlUnit = (() => {
+          if (freeNav || timingGroupRows.length === 0) return null;
+          const resolved = resolveTimingGroupIds(allSecs, (examData as any)?.primary_language ?? null);
+          const units = timingUnits(scopedSections, timingGroupRows, resolved);
+          const candidate = unitContaining(units, sectionData.id);
+          return candidate && candidate.kind === "group" ? candidate : null;
+        })();
+
+        const fetchQuestionsFor = async (ids: string[]) => {
+          if (ids.length === 0) return;
+          const { data: restData, error: restError } = await supabase
+            .from("parsed_questions")
+            .select("*")
+            .in("section_id", ids)
+            .eq("is_excluded", false)
+            .order("q_no", { ascending: true });
+
+          if (restError) throw restError;
+
+          const grouped: Record<string, any[]> = {};
+          for (const row of restData || []) {
+            const key = (row as any).section_id as string;
+            (grouped[key] ||= []).push(row);
+          }
+          for (const id of ids) {
+            bySection[id] = sortQuestions(grouped[id] || []) as unknown as Question[];
+          }
+        };
+
         if (freeNav) {
           // One clock for the paper means every section has to be in hand
           // before the clock starts — a fetch mid-exam would spend the
           // student's own time.
-          const otherIds = scopedSections
-            .map((s) => s.id)
-            .filter((id) => id !== sectionData.id);
-
-          if (otherIds.length > 0) {
-            const { data: restData, error: restError } = await supabase
-              .from("parsed_questions")
-              .select("*")
-              .in("section_id", otherIds)
-              .eq("is_excluded", false)
-              .order("q_no", { ascending: true });
-
-            if (restError) throw restError;
-
-            const grouped: Record<string, any[]> = {};
-            for (const row of restData || []) {
-              const key = (row as any).section_id as string;
-              (grouped[key] ||= []).push(row);
-            }
-            for (const id of otherIds) {
-              bySection[id] = sortQuestions(grouped[id] || []) as unknown as Question[];
-            }
-          }
+          await fetchQuestionsFor(
+            scopedSections.map((s) => s.id).filter((id) => id !== sectionData.id)
+          );
 
           // A section with no questions is a dead end in the tab strip — no
           // question to show, and nothing to grade. Drop it from the paper
           // (unless that would leave nothing at all).
           const withQuestions = scopedSections.filter((s) => (bySection[s.id] || []).length > 0);
           if (withQuestions.length > 0) sittableSections = withQuestions;
+        } else if (urlUnit) {
+          // Same rule scoped to the part: its whole pool starts at once, so
+          // every member's questions must be in hand before the clock does.
+          await fetchQuestionsFor(urlUnit.sectionIds.filter((id) => id !== sectionData.id));
         }
 
+        // The part's members that actually have questions — the reachable
+        // scope. One survivor (or none) degrades to solo: a "part" of one
+        // section is just that section on its own clock.
+        const memberSections = urlUnit
+          ? (urlUnit.sectionIds
+              .map((id) => scopedSections.find((s) => s.id === id))
+              .filter((s) => s && (bySection[s.id] || []).length > 0) as Section[])
+          : [];
+        const partNav = memberSections.length > 1;
+
         setIsFreeNav(freeNav);
+        setGroupNav(partNav);
+        if (partNav && urlUnit) {
+          const lastMemberIndex = Math.max(
+            ...urlUnit.sectionIds.map((id) => scopedSections.findIndex((s) => s.id === id))
+          );
+          setUnitInfo({
+            name: groupDisplayName(urlUnit.group, lang) || "This part",
+            // The pool over the members actually sat: a question-less member
+            // is dropped from the walk, and its minutes go with it — the same
+            // rule free mode applies to sections it drops. An explicit pool
+            // override survives the drop, because explicit is explicit.
+            minutes: groupPoolMinutes(urlUnit.group, memberSections),
+            sectionIds: memberSections.map((s) => s.id),
+            nextSectionId: (scopedSections[lastMemberIndex + 1] as Section | undefined)?.id ?? null,
+          });
+        } else {
+          setUnitInfo(null);
+        }
         setQuestionsBySection(bySection);
         setAllSections(sittableSections);
         // Free mode opens on the URL's section when it survived the filter, so
-        // a link to a specific section still lands there.
+        // a link to a specific section still lands there. A part opens the same
+        // way — and a link to its one question-less member lands on the first
+        // member that has anything to show.
         setActiveSectionId(
-          sittableSections.some((s) => s.id === sectionData.id)
-            ? sectionData.id
-            : sittableSections[0]?.id ?? sectionData.id
+          partNav
+            ? memberSections.some((s) => s.id === sectionData.id)
+              ? sectionData.id
+              : memberSections[0].id
+            : sittableSections.some((s) => s.id === sectionData.id)
+              ? sectionData.id
+              : sittableSections[0]?.id ?? sectionData.id
         );
 
         const paperMinutes = totalExamMinutes(navSettings, sittableSections);
@@ -494,7 +607,9 @@ const ExamSimulator = () => {
         setTimeRemaining(
           freeNav
             ? totalExamSeconds(navSettings, sittableSections)
-            : sectionData.time_minutes * 60
+            : partNav && urlUnit
+              ? groupPoolMinutes(urlUnit.group, memberSections) * 60
+              : sectionData.time_minutes * 60
         );
 
         // Fetch scoring configs for marks badges.
@@ -612,9 +727,10 @@ const ExamSimulator = () => {
       const { data: { user } } = await supabase.auth.getUser();
 
       // Initialize question states. Free mode initializes the whole paper up
-      // front — a state row missing when the student lands on a later section
-      // is a crash, not a blank answer.
-      const questionsToInit = isFreeNav
+      // front, a part its whole scope — a state row missing when the student
+      // lands on a later section is a crash, not a blank answer. (In group
+      // mode questionsBySection holds exactly the part's questions.)
+      const questionsToInit = multiNav
         ? Object.values(questionsBySection).flat()
         : questions;
       setQuestionStates(
@@ -637,17 +753,20 @@ const ExamSimulator = () => {
       if (user && !isPreview) {
         // Free mode needs one attempt row per section (attempts.section_id is
         // NOT NULL), and ExamReview stitches a sitting back together by walking
-        // attempts in created_at order — so free mode hands the timestamps out
-        // explicitly, one millisecond apart in section order. One multi-row
-        // insert would otherwise stamp them all identically and let the walk
-        // split a single sitting in two.
+        // attempts in created_at order — so any multi-section start hands the
+        // timestamps out explicitly, one millisecond apart in section order.
+        // One multi-row insert would otherwise stamp them all identically and
+        // let the walk split a single sitting in two. A timing part opens its
+        // members the same way, for the same reason.
         //
-        // Locked mode keeps the exact single-row insert it has always used:
-        // there is nothing to disambiguate, and the write every student already
-        // depends on is not worth reshaping for a mode it never enters.
+        // Locked solo mode keeps the exact single-row insert it has always
+        // used: there is nothing to disambiguate, and the write every student
+        // already depends on is not worth reshaping for a mode it never enters.
         const sectionsToOpen = isFreeNav
           ? allSections.filter((s) => (questionsBySection[s.id] || []).length > 0)
-          : [{ id: sectionId! } as Section];
+          : groupNav && unitInfo
+            ? scopeSections.filter((s) => (questionsBySection[s.id] || []).length > 0)
+            : [{ id: sectionId! } as Section];
         const startedAt = new Date().toISOString();
         const stamps = staggeredTimestamps(Date.now(), sectionsToOpen.length);
 
@@ -659,7 +778,7 @@ const ExamSimulator = () => {
               section_id: s.id,
               started_at: startedAt,
               language: lang,
-              ...(isFreeNav ? { created_at: stamps[i] } : {}),
+              ...(multiNav ? { created_at: stamps[i] } : {}),
             }))
           )
           .select();
@@ -685,9 +804,22 @@ const ExamSimulator = () => {
         setAttemptId(bySection[sectionsToOpen[0].id] ?? (data[0] as any).id);
       }
 
+      // A fresh clock re-arms the per-clock guards: the submit latch (held
+      // after the previous scope's successful save — the same component
+      // instance serves every section of the sitting, so a stale latch would
+      // dead-end every submit after the first) and the one-shot 5-minute
+      // warning.
+      submittingRef.current = false;
+      timeWarningShownRef.current = false;
+
       // Set absolute end time and start the Web Worker countdown. Free mode
-      // runs one clock for the paper; locked mode runs this section's own.
-      const clockMinutes = isFreeNav ? totalPaperMinutes : (section?.time_minutes || 0);
+      // runs one clock for the paper; a timing part runs its pool; locked
+      // mode runs this section's own.
+      const clockMinutes = isFreeNav
+        ? totalPaperMinutes
+        : groupNav && unitInfo
+          ? unitInfo.minutes
+          : (section?.time_minutes || 0);
       examEndTimeRef.current = Date.now() + clockMinutes * 60 * 1000;
       questionStartTimeRef.current = Date.now();
       timerWorkerRef.current?.postMessage({ type: "START", endTime: examEndTimeRef.current });
@@ -815,9 +947,10 @@ const ExamSimulator = () => {
   };
 
   const handleNavigation = (direction: "next" | "prev") => {
-    // Free mode walks the paper as one list, so Next off the end of a section
-    // lands on the first question of the following one instead of doing nothing.
-    if (isFreeNav) {
+    // Free mode walks the paper as one list (a part walks its scope), so Next
+    // off the end of a section lands on the first question of the following
+    // one instead of doing nothing.
+    if (multiNav) {
       const step = stepThroughPaper(
         flatPaper,
         activeSectionId,
@@ -857,13 +990,19 @@ const ExamSimulator = () => {
     // network duration of the save below, which is exactly how a manual Submit
     // ends up racing this one.
     setShowSubmitDialog(false);
-    updateQuestionTime();
+    // Deliberately NO updateQuestionTime() here: it resets questionStartTimeRef
+    // and banks the stint into a QUEUED state update that the submitExam call
+    // below cannot see (it reads this render's questionStates), so the final
+    // stint on the open question would be lost. submitExam banks that stint
+    // itself, from the untouched ref — the same way a manual Submit does.
     await submitExam();
     toast({
       title: "Time's up!",
       description: isFreeNav
         ? "Your paper has been automatically submitted."
-        : "Your section has been automatically submitted.",
+        : groupNav
+          ? `${unitInfo?.name || "This part"} has been automatically submitted.`
+          : "Your section has been automatically submitted.",
     });
   };
 
@@ -913,13 +1052,15 @@ const ExamSimulator = () => {
 
     const totalTimeSpent = (section?.time_minutes || 0) * 60 - timeRemaining;
 
-    // Free mode submits every section of the paper at once. Each section still
-    // becomes its own attempt row (one per section is the only shape the schema
-    // allows), and its `time_spent_seconds` is the time actually spent on its
-    // questions — with free navigation there is no wall-clock slice that
-    // belongs to a section.
-    const sectionsToSubmit: { id: string; questions: Question[]; timeSpent: number }[] = isFreeNav
-      ? allSections
+    // Free mode submits every section of the paper at once; a timing part
+    // submits every member of the part. Each section still becomes its own
+    // attempt row (one per section is the only shape the schema allows), and
+    // its `time_spent_seconds` is the time actually spent on its questions —
+    // with free movement there is no wall-clock slice that belongs to a
+    // section. Marks stay per-section for the same reason: nothing about the
+    // scoring write changes shape.
+    const sectionsToSubmit: { id: string; questions: Question[]; timeSpent: number }[] = multiNav
+      ? scopeSections
           .map((s) => {
             const secQuestions = questionsBySection[s.id] || [];
             return {
@@ -949,7 +1090,7 @@ const ExamSimulator = () => {
       sessionStorage.setItem('pendingExamSubmissions', JSON.stringify([...existingSubmissions, ...pending]));
 
       toast({
-        title: isFreeNav ? "Paper Completed" : "Section Completed",
+        title: isFreeNav ? "Paper Completed" : groupNav ? "Part Completed" : "Section Completed",
         description: "Your progress has been saved locally.",
       });
 
@@ -974,8 +1115,12 @@ const ExamSimulator = () => {
       }
 
       toast({
-        title: isFreeNav ? "Exam Submitted" : "Section Submitted",
-        description: isFreeNav
+        title: isFreeNav
+          ? "Exam Submitted"
+          : groupNav
+            ? `${unitInfo?.name || "Part"} Submitted`
+            : "Section Submitted",
+        description: multiNav
           ? `All ${sectionsToSubmit.length} section${sectionsToSubmit.length === 1 ? "" : "s"} saved successfully.`
           : `Your responses have been saved successfully (Last Q: ${currentQuestionTimeSpent}s)`,
       });
@@ -996,10 +1141,24 @@ const ExamSimulator = () => {
   };
 
   const handleProceedToNextSection = () => {
+    // A part hands over to the first section AFTER its last member; solo mode
+    // hands over to the next section in paper order. The navigation does NOT
+    // remount this page — the route is the same, only :sectionId changes, so
+    // the same component instance survives; the [sectionId] effect refetches
+    // and the next Start click seeds a fresh clock. Time never carries over
+    // between parts or sections. (If the next section is a member of a part,
+    // the refetch loads that whole part.)
     const currentIndex = allSections.findIndex(s => s.id === sectionId);
-    const nextSection = allSections[currentIndex + 1];
+    const nextSection = groupNav && unitInfo
+      ? allSections.find((s) => s.id === unitInfo.nextSectionId) ?? null
+      : allSections[currentIndex + 1];
     if (nextSection) {
-      // Reset state for next section
+      // Reset state for next section. The submit latch is part of that state:
+      // it is deliberately held after a successful save (the completion dialog
+      // is terminal for THIS scope), but the same component instance goes on
+      // to serve the next section/part — leave it held and every submit after
+      // the first silently no-ops.
+      submittingRef.current = false;
       setHasStarted(false);
       setShowSectionCompleteDialog(false);
       setCurrentQuestionIndex(0);
@@ -1201,31 +1360,43 @@ const ExamSimulator = () => {
         </div>
         <Card className="max-w-md w-full">
           <CardContent className="pt-6 space-y-6">
-            {isFreeNav ? (
-              // One clock, every section reachable — so the start screen is
-              // about the paper, not about the section the link happened to
-              // point at.
+            {multiNav ? (
+              // One clock, every section in scope reachable — so the start
+              // screen is about the paper (or the part), not about the section
+              // the link happened to point at.
               <div className="space-y-4">
                 <div className="text-center space-y-2">
                   <h1 className="text-2xl font-bold text-foreground">
-                    {allSections.length === 1 ? section?.name : "Full Paper"}
+                    {isFreeNav
+                      ? allSections.length === 1
+                        ? section?.name
+                        : "Full Paper"
+                      : unitInfo?.name}
                   </h1>
                   <p className="text-muted-foreground">
-                    Time Limit: {totalPaperMinutes} minutes
+                    Time Limit: {isFreeNav ? totalPaperMinutes : unitInfo?.minutes} minutes
                   </p>
                   <p className="text-muted-foreground">
                     Total Questions: {Object.values(questionsBySection).flat().length}
                   </p>
+                  {groupNav && unitInfo?.nextSectionId && (
+                    <p className="text-xs text-muted-foreground/80">
+                      This part is timed on one shared clock. The rest of the paper follows,
+                      each part on its own clock — unused time does not carry over.
+                    </p>
+                  )}
                 </div>
 
-                {allSections.length > 1 && (
+                {scopeSections.length > 1 && (
                   <div className="rounded-xl border border-primary/25 bg-primary/[0.04] p-3 space-y-2">
                     <p className="flex items-center gap-2 text-xs font-semibold text-foreground">
                       <ArrowLeftRight className="h-3.5 w-3.5 text-primary" />
-                      You can move between sections freely
+                      {isFreeNav
+                        ? "You can move between sections freely"
+                        : "These sections share one clock — move between them freely"}
                     </p>
                     <ul className="space-y-1">
-                      {allSections.map((s, i) => (
+                      {scopeSections.map((s, i) => (
                         <li
                           key={s.id}
                           className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
@@ -1243,8 +1414,8 @@ const ExamSimulator = () => {
                       ))}
                     </ul>
                     <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-                      Nothing is submitted until you press Submit Exam — or the {totalPaperMinutes}-minute
-                      clock runs out.
+                      Nothing is submitted until you press {submitLabel} — or
+                      the {isFreeNav ? totalPaperMinutes : unitInfo?.minutes}-minute clock runs out.
                     </p>
                   </div>
                 )}
@@ -1266,6 +1437,9 @@ const ExamSimulator = () => {
                 which is the only way a preview can tell them how the paper
                 actually lands. The one exception is an exit that would
                 otherwise lie: see "Back to editing" above and at the end. */}
+            {/* A timing part says "Start Section" like a locked one does — the
+                part is a clock the sections share, not a thing a student
+                starts. Pairs with Submit Section at the other end. */}
             <Button onClick={handleStartSection} className="w-full" size="lg">
               {isFreeNav && allSections.length > 1 ? "Start Exam" : "Start Section"}
             </Button>
@@ -1277,15 +1451,16 @@ const ExamSimulator = () => {
 
   const currentQuestion = questions[currentQuestionIndex];
 
-  // Free-mode reading of the paper as a whole: which sections still have
-  // unanswered questions, and whether Next has anywhere left to go.
-  const showSectionTabs = isFreeNav && allSections.length > 1;
+  // Multi-section reading of the reachable scope (the paper in free mode, the
+  // part in group mode): which sections still have unanswered questions, and
+  // whether Next has anywhere left to go.
+  const showSectionTabs = multiNav && scopeSections.length > 1;
   // Past the limit a tab strip stops being navigation and becomes a scrub bar:
   // truncated names, the tab you want off-screen behind a fade. The picker is
   // the same width whether the paper has six sections or sixty.
-  const useSectionPicker = showSectionTabs && allSections.length > SECTION_TAB_LIMIT;
-  const perSectionSummary = isFreeNav
-    ? allSections
+  const useSectionPicker = showSectionTabs && scopeSections.length > SECTION_TAB_LIMIT;
+  const perSectionSummary = multiNav
+    ? scopeSections
         .map((s) => ({
           id: s.id,
           name: s.name,
@@ -1295,12 +1470,12 @@ const ExamSimulator = () => {
     : [];
   const paperAnswered = perSectionSummary.reduce((sum, s) => sum + s.answered, 0);
   const paperTotal = perSectionSummary.reduce((sum, s) => sum + s.total, 0);
-  const activeSectionNumber = allSections.findIndex((s) => s.id === activeSectionId) + 1;
-  const atEndOfPaper = isFreeNav
+  const activeSectionNumber = scopeSections.findIndex((s) => s.id === activeSectionId) + 1;
+  const atEndOfPaper = multiNav
     ? !stepThroughPaper(flatPaper, activeSectionId, currentQuestionIndex, "next")
     : currentQuestionIndex === questions.length - 1;
   /** Free mode keeps Submit reachable from anywhere — a candidate may finish early. */
-  const showSubmitInline = isFreeNav ? atEndOfPaper : currentQuestionIndex === questions.length - 1;
+  const showSubmitInline = multiNav ? atEndOfPaper : currentQuestionIndex === questions.length - 1;
 
   /* The two width caps expanded mode lifts. Dropping `container` with them is
      deliberate: it carries its own max-width at 2xl, so leaving it on would cap
@@ -1322,7 +1497,9 @@ const ExamSimulator = () => {
             {showSectionTabs && (
               <span className="shrink-0 hidden sm:inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
                 <ArrowLeftRight className="h-3 w-3" />
-                Section {activeSectionNumber} of {allSections.length}
+                {groupNav && unitInfo
+                  ? `${unitInfo.name} · ${activeSectionNumber} of ${scopeSections.length}`
+                  : `Section ${activeSectionNumber} of ${scopeSections.length}`}
               </span>
             )}
             {isPreview && (
@@ -1392,18 +1569,23 @@ const ExamSimulator = () => {
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="right" className="w-[300px] sm:w-[350px] overflow-y-auto">
+              {/* Below lg the sheet IS the palette, so it is built like the
+                  desktop one: a scrolling body and a foot that does not move.
+                  gap-0 p-0 because the padding now belongs to those two
+                  children — the foot has to reach the sheet's own edges. */}
+              <SheetContent side="right" className="w-[300px] sm:w-[350px] flex flex-col gap-0 p-0">
+                <div className="flex-1 min-h-0 overflow-y-auto p-6">
                 <SheetHeader className="mb-4">
                   <SheetTitle>Question Palette</SheetTitle>
                 </SheetHeader>
                 {showSectionTabs && (
                   <div className="mb-5 space-y-2">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Sections
+                      {groupNav && unitInfo ? unitInfo.name : "Sections"}
                     </p>
                     <SectionTabs
                       variant="stacked"
-                      sections={allSections}
+                      sections={scopeSections}
                       activeSectionId={activeSectionId}
                       questionsBySection={questionsBySection}
                       questionStates={questionStates}
@@ -1447,6 +1629,25 @@ const ExamSimulator = () => {
                     <span>Untouched</span>
                   </div>
                 </div>
+                </div>
+
+                {/* The same pinned foot as the desktop palette, so Submit is in
+                    the same place on a phone as it is on a laptop. All Questions
+                    is not repeated here — below lg it sits in the header row,
+                    one tap away without opening this sheet. */}
+                <div className="shrink-0 border-t border-border bg-foreground/[0.03] p-3">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-center gap-2 border-primary/40 font-semibold text-primary shadow-sm hover:bg-primary/10 hover:text-primary active:scale-[0.99]"
+                    onClick={() => {
+                      setIsPaletteOpen(false);
+                      setShowSubmitDialog(true);
+                    }}
+                  >
+                    <Check className="h-4 w-4" />
+                    {submitLabel}
+                  </Button>
+                </div>
               </SheetContent>
             </Sheet>
           </div>
@@ -1463,7 +1664,7 @@ const ExamSimulator = () => {
                 {useSectionPicker ? (
                   <div className="flex h-11 items-center px-3">
                     <SectionPicker
-                      sections={allSections}
+                      sections={scopeSections}
                       activeSectionId={activeSectionId}
                       questionsBySection={questionsBySection}
                       questionStates={questionStates}
@@ -1473,7 +1674,7 @@ const ExamSimulator = () => {
                   </div>
                 ) : (
                   <SectionTabs
-                    sections={allSections}
+                    sections={scopeSections}
                     activeSectionId={activeSectionId}
                     questionsBySection={questionsBySection}
                     questionStates={questionStates}
@@ -1487,7 +1688,7 @@ const ExamSimulator = () => {
                   of the old "open the palette sheet and look for it" detour. */}
               <div className="lg:hidden flex min-w-0 flex-1 items-center gap-2 px-3 py-2">
                 <SectionPicker
-                  sections={allSections}
+                  sections={scopeSections}
                   activeSectionId={activeSectionId}
                   questionsBySection={questionsBySection}
                   questionStates={questionStates}
@@ -1499,19 +1700,14 @@ const ExamSimulator = () => {
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 px-3 py-1.5 shrink-0">
-                <span className="hidden lg:inline text-[11px] font-medium text-muted-foreground tabular-nums">
+              {/* Progress only. Submit used to sit here, but a control that
+                  ends the attempt does not belong in the row you tap to change
+                  section — and here it existed only where the strip did. It
+                  lives at the foot of the palette now, on every screen. */}
+              <div className="hidden lg:flex items-center px-3 py-1.5 shrink-0">
+                <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
                   {paperAnswered}/{paperTotal} answered
                 </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 border-primary/40 text-primary hover:bg-primary/10 hover:text-primary"
-                  onClick={() => setShowSubmitDialog(true)}
-                >
-                  <Check className="h-3.5 w-3.5 mr-1.5" />
-                  Submit Exam
-                </Button>
               </div>
             </div>
           </div>
@@ -1814,7 +2010,21 @@ const ExamSimulator = () => {
               Tinted with foreground rather than a fixed grey so it inverts with
               the theme: 8% of the text colour is darker than a white panel and
               lighter than a dark one, which is the right direction in both. */}
-          <div className="shrink-0 border-t border-border bg-foreground/[0.03] p-3">
+          <div className="shrink-0 border-t border-border bg-foreground/[0.03] p-3 space-y-2">
+            {/* Submit rides above All Questions, and is not conditional: a
+                locked single section, a timing part and free mode all end the
+                same way, so the way to end it is in the same corner in all
+                three. Purple against the neutral button below it — one of
+                these two is irreversible. */}
+            <Button
+              variant="outline"
+              className="w-full justify-center gap-2 border-primary/40 font-semibold text-primary shadow-sm hover:bg-primary/10 hover:text-primary active:scale-[0.99]"
+              onClick={() => setShowSubmitDialog(true)}
+              title={submitLabel}
+            >
+              <Check className="h-4 w-4" />
+              {submitLabel}
+            </Button>
             <Button
               variant="outline"
               // Resting state only — the hover left alone on purpose, so this
@@ -1855,7 +2065,9 @@ const ExamSimulator = () => {
             <AlertDialogDescription>
               {isFreeNav && allSections.length > 1
                 ? "You have only 5 minutes left to complete this paper — across all sections."
-                : "You have only 5 minutes left to complete this section."}
+                : groupNav
+                  ? `You have only 5 minutes left to complete ${unitInfo?.name || "this part"} — across its sections.`
+                  : "You have only 5 minutes left to complete this section."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1873,18 +2085,22 @@ const ExamSimulator = () => {
             <AlertDialogTitle>
               {isFreeNav && allSections.length > 1
                 ? "Submit the whole paper?"
-                : "Submit Section?"}
+                : groupNav
+                  ? `Submit ${unitInfo?.name || "this part"}?`
+                  : "Submit Section?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {isFreeNav && allSections.length > 1
                 ? "This submits every section at once. You cannot change your answers afterwards."
-                : "Are you sure you want to submit this section? You cannot change your answers after submission."}
+                : groupNav
+                  ? "This submits every section of this part together. A submitted part cannot be reopened."
+                  : "Are you sure you want to submit this section? You cannot change your answers after submission."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          {/* With free navigation, a candidate can reach Submit while a whole
+          {/* With free movement, a candidate can reach Submit while a whole
               section is still untouched. Say so, per section, before they do. */}
-          {isFreeNav && allSections.length > 1 && (
+          {multiNav && scopeSections.length > 1 && (
             <div className="rounded-lg border border-border/70 divide-y divide-border/60 text-sm">
               {perSectionSummary.map((s) => (
                 <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2">
@@ -1915,7 +2131,7 @@ const ExamSimulator = () => {
 
           <AlertDialogFooter>
             <AlertDialogCancel>
-              {isFreeNav && allSections.length > 1 ? "Keep working" : "Cancel"}
+              {multiNav && scopeSections.length > 1 ? "Keep working" : "Cancel"}
             </AlertDialogCancel>
             <AlertDialogAction onClick={() => { timerWorkerRef.current?.postMessage({ type: "STOP" }); submitExam(); }}>Submit</AlertDialogAction>
           </AlertDialogFooter>
@@ -1942,6 +2158,43 @@ const ExamSimulator = () => {
                 <AlertDialogAction onClick={handleFinishExam}>
                   {isPreview ? "Back to editing" : "View Results"}
                 </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          ) : groupNav ? (
+            // A timing part submitted every one of its sections together. If
+            // the paper continues, the next stop is the section after the
+            // part; its remount brings a fresh clock — time never carries over.
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{unitInfo?.name || "Part"} Completed!</AlertDialogTitle>
+                <AlertDialogDescription>
+                  <>
+                    All {perSectionSummary.length} section
+                    {perSectionSummary.length === 1 ? "" : "s"} of{" "}
+                    <strong>{unitInfo?.name || "this part"}</strong> submitted —{" "}
+                    <strong className="tabular-nums">{paperAnswered} of {paperTotal}</strong>{" "}
+                    questions answered.
+                  </>
+                  {unitInfo?.nextSectionId ? (
+                    <p className="mt-2">
+                      A submitted part cannot be reopened, and its unused time does not
+                      carry over. Click below to continue.
+                    </p>
+                  ) : (
+                    <p className="mt-2">You have completed all parts of the exam.</p>
+                  )}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                {unitInfo?.nextSectionId ? (
+                  <AlertDialogAction onClick={handleProceedToNextSection}>
+                    Continue
+                  </AlertDialogAction>
+                ) : (
+                  <AlertDialogAction onClick={handleFinishExam}>
+                    {isPreview ? "Back to editing" : "Finish Exam"}
+                  </AlertDialogAction>
+                )}
               </AlertDialogFooter>
             </>
           ) : (

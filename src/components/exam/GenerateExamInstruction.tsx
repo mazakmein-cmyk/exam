@@ -37,11 +37,20 @@ import { canGenerateFor, generateExamInstruction } from "@/lib/examInstructionEn
 
 /** What the caller must gather for the engine. Mirrors the engine's JSDoc. */
 export type ExamFacts = {
-  sections: { name: string; minutes: number | null; questionCount: number | null }[];
+  sections: {
+    name: string;
+    minutes: number | null;
+    questionCount: number | null;
+    /** Timing group this section belongs to — key into `groups`. */
+    groupId?: string | null;
+  }[];
   /** null = the creator has not chosen a mode yet (create dialog) — the engine
    * then says nothing that depends on it, rather than describing a default. */
   allowSectionSwitching: boolean | null;
   totalMinutes: number | null;
+  /** Timing groups by id (shared time pools). null/absent = unknown or none —
+   * the engine writes exactly what it always wrote. */
+  groups?: Record<string, { name: string; minutes: number | null }> | null;
   marking: {
     correct: number;
     wrong: number;

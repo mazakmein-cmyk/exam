@@ -13,6 +13,14 @@ import InstructionText from "@/components/exam/InstructionText";
 import { readNavigationSettings } from "@/lib/examSettings";
 import { dropShapeLine, reconcileTimingLine } from "@/lib/examInstructionEngine.js";
 import { sumSectionMinutes, totalExamMinutes } from "@/lib/examNavigation.js";
+import { fetchTimingGroups, type TimingGroupRow } from "@/lib/timingGroupSettings";
+import {
+  groupDisplayName,
+  hasGroupUnits,
+  resolveTimingGroupIds,
+  sumUnitMinutes,
+  timingUnits,
+} from "@/lib/timingGroups.js";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -61,17 +69,48 @@ type SectionMarkingDisplay = {
  * prose), and a section with no clock set shows — rather than a number the
  * runner would not enforce.
  */
-type PaperTableRow = { name: string; questions: number; maxMarks: number; minutes: number | null };
+type PaperTableRow = {
+    name: string;
+    questions: number;
+    maxMarks: number;
+    minutes: number | null;
+    /**
+     * Shared-pool annotation (timing groups). Present on every member of a
+     * group; the FIRST member renders one pooled timing cell spanning the
+     * whole group, because per-member minutes are clocks the runner does not
+     * enforce — the pool is the only true number.
+     */
+    group?: { key: string; name: string; minutes: number; size: number; indexInGroup: number } | null;
+};
 
-const PAPER_TABLE_LABELS: Record<string, { sl: string; section: string; questions: string; marks: string; time: string; total: string; min: string }> = {
-    en: { sl: "Sl No.", section: "Section Name", questions: "No. of Questions", marks: "Maximum Marks", time: "Sectional Timing", total: "Total", min: "min" },
-    hi: { sl: "क्रम", section: "खंड का नाम", questions: "प्रश्नों की संख्या", marks: "अधिकतम अंक", time: "खंड का समय", total: "कुल", min: "मिनट" },
+const PAPER_TABLE_LABELS: Record<string, { sl: string; section: string; questions: string; marks: string; time: string; total: string; min: string; shared: string }> = {
+    en: { sl: "Sl No.", section: "Section Name", questions: "No. of Questions", marks: "Maximum Marks", time: "Sectional Timing", total: "Total", min: "min", shared: "shared" },
+    hi: { sl: "क्रम", section: "खंड का नाम", questions: "प्रश्नों की संख्या", marks: "अधिकतम अंक", time: "खंड का समय", total: "कुल", min: "मिनट", shared: "साझा" },
 };
 
 const PaperTable = ({ rows, lang, showTime }: { rows: PaperTableRow[]; lang: string; showTime: boolean }) => {
     const labels = PAPER_TABLE_LABELS[lang] ?? PAPER_TABLE_LABELS.en;
     const showMarks = rows.some((r) => r.maxMarks > 0);
-    const allTimed = rows.every((r) => r.minutes !== null);
+    // The paper's time: pools count once per group, solo clocks as-is; any
+    // unknown clock silences the total rather than understating it.
+    const timeTotal = (() => {
+        let total = 0;
+        let known = true;
+        const pooled = new Set<string>();
+        for (const r of rows) {
+            if (r.group) {
+                if (pooled.has(r.group.key)) continue;
+                pooled.add(r.group.key);
+                if (r.group.minutes > 0) total += r.group.minutes;
+                else known = false;
+            } else if (r.minutes !== null) {
+                total += r.minutes;
+            } else {
+                known = false;
+            }
+        }
+        return known ? total : null;
+    })();
     const cell = "border border-border/60 px-3 py-2";
     return (
         <div className="overflow-x-auto rounded-lg border border-border/60">
@@ -92,11 +131,23 @@ const PaperTable = ({ rows, lang, showTime }: { rows: PaperTableRow[]; lang: str
                             <td className={cell}>{r.name}</td>
                             <td className={`${cell} tabular-nums`}>{r.questions}</td>
                             {showMarks && <td className={`${cell} tabular-nums`}>{formatMarks(r.maxMarks)}</td>}
-                            {showTime && (
-                                <td className={`${cell} tabular-nums`}>
-                                    {r.minutes !== null ? `${r.minutes} ${labels.min}` : "—"}
-                                </td>
-                            )}
+                            {showTime &&
+                                (r.group ? (
+                                    r.group.indexInGroup === 0 ? (
+                                        // One pooled cell for the whole group — the only
+                                        // clock the runner enforces over these rows.
+                                        <td className={`${cell} tabular-nums align-middle`} rowSpan={r.group.size}>
+                                            {r.group.minutes > 0 ? `${r.group.minutes} ${labels.min}` : "—"}
+                                            <span className="block text-[11px] font-medium text-muted-foreground">
+                                                {r.group.name} · {labels.shared}
+                                            </span>
+                                        </td>
+                                    ) : null
+                                ) : (
+                                    <td className={`${cell} tabular-nums`}>
+                                        {r.minutes !== null ? `${r.minutes} ${labels.min}` : "—"}
+                                    </td>
+                                ))}
                         </tr>
                     ))}
                     {rows.length > 1 && (
@@ -110,7 +161,7 @@ const PaperTable = ({ rows, lang, showTime }: { rows: PaperTableRow[]; lang: str
                             )}
                             {showTime && (
                                 <td className={`${cell} tabular-nums`}>
-                                    {allTimed ? `${rows.reduce((n, r) => n + (r.minutes || 0), 0)} ${labels.min}` : "—"}
+                                    {timeTotal !== null ? `${timeTotal} ${labels.min}` : "—"}
                                 </td>
                             )}
                         </tr>
@@ -148,6 +199,16 @@ const ExamIntro = () => {
     const [allowSectionSwitching, setAllowSectionSwitching] = useState(false);
     const [paperMinutes, setPaperMinutes] = useState(0);
     const [sectionCount, setSectionCount] = useState(0);
+    /** Timing groups (shared pools). [] on an un-migrated database — solo behavior. */
+    const [timingGroups, setTimingGroups] = useState<TimingGroupRow[]>([]);
+    /**
+     * PRIMARY section ids that have at least one question. The runner drops
+     * question-less members from a part (and a part down to one survivor runs
+     * solo), so the format card must derive its units from the same picture —
+     * or it promises a pool the runner will not enforce. null = counts unknown
+     * (the marks fetch failed): derive from every section rather than guess.
+     */
+    const [questionedPrimaryIds, setQuestionedPrimaryIds] = useState<Set<string> | null>(null);
     /**
      * Two screens, not one scroll. A candidate about to sit a three-hour paper
      * reads the general rules once and the exam's own instructions once, and a
@@ -219,19 +280,24 @@ const ExamIntro = () => {
                 setSelectedLanguage(pubLangs[0]);
             }
 
-            // Fetch ALL Sections (include name + section_group_id so the marking
-            // scheme display below can show per-section breakdowns and resolve
-            // localized section names for multi-language exams).
-            const { data: sections, error: sectionsError } = await supabase
-                .from("sections")
-                .select("id, name, language, sort_order, section_group_id, time_minutes")
-                .eq("exam_id", examId)
-                .order("sort_order", { ascending: true })
-                .order("created_at", { ascending: true });
+            // Fetch ALL Sections (select * so the hand-migrated timing_group_id
+            // rides along when the live schema has it — naming it in a column
+            // list would fail the whole query pre-migration) plus the exam's
+            // timing groups, which resolve to [] on an un-migrated database.
+            const [{ data: sections, error: sectionsError }, groupRows] = await Promise.all([
+                supabase
+                    .from("sections")
+                    .select("*")
+                    .eq("exam_id", examId)
+                    .order("sort_order", { ascending: true })
+                    .order("created_at", { ascending: true }),
+                fetchTimingGroups(examId!),
+            ]);
 
             if (sectionsError) throw sectionsError;
 
             setAllSections(sections || []);
+            setTimingGroups(groupRows);
 
             // Timing summary, per language variant so the minutes shown are the
             // ones this student will actually get.
@@ -289,6 +355,7 @@ const ExamIntro = () => {
                         questionCounts.set(q.section_id, (questionCounts.get(q.section_id) || 0) + 1);
                     });
                 }
+                setQuestionedPrimaryIds(new Set(allQuestionRows.map((q) => q.section_id)));
                 const allQuestionIds = allQuestionRows.map((q) => q.id);
 
                 const [examDefault, sectionConfigs, questionConfigs] = await Promise.all([
@@ -488,14 +555,67 @@ const ExamIntro = () => {
      * language they were written in; a creator's own wording is left alone and
      * flagged in the editor instead, which is the only place it can be fixed.
      */
+    // ── Timing groups: the display language's view of the paper ─────────────
+    // Structure comes from the PRIMARY language rows (resolveTimingGroupIds),
+    // names from the display language — the same derivation the runner does,
+    // so this screen promises exactly what the next one enforces.
+    const introSectionRows = allSections.filter(
+        (s: any) => !s.language || s.language === displayLanguage
+    );
+    const introSections = introSectionRows.length > 0 ? introSectionRows : allSections;
+    const resolvedGroupIds = resolveTimingGroupIds(allSections, primaryLanguage);
+    // Units derive from the sections the runner will actually sit: it drops
+    // question-less members from a part, so this screen must too — a promised
+    // pool over a section with nothing in it is a clock nobody gets.
+    const primaryIdOfDisplay = (s: any): string | null => {
+        if (!s.language || s.language === primaryLanguage) return s.id;
+        if (!s.section_group_id) return null;
+        return (
+            allSections.find(
+                (x: any) => x.section_group_id === s.section_group_id && x.language === primaryLanguage
+            )?.id ?? null
+        );
+    };
+    const unitSections = questionedPrimaryIds
+        ? introSections.filter((s: any) => {
+              const primaryId = primaryIdOfDisplay(s);
+              return primaryId ? questionedPrimaryIds.has(primaryId) : true;
+          })
+        : introSections;
+    const displayUnits =
+        !allowSectionSwitching && timingGroups.length > 0
+            ? timingUnits(unitSections, timingGroups, resolvedGroupIds)
+            : [];
+    const groupedPaper = hasGroupUnits(displayUnits);
+    /** What the runner will actually enforce across the paper, pools counted once. */
+    const effectivePaperMinutes = groupedPaper ? sumUnitMinutes(displayUnits) : paperMinutes;
+
     const displayedExamInstruction = reconcileTimingLine(
         displayExamInstruction || "",
         {
-            sections: allSections
-                .filter((s: any) => !s.language || s.language === displayLanguage)
-                .map((s: any) => ({ name: s.name, minutes: s.time_minutes, questionCount: null })),
+            // unitSections, not introSections: the healed sentence must state
+            // the clocks the runner enforces, and the runner does not sit
+            // question-less members of a part.
+            sections: unitSections.map((s: any) => ({
+                name: s.name,
+                minutes: s.time_minutes,
+                questionCount: null,
+                groupId: resolvedGroupIds.get(s.id) ?? null,
+            })),
             allowSectionSwitching,
             totalMinutes: paperMinutes,
+            // Group facts ride along ALWAYS when groups exist: without them the
+            // self-healing pass would "correct" a true grouped sentence into a
+            // stale per-section one — the one lie this feature must never tell.
+            groups:
+                timingGroups.length > 0
+                    ? Object.fromEntries(
+                          timingGroups.map((g) => [
+                              g.id,
+                              { name: groupDisplayName(g, displayLanguage), minutes: g.time_minutes ?? null },
+                          ])
+                      )
+                    : null,
             marking: null,
             answerTypes: null,
             languageNames: null,
@@ -507,27 +627,77 @@ const ExamIntro = () => {
     // keyed by PRIMARY-language section ids (that is where counts and marks
     // live); the name and the clock come from the display language's own row,
     // because in locked mode the runner enforces THAT row's time_minutes.
-    const paperTableRows: PaperTableRow[] = sectionMarking.map((sm) => {
-        const primary = allSections.find((s: any) => s.id === sm.primarySectionId);
-        const displayRow = primary?.section_group_id
-            ? allSections.find(
-                  (s: any) =>
-                      s.section_group_id === primary.section_group_id &&
-                      s.language === displayLanguage
-              ) ?? primary
-            : primary;
-        const minutes = Number(displayRow?.time_minutes);
-        return {
-            name:
-                sm.namesByLanguage[displayLanguage] ??
-                sm.namesByLanguage[primaryLanguage] ??
-                displayRow?.name ??
-                "",
-            questions: sm.questionCount,
-            maxMarks: sm.maxMarks,
-            minutes: Number.isFinite(minutes) && minutes > 0 ? Math.floor(minutes) : null,
-        };
-    });
+    // Grouped sections then coalesce into one pooled timing cell per group —
+    // the member clocks are numbers the runner does not enforce.
+    const paperTableRows: PaperTableRow[] = (() => {
+        const base = sectionMarking.map((sm) => {
+            const primary = allSections.find((s: any) => s.id === sm.primarySectionId);
+            const displayRow = primary?.section_group_id
+                ? allSections.find(
+                      (s: any) =>
+                          s.section_group_id === primary.section_group_id &&
+                          s.language === displayLanguage
+                  ) ?? primary
+                : primary;
+            const minutes = Number(displayRow?.time_minutes);
+            return {
+                name:
+                    sm.namesByLanguage[displayLanguage] ??
+                    sm.namesByLanguage[primaryLanguage] ??
+                    displayRow?.name ??
+                    "",
+                questions: sm.questionCount,
+                maxMarks: sm.maxMarks,
+                minutes: Number.isFinite(minutes) && minutes > 0 ? Math.floor(minutes) : null,
+                rawGroupId: !allowSectionSwitching
+                    ? resolvedGroupIds.get(sm.primarySectionId) ?? null
+                    : null,
+            };
+        });
+        const strip = ({ rawGroupId: _ignored, ...row }: (typeof base)[number]): PaperTableRow => row;
+        if (!groupedPaper) return base.map(strip);
+
+        const rows: PaperTableRow[] = [];
+        for (let i = 0; i < base.length; ) {
+            const gid = base[i].rawGroupId;
+            const group = gid ? timingGroups.find((g) => g.id === gid) : undefined;
+            if (!group) {
+                rows.push(strip(base[i]));
+                i += 1;
+                continue;
+            }
+            let j = i;
+            while (j < base.length && base[j].rawGroupId === gid) j += 1;
+            const size = j - i;
+            if (size === 1) {
+                // A group with one rendered row behaves solo — same rule as the runner.
+                rows.push(strip(base[i]));
+                i = j;
+                continue;
+            }
+            const memberMinutes = base.slice(i, j).map((r) => r.minutes);
+            const pool =
+                group.time_minutes && group.time_minutes > 0
+                    ? group.time_minutes
+                    : memberMinutes.every((m) => m !== null)
+                        ? memberMinutes.reduce((n, m) => n + (m || 0), 0)
+                        : 0;
+            for (let k = i; k < j; k++) {
+                rows.push({
+                    ...strip(base[k]),
+                    group: {
+                        key: gid!,
+                        name: groupDisplayName(group, displayLanguage),
+                        minutes: pool,
+                        size,
+                        indexInGroup: k - i,
+                    },
+                });
+            }
+            i = j;
+        }
+        return rows;
+    })();
     const showPaperTable = paperTableRows.length > 0;
 
     // With the table on screen, the engine's prose repetition of its numbers
@@ -750,17 +920,17 @@ const ExamIntro = () => {
                             to make before question 1, not after. */}
                         {sectionCount > 0 && (
                             <div className={`rounded-xl border p-4 ${
-                                allowSectionSwitching
+                                allowSectionSwitching || groupedPaper
                                     ? "border-[#6C3EF4]/25 bg-[#6C3EF4]/[0.06]"
                                     : "border-border/60 bg-muted/30"
                             }`}>
                                 <div className="flex items-start gap-3">
                                     <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${
-                                        allowSectionSwitching
+                                        allowSectionSwitching || groupedPaper
                                             ? "bg-[#6C3EF4]/15 text-[#6C3EF4]"
                                             : "bg-muted text-muted-foreground"
                                     }`}>
-                                        {allowSectionSwitching
+                                        {allowSectionSwitching || groupedPaper
                                             ? <ArrowLeftRight className="h-4 w-4" />
                                             : <Lock className="h-3.5 w-3.5" />}
                                     </div>
@@ -768,7 +938,9 @@ const ExamIntro = () => {
                                         <h3 className="font-semibold text-foreground text-sm">
                                             {allowSectionSwitching
                                                 ? "You can switch between sections"
-                                                : "One section at a time"}
+                                                : groupedPaper
+                                                    ? "The paper is sat in timed parts"
+                                                    : "One section at a time"}
                                         </h3>
                                         <p className="text-xs text-muted-foreground leading-relaxed">
                                             {allowSectionSwitching ? (
@@ -777,6 +949,19 @@ const ExamIntro = () => {
                                                     clock. Move between them in any order and revisit any answer until
                                                     you submit.
                                                 </>
+                                            ) : groupedPaper ? (
+                                                <>
+                                                    {displayUnits
+                                                        .map((u) =>
+                                                            u.kind === "group"
+                                                                ? `${groupDisplayName(u.group, displayLanguage)} (${u.sectionIds.length} sections${u.minutes > 0 ? `, ${u.minutes} min shared` : ""})`
+                                                                : `${introSections.find((s: any) => s.id === u.sectionIds[0])?.name ?? "Section"}${u.minutes > 0 ? ` (${u.minutes} min)` : ""}`
+                                                        )
+                                                        .join(" · ")}
+                                                    . Within a shared part, move freely between its sections. Parts are
+                                                    sat in order — a submitted part cannot be reopened, and unused time
+                                                    does not carry over.
+                                                </>
                                             ) : (
                                                 <>
                                                     {sectionCount} section{sectionCount === 1 ? "" : "s"}, each on its own
@@ -784,12 +969,16 @@ const ExamIntro = () => {
                                                 </>
                                             )}
                                         </p>
-                                        {paperMinutes > 0 && (
+                                        {effectivePaperMinutes > 0 && (
                                             <p className="flex items-center gap-1.5 text-xs text-foreground/80 pt-0.5">
                                                 <Hourglass className="h-3 w-3 text-[#A855F7]" />
-                                                <span className="font-bold tabular-nums">{paperMinutes} min</span>
+                                                <span className="font-bold tabular-nums">{effectivePaperMinutes} min</span>
                                                 <span className="text-muted-foreground">
-                                                    {allowSectionSwitching ? "for the whole paper" : "total across all sections"}
+                                                    {allowSectionSwitching
+                                                        ? "for the whole paper"
+                                                        : groupedPaper
+                                                            ? "total across all parts"
+                                                            : "total across all sections"}
                                                 </span>
                                             </p>
                                         )}

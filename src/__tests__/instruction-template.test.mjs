@@ -345,15 +345,18 @@ test("the sheet cannot fail for any exam: type- and mode-specific lines are cond
   const body = TEMPLATES.slice(TEMPLATES.indexOf("GENERAL_INSTRUCTION_TEMPLATES"));
   // This text ships with EVERY exam. Question types vary per paper, so their
   // mechanics must be phrased as "if a question…" — idle on an all-MCQ paper,
-  // never wrong. Same for the two timing modes: "either … or …".
+  // never wrong. Same for the THREE timing modes (locked, free, grouped
+  // timing parts): "you may … or … or …".
   assert(
     /If a question allows several answers/.test(body) &&
       /If a question asks for a typed or numerical answer/.test(body),
     "an unconditional multi/numeric line is false for every exam without those types"
   );
   assert(
-    /either you sit one section at a time[\s\S]{0,200}or all sections share one timer/.test(body),
-    "the timing point must carry both modes — stating one as fact fails for half the exams"
+    /you may sit one section at a time[\s\S]{0,200}or all sections may share one timer[\s\S]{0,200}or the paper may be split into timed parts/.test(
+      body
+    ),
+    "the timing point must carry all three modes — stating fewer as fact fails for the exams in the missing one"
   );
   // And nothing tied to one exam's configuration may appear at all: no counts,
   // no minutes, no marks. (Digits are allowed only as list numbering and the

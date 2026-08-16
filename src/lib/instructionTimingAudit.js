@@ -43,29 +43,53 @@
 /** Below this, a number in instruction prose is not claiming to be the paper's length. */
 const MIN_PAPER_MINUTES = 20;
 
-const MINUTES_PATTERN = /(\d{1,4})\s*(?:minutes|minute|mins|min)\b/gi;
-const HOURS_PATTERN = /(\d{1,3})\s*(?:hours|hour|hrs|hr)\b/gi;
+// The Hindi units carry no \b: JS word boundaries are ASCII-word-based, so a
+// \b after Devanagari never matches and "90 मिनट" would silently escape the
+// audit — every Hindi duration claim unchecked. मिनट as a bare token also
+// matches its plural मिनटों, which is what we want.
+const MINUTES_PATTERN = /(\d{1,4})\s*(?:min(?:ute)?s?\b|मिनट)/gi;
+const HOURS_PATTERN = /(\d{1,3})\s*(?:h(?:ou)?rs?\b|घंट(?:े|ा|ों)|घण्ट(?:े|ा|ों))/gi;
 
-/** Phrases only true of a paper on one shared clock. */
+/** Phrases only true of a paper on one shared clock. Both copy packs. */
 const FREE_NAV_PHRASES =
-  /share one clock|one clock for the|switch between sections|move between them|in any order/i;
-/** Phrases only true of a paper sat one section at a time. */
+  /share one clock|one clock for the|switch between sections|move between them|in any order|एक ही टाइमर|किसी भी क्रम/i;
+/** Phrases only true of a paper sat one section at a time. Both copy packs. */
 const LOCKED_NAV_PHRASES =
-  /one section at a time|cannot be reopened|each on its own clock|sat in order|its own clock/i;
+  /one section at a time|cannot be reopened|each on its own clock|sat in order|its own clock|एक समय में एक ही खंड|दोबारा नहीं खोला|का समय अलग-अलग/i;
+/**
+ * Phrases only true of a grouped paper (timing groups — "timed parts").
+ * Mirrors the engine's grouped copy in both languages.
+ */
+const GROUPED_NAV_PHRASES = /timed parts|shared part|समयबद्ध भागों|साझा भाग/i;
+/**
+ * The locked phrases a GROUPED paper's own prose never contains. The full
+ * LOCKED set cannot be used against a grouped paper: the engine's grouped
+ * sentence legitimately says "a submitted part cannot be reopened" (दोबारा
+ * नहीं खोला in the Hindi pack).
+ */
+const LOCKED_ONLY_PHRASES =
+  /one section at a time|each on its own clock|timed separately|एक समय में एक ही खंड|का समय अलग-अलग/i;
 
 /**
  * What the paper actually gives a candidate, by the same rule the runner uses.
- * @param {{ allowSectionSwitching: boolean, totalMinutes: number|null, sectionMinutes: number[] }} facts
+ * `unitMinutes` is the grouped-paper shape (timing groups): the clock of each
+ * timing unit in order — pools once per group, solo clocks as-is. When present
+ * on a locked paper it IS the paper's arithmetic; grouped members' individual
+ * time_minutes are shown to candidates nowhere and must not be summed twice.
+ * @param {{ allowSectionSwitching: boolean, totalMinutes: number|null, sectionMinutes: number[], unitMinutes?: number[]|null }} facts
  */
 export function effectivePaperMinutes(facts) {
-  const sections = Array.isArray(facts?.sectionMinutes) ? facts.sectionMinutes : [];
-  const sum = sections.reduce(
-    (total, m) => total + (Number.isFinite(Number(m)) && Number(m) > 0 ? Math.floor(Number(m)) : 0),
-    0
-  );
-  if (!facts?.allowSectionSwitching) return sum;
+  const positive = (list) =>
+    (Array.isArray(list) ? list : []).reduce(
+      (total, m) => total + (Number.isFinite(Number(m)) && Number(m) > 0 ? Math.floor(Number(m)) : 0),
+      0
+    );
+  if (!facts?.allowSectionSwitching) {
+    const units = Array.isArray(facts?.unitMinutes) ? facts.unitMinutes : null;
+    return units && units.length > 0 ? positive(units) : positive(facts?.sectionMinutes);
+  }
   const chosen = Number(facts?.totalMinutes);
-  return Number.isFinite(chosen) && chosen > 0 ? Math.floor(chosen) : sum;
+  return Number.isFinite(chosen) && chosen > 0 ? Math.floor(chosen) : positive(facts?.sectionMinutes);
 }
 
 /** Every duration the text claims, in minutes, deduped and in the order stated. */
@@ -81,22 +105,32 @@ function statedMinutes(text) {
 
 /**
  * @param {string} text  The stored instruction copy.
- * @param {{ allowSectionSwitching: boolean, totalMinutes: number|null, sectionMinutes: number[] }} facts
- * @returns {Array<{kind: "duration", stated: number, expected: number} | {kind: "mode", stated: "free"|"locked", expected: "free"|"locked"}>}
+ * @param {{ allowSectionSwitching: boolean, totalMinutes: number|null, sectionMinutes: number[], unitMinutes?: number[]|null }} facts
+ * @returns {Array<{kind: "duration", stated: number, expected: number} | {kind: "mode", stated: "free"|"locked"|"grouped", expected: "free"|"locked"|"grouped"}>}
  */
 export function auditInstructionTiming(text, facts) {
   const findings = [];
   const body = typeof text === "string" ? text : "";
   if (!body.trim()) return findings;
 
+  const grouped =
+    !facts?.allowSectionSwitching &&
+    Array.isArray(facts?.unitMinutes) &&
+    facts.unitMinutes.length > 0;
+
   const expected = effectivePaperMinutes(facts);
-  const sectionClocks = (Array.isArray(facts?.sectionMinutes) ? facts.sectionMinutes : [])
+  // What a number in the prose may legitimately be. Grouped: each unit's clock
+  // (pools once per group, solo clocks as-is) — and deliberately NOT grouped
+  // members' own time_minutes, which no candidate-facing surface states, so a
+  // member figure in prose is stale by definition. Ungrouped: the section
+  // clocks, as ever.
+  const allowedClocks = (grouped ? facts.unitMinutes : facts?.sectionMinutes ?? [])
     .map((m) => Math.floor(Number(m)))
     .filter((m) => Number.isFinite(m) && m > 0);
 
   // A paper with no clock at all cannot be contradicted about its clock.
   if (expected > 0) {
-    const allowed = new Set([expected, ...sectionClocks]);
+    const allowed = new Set([expected, ...allowedClocks]);
     for (const stated of statedMinutes(body)) {
       if (stated < MIN_PAPER_MINUTES || allowed.has(stated)) continue;
       findings.push({ kind: "duration", stated, expected });
@@ -107,8 +141,17 @@ export function auditInstructionTiming(text, facts) {
   const allowSwitching = !!facts?.allowSectionSwitching;
   if (allowSwitching && LOCKED_NAV_PHRASES.test(body) && !FREE_NAV_PHRASES.test(body)) {
     findings.push({ kind: "mode", stated: "locked", expected: "free" });
-  } else if (!allowSwitching && FREE_NAV_PHRASES.test(body)) {
+  } else if (grouped && FREE_NAV_PHRASES.test(body)) {
+    findings.push({ kind: "mode", stated: "free", expected: "grouped" });
+  } else if (grouped && LOCKED_ONLY_PHRASES.test(body) && !GROUPED_NAV_PHRASES.test(body)) {
+    // Per-section-clock prose on a paper that now pools sections. The narrow
+    // phrase set matters: the grouped sentence itself says "cannot be
+    // reopened", which the full LOCKED set would false-positive on.
+    findings.push({ kind: "mode", stated: "locked", expected: "grouped" });
+  } else if (!allowSwitching && !grouped && FREE_NAV_PHRASES.test(body)) {
     findings.push({ kind: "mode", stated: "free", expected: "locked" });
+  } else if (!allowSwitching && !grouped && GROUPED_NAV_PHRASES.test(body)) {
+    findings.push({ kind: "mode", stated: "grouped", expected: "locked" });
   }
 
   return findings;
@@ -117,12 +160,18 @@ export function auditInstructionTiming(text, facts) {
 /** One sentence a creator can act on, or null when the text and the paper agree. */
 export function describeTimingDrift(findings) {
   if (!Array.isArray(findings) || findings.length === 0) return null;
+  const MODE_SENTENCES = {
+    "free>locked": "it describes one shared clock, but sections are sat one at a time",
+    "locked>free": "it describes one section at a time, but the paper shares one clock",
+    "free>grouped": "it describes one shared clock for the paper, but this paper is sat in timed parts",
+    "locked>grouped": "it describes per-section clocks, but this paper is sat in timed parts",
+    "grouped>locked": "it describes shared timed parts, but each section has its own clock",
+  };
   const parts = findings.map((f) =>
     f.kind === "duration"
       ? `it says ${f.stated} min, but students get ${f.expected} min`
-      : f.stated === "free"
-        ? "it describes one shared clock, but sections are sat one at a time"
-        : "it describes one section at a time, but the paper shares one clock"
+      : MODE_SENTENCES[`${f.stated}>${f.expected}`] ??
+        MODE_SENTENCES[f.stated === "free" ? "free>locked" : "locked>free"]
   );
   return `This text disagrees with the paper: ${parts.join("; ")}.`;
 }

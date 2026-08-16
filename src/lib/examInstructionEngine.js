@@ -44,6 +44,15 @@
  * @property {string} name
  * @property {number|null} minutes        Positive minutes, or null when unset.
  * @property {number|null} questionCount  Candidate-visible questions (is_excluded=false), or null when unknown.
+ * @property {string|null} [groupId]      Timing group this section belongs to (see ExamFacts.groups).
+ */
+
+/**
+ * @typedef {Object} GroupFact
+ * @property {string} name          Display name in THIS facts object's language
+ *   (callers resolve via timingGroups.groupDisplayName, so the instruction
+ *   names the same label the player screens show).
+ * @property {number|null} minutes  Explicit pool, or null = sum of member clocks.
  */
 
 /**
@@ -63,6 +72,11 @@
  *   creator has not chosen yet (the create dialog) — a mode the DB will default, but
  *   defaults are settings, not promises: every mode-dependent sentence is dropped.
  * @property {number|null} totalMinutes       Whole-paper clock for free mode; null = unknown.
+ * @property {Record<string, GroupFact>|null} [groups]  Timing groups by id — the
+ *   shared-pool feature ("Session I: two subjects, one clock"). null/absent =
+ *   unknown or none: the engine says nothing new and every existing output is
+ *   byte-identical. Only meaningful in locked mode; free mode's one paper-wide
+ *   clock makes a grouping inside it meaningless, so the free branch ignores it.
  * @property {MarkingFact|null} marking       null = no exam-level marking scheme.
  * @property {boolean} [scoredWithoutDefault] Override rows exist but no exam default does.
  * @property {Record<string, number>|null} answerTypes  Counts by answer_type; null = unknown.
@@ -109,10 +123,26 @@ const COPY = {
     lockedKnown: (parts, total) => `Each section is timed separately: ${parts} (${total} minutes in all).`,
     sectionClock: (name, m) => `${name} — ${m} min`,
 
+    // Grouped timing ("Session I: two subjects, one 45-minute pool"). The word
+    // for the unit is "part", used identically by the runner's dialogs and the
+    // intro's format card — one thing, one name. None of these sentences may
+    // contain a FREE-mode phrase (instructionTimingAudit's regexes: "share one
+    // clock", "in any order", "move between them") — a grouped paper is a
+    // locked paper, and tripping the free detector would flag fresh text.
+    groupPart: (name, members, m) => `${name} (${members}) — ${m} min shared`,
+    groupedKnown: (parts, total) => `The paper is sat in timed parts: ${parts} (${total} minutes in all).`,
+    groupedUnknown: "The paper is sat in timed parts — some sections are timed together, others on their own.",
+    groupedMove:
+      "Within a shared part you may move freely between its sections and change any answer until that part is submitted.",
+    groupedOrder:
+      "Parts are sat in order, a submitted part cannot be reopened, and unused time does not carry over between parts.",
+
     expiryPaper:
       "The paper is submitted automatically when time runs out; a warning appears when 5 minutes remain.",
     expirySection:
       "When a section's time is up it is submitted automatically and you move on to the next one; a warning appears when 5 minutes remain in a section.",
+    expiryPart:
+      "When a part's time is up it is submitted automatically and you move on to the next one; a warning appears when 5 minutes remain in a part.",
 
     markingLead: "Marking: ",
     correctClause: (m) => `each correct answer earns +${m}`,
@@ -178,10 +208,24 @@ const COPY = {
     lockedKnown: (parts, total) => `प्रत्येक खंड का समय अलग-अलग है: ${parts} (कुल ${total} मिनट)।`,
     sectionClock: (name, m) => `${name} — ${m} मिनट`,
 
+    // भाग, one word for the unit here, in the runner's dialogs and on the
+    // intro's format card alike — the टाइमर one-thing-one-name rule. Free-mode
+    // phrases (एक ही टाइमर, किसी भी क्रम) are deliberately absent: a grouped
+    // paper is a locked paper.
+    groupPart: (name, members, m) => `${name} (${members}) — ${m} मिनट साझा`,
+    groupedKnown: (parts, total) => `यह प्रश्नपत्र समयबद्ध भागों में बँटा है: ${parts} (कुल ${total} मिनट)।`,
+    groupedUnknown: "यह प्रश्नपत्र समयबद्ध भागों में बँटा है — कुछ खंड एक साथ समयबद्ध हैं, कुछ अपने-अपने समय पर।",
+    groupedMove:
+      "साझा भाग के भीतर आप उसके खंडों के बीच स्वतंत्र रूप से आ-जा सकते हैं और उस भाग के सबमिट होने तक कोई भी उत्तर बदल सकते हैं।",
+    groupedOrder:
+      "भाग क्रम से हल करने होंगे, सबमिट किया गया भाग दोबारा नहीं खोला जा सकता, और बचा हुआ समय अगले भाग में नहीं जुड़ता।",
+
     expiryPaper:
       "समय समाप्त होते ही प्रश्नपत्र अपने आप सबमिट हो जाएगा; 5 मिनट शेष रहने पर चेतावनी दिखाई देगी।",
     expirySection:
       "किसी खंड का समय समाप्त होते ही वह अपने आप सबमिट हो जाएगा और आप अगले खंड पर जाएँगे; खंड में 5 मिनट शेष रहने पर चेतावनी दिखाई देगी।",
+    expiryPart:
+      "किसी भाग का समय समाप्त होते ही वह अपने आप सबमिट हो जाएगा और आप अगले भाग पर जाएँगे; भाग में 5 मिनट शेष रहने पर चेतावनी दिखाई देगी।",
 
     markingLead: "अंकन: ",
     correctClause: (m) => `प्रत्येक सही उत्तर पर +${m}`,
@@ -281,6 +325,72 @@ function shapeLine(sections, t) {
 }
 
 /**
+ * The locked paper's timing-unit structure, or null when grouping is not in
+ * play. Same walk the runner does (timingGroups.timingUnits): consecutive
+ * sections sharing a known group coalesce into one run; a run of ONE behaves
+ * solo; an unknown group id reads as ungrouped. Null when facts.groups is
+ * absent (old callers, un-migrated DBs) or when no real group survives —
+ * which is what keeps every pre-grouping output byte-identical.
+ * @param {ExamFacts} facts
+ * @returns {Array<{kind: "solo"|"group", group: GroupFact|null, sections: SectionFact[]}>|null}
+ */
+function groupedRuns(facts) {
+  const groups = facts.groups;
+  if (!groups || typeof groups !== "object" || Array.isArray(groups)) return null;
+  const sections = facts.sections;
+  const runs = [];
+  let hasGroup = false;
+  for (let i = 0; i < sections.length; ) {
+    const raw = sections[i].groupId;
+    const gid =
+      typeof raw === "string" && raw && Object.prototype.hasOwnProperty.call(groups, raw)
+        ? raw
+        : null;
+    if (!gid) {
+      runs.push({ kind: "solo", group: null, sections: [sections[i]] });
+      i += 1;
+      continue;
+    }
+    const members = [];
+    let j = i;
+    while (j < sections.length && sections[j].groupId === gid) {
+      members.push(sections[j]);
+      j += 1;
+    }
+    if (members.length === 1) {
+      runs.push({ kind: "solo", group: null, sections: members });
+    } else {
+      hasGroup = true;
+      runs.push({ kind: "group", group: groups[gid], sections: members });
+    }
+    i = j;
+  }
+  return hasGroup ? runs : null;
+}
+
+/**
+ * One run's clock: a solo run is its section's clock; a group run is the
+ * explicit pool, else the member sum — and the sum only counts when EVERY
+ * member's clock is known, by the same rule clocksKnown follows below.
+ * @param {{kind: "solo"|"group", group: GroupFact|null, sections: SectionFact[]}} run
+ * @returns {number|null}
+ */
+function runMinutes(run) {
+  if (run.kind === "solo") {
+    const m = run.sections[0].minutes;
+    return typeof m === "number" && Number.isFinite(m) && m > 0 ? m : null;
+  }
+  const explicit = Number(run.group?.minutes);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
+  let total = 0;
+  for (const s of run.sections) {
+    if (!(typeof s.minutes === "number" && Number.isFinite(s.minutes) && s.minutes > 0)) return null;
+    total += s.minutes;
+  }
+  return total;
+}
+
+/**
  * The timing line. Locked mode sums its own clocks; free mode is handed the
  * effective whole-paper clock (exams.total_time_minutes, or the section sum
  * the runner falls back to).
@@ -322,6 +432,32 @@ function timingLine(facts, t) {
   if (sections.length === 1) {
     return clocksKnown ? t.paperClock(sections[0].minutes) : null;
   }
+
+  // Grouped: some sections share a pool. The whole line is rebuilt per unit —
+  // the per-section list would state clocks the runner does not enforce.
+  const runs = groupedRuns(facts);
+  if (runs) {
+    const minutes = runs.map(runMinutes);
+    // Same rule as clocksKnown: listing three parts' times and omitting the
+    // fourth reads as "the fourth is untimed", which is a claim.
+    if (minutes.some((m) => m === null)) {
+      return `${t.groupedUnknown} ${t.groupedMove} ${t.groupedOrder}`;
+    }
+    const total = minutes.reduce((sum, m) => sum + m, 0);
+    const parts = runs
+      .map((run, i) =>
+        run.kind === "group"
+          ? t.groupPart(
+              run.group.name,
+              joinNames(run.sections.map((s) => s.name), t.and),
+              minutes[i]
+            )
+          : t.sectionClock(run.sections[0].name, minutes[i])
+      )
+      .join("; ");
+    return `${t.groupedKnown(parts, total)} ${t.groupedMove} ${t.groupedOrder}`;
+  }
+
   if (!clocksKnown) {
     return `${t.lockedUnknown} ${t.lockedOrder}`;
   }
@@ -342,7 +478,9 @@ function expiryLine(facts, t) {
   // Multi-section wording is mode-dependent (whole paper vs section-by-
   // section), so an unchosen mode gets no expiry sentence either.
   if (facts.allowSectionSwitching === null) return null;
-  return facts.allowSectionSwitching ? t.expiryPaper : t.expirySection;
+  if (facts.allowSectionSwitching) return t.expiryPaper;
+  // A grouped paper expires part by part, not section by section.
+  return groupedRuns(facts) ? t.expiryPart : t.expirySection;
 }
 
 /**
@@ -473,11 +611,29 @@ function timingShapes(t) {
     shapeMatcher(() => t.freeMove, 0),
     shapeMatcher((parts, total) => `${t.lockedKnown(parts, total)} ${t.lockedOrder}`, 2),
     shapeMatcher(() => `${t.lockedUnknown} ${t.lockedOrder}`, 0),
+    // Grouped shapes. Registered here so a stored grouped sentence heals when
+    // the paper changes AND a stored locked/free sentence heals when the paper
+    // becomes grouped — miss these and the reconciler would "correct" a true
+    // grouped line into a stale per-section one.
+    shapeMatcher((parts, total) => `${t.groupedKnown(parts, total)} ${t.groupedMove} ${t.groupedOrder}`, 2),
+    shapeMatcher(() => `${t.groupedUnknown} ${t.groupedMove} ${t.groupedOrder}`, 0),
   ];
 }
 
 /**
- * Bring a stored instruction's timing sentence back in line with the paper.
+ * The expiry sentences a copy pack can emit — mode-dependent, like the timing
+ * line, and healed by the same rule: fixed literals, so authorship is provable.
+ */
+function expiryShapes(t) {
+  return [
+    shapeMatcher(() => t.expiryPaper, 0),
+    shapeMatcher(() => t.expirySection, 0),
+    shapeMatcher(() => t.expiryPart, 0),
+  ];
+}
+
+/**
+ * Bring a stored instruction's timing sentences back in line with the paper.
  *
  * Why this exists
  * ---------------
@@ -488,15 +644,22 @@ function timingShapes(t) {
  * states the real one. Warning the creator helps the next paper; it does not
  * help the candidate reading this one today.
  *
+ * The EXPIRY sentence is healed by the same rule and for the same reason: it
+ * is exactly as mode-dependent as the clock sentence ("the paper is submitted"
+ * vs "a section's time is up" vs "a part's time is up"), and healing one while
+ * the other still describes the old mode would leave the corrected text
+ * contradicting itself one line later.
+ *
  * Why it is safe to rewrite someone's prose
  * -----------------------------------------
  * It only ever rewrites a line it can prove this engine wrote: the line has to
- * match one of the shapes timingLine emits, in the same language, with only the
- * numbers and section names wild. A creator's own sentence about timing matches
- * nothing here and is left exactly as typed — they are then told about it in the
- * editor instead, which is the only place it can actually be fixed.
+ * match one of the shapes timingLine or expiryLine emits, in the same language,
+ * with only the numbers and section names wild. A creator's own sentence about
+ * timing matches nothing here and is left exactly as typed — they are then told
+ * about it in the editor instead, which is the only place it can actually be
+ * fixed.
  *
- * The line is replaced, never deleted, and keeps its "2. " numbering, so the
+ * Each line is replaced, never deleted, and keeps its "2. " numbering, so the
  * list a candidate reads is the same length and shape it always was.
  *
  * @param {string} text   The stored instruction copy.
@@ -511,12 +674,14 @@ export function reconcileTimingLine(text, facts, lang = "en") {
   if (!facts || !Array.isArray(facts.sections) || facts.sections.length === 0) return unchanged;
 
   const t = COPY[lang];
-  const current = timingLine(facts, t);
-  // Nothing to say about this paper's timing — leave what is there rather than
-  // silently deleting a sentence we cannot replace.
-  if (current === null) return unchanged;
+  // Nothing to say — leave what is there rather than silently deleting a
+  // sentence we cannot replace. Each sentence kind heals independently.
+  const replacements = [
+    { current: timingLine(facts, t), shapes: timingShapes(t) },
+    { current: expiryLine(facts, t), shapes: expiryShapes(t) },
+  ].filter((r) => r.current !== null);
+  if (replacements.length === 0) return unchanged;
 
-  const shapes = timingShapes(t);
   let changed = false;
 
   const out = text.split("\n").map((line) => {
@@ -524,10 +689,15 @@ export function reconcileTimingLine(text, facts, lang = "en") {
     const parts = line.match(/^(\s*\d+[.)]\s*)?([\s\S]*)$/);
     const prefix = parts[1] || "";
     const body = parts[2].trim();
-    if (!body || body === current) return line;
-    if (!shapes.some((shape) => shape.test(body))) return line;
-    changed = true;
-    return `${prefix}${current}`;
+    if (!body) return line;
+    for (const { current, shapes } of replacements) {
+      if (body === current) return line;
+      if (shapes.some((shape) => shape.test(body))) {
+        changed = true;
+        return `${prefix}${current}`;
+      }
+    }
+    return line;
   });
 
   return changed ? { text: out.join("\n"), changed: true } : unchanged;

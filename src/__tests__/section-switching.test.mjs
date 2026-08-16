@@ -469,9 +469,11 @@ test("the simulator selects * from exams, never a column list", () => {
   );
 });
 
-test("tabs only render for a multi-section paper in free mode", () => {
+test("tabs only render for a multi-section scope (free paper or timing part)", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
-  assertContains(src, "const showSectionTabs = isFreeNav && allSections.length > 1");
+  // scopeSections, not allSections: a timing part must not show tabs for
+  // sections outside the part — they are other parts' clocks.
+  assertContains(src, "const showSectionTabs = multiNav && scopeSections.length > 1");
   assertContains(src, "<SectionTabs");
 });
 
@@ -490,18 +492,26 @@ test("switching sections does NOT navigate — that would restart the clock", ()
   assertContains(switchFn, "updateQuestionTime()", "time on the question being left must be banked first");
 });
 
-test("free mode times the paper, locked mode times the section", () => {
+test("free mode times the paper, a part times its pool, locked mode times the section", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
-  assertContains(src, "const clockMinutes = isFreeNav ? totalPaperMinutes : (section?.time_minutes || 0)");
+  const seed = src.slice(
+    src.indexOf("const clockMinutes = isFreeNav"),
+    src.indexOf("examEndTimeRef.current =")
+  );
+  assert(seed.length > 0, "the clockMinutes seed moved — re-anchor this test");
+  assertContains(seed, "? totalPaperMinutes", "free mode: the whole-paper clock");
+  assertContains(seed, "groupNav && unitInfo", "group mode: gated on a real part");
+  assertContains(seed, "? unitInfo.minutes", "group mode: the part's pool");
+  assertContains(seed, ": (section?.time_minutes || 0)", "locked mode: the section's own clock");
 });
 
-test("free mode opens one attempt per section, with staggered created_at", () => {
+test("any multi-section start opens one attempt per section, with staggered created_at", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
   assertContains(src, "staggeredTimestamps(Date.now(), sectionsToOpen.length)");
   assertContains(
     src,
-    "...(isFreeNav ? { created_at: stamps[i] } : {})",
-    "locked mode must keep its original insert shape — only free mode needs the stagger"
+    "...(multiNav ? { created_at: stamps[i] } : {})",
+    "locked solo must keep its original insert shape — free mode AND timing parts need the stagger, or ExamReview splits the sitting"
   );
 });
 
@@ -512,9 +522,9 @@ test("attempts are never opened for a section with no questions", () => {
   );
 });
 
-test("every question in the paper gets a state row before the clock starts", () => {
+test("every question in the scope gets a state row before the clock starts", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
-  assertContains(src, "const questionsToInit = isFreeNav");
+  assertContains(src, "const questionsToInit = multiNav");
   assertContains(src, "Object.values(questionsBySection).flat()");
 });
 
@@ -540,10 +550,57 @@ test("the completion dialog does not offer a next section in free mode", () => {
   assertContains(freeBranch, "View Results");
 });
 
-test("Submit stays reachable from anywhere in a free-navigation paper", () => {
+test("Submit stays reachable from anywhere in a multi-section scope", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
-  assertContains(src, "Submit Exam");
-  assertContains(src, "const atEndOfPaper = isFreeNav");
+  assertContains(src, 'const submitLabel = isFreeNav ? "Submit Exam" : "Submit Section"');
+  assertContains(src, "const atEndOfPaper = multiNav");
+});
+
+test("Submit sits at the foot of the palette, directly above All Questions", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  const foot = src.slice(
+    src.indexOf("{/* Pinned foot of the palette"),
+    src.indexOf("{/* Every question in the section")
+  );
+  assert(foot.length > 0, "the palette foot moved — re-anchor this test");
+  const submit = foot.indexOf("setShowSubmitDialog");
+  const allQuestions = foot.indexOf("setIsAllQuestionsOpen");
+  assert(submit > -1, "Submit belongs in the palette foot");
+  assert(allQuestions > -1, "All Questions belongs in the palette foot");
+  assert(submit < allQuestions, "Submit rides above All Questions, not below it");
+});
+
+test("the standing Submit is not gated on the section strip", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  // A locked single section renders no strip and no tabs. Gating Submit on
+  // either would leave those students with no way out but the last question.
+  const foot = src.slice(
+    src.indexOf("{/* Pinned foot of the palette"),
+    src.indexOf("{/* Every question in the section")
+  );
+  assert(!foot.includes("showSectionTabs"), "every section and every part gets the same Submit");
+  const strip = src.slice(
+    src.indexOf("{/* Section tab strip"),
+    src.indexOf("{/* Main Question Area")
+  );
+  assert(
+    !strip.includes("setShowSubmitDialog"),
+    "the strip is for changing section — ending the attempt lives in the palette now"
+  );
+});
+
+test("the mobile palette sheet carries the same Submit", () => {
+  const src = readSrc("pages/ExamSimulator.tsx");
+  const sheet = src.slice(src.indexOf('<SheetContent side="right"'), src.indexOf("</SheetContent>"));
+  assertContains(sheet, "flex flex-col", "a pinned foot needs the sheet to be a column");
+  const sheetFoot = sheet.slice(sheet.indexOf("{/* The same pinned foot"));
+  assert(sheetFoot.length > 0, "the sheet's foot moved — re-anchor this test");
+  assertContains(sheetFoot, "setShowSubmitDialog", "below lg the sheet is the palette");
+  assertContains(sheetFoot, "{submitLabel}", "the phone must not invent its own wording");
+  assert(
+    sheetFoot.indexOf("setIsPaletteOpen(false)") < sheetFoot.indexOf("setShowSubmitDialog"),
+    "close the sheet before the confirm dialog opens, or they stack"
+  );
 });
 
 test("the submit confirmation names the sections still left unanswered", () => {
@@ -738,11 +795,11 @@ test("tabs carry each section's answered count", () => {
   assertContains(src, "{answered}/{total}");
 });
 
-test("a paper with more sections than fit swaps the strip for a picker", () => {
+test("a scope with more sections than fit swaps the strip for a picker", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
   assertContains(
     src,
-    "allSections.length > SECTION_TAB_LIMIT",
+    "scopeSections.length > SECTION_TAB_LIMIT",
     "past the limit the strip becomes a scrub bar — the picker has to take over"
   );
   assertContains(src, "useSectionPicker ? (");

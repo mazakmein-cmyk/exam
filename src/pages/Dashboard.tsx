@@ -13,6 +13,7 @@ import CreateLiveExamDialog from "@/components/CreateLiveExamDialog";
 import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCount, type LiveExam } from "@/services/liveExamService";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import { navigationCopyPatch } from "@/lib/examSettings";
+import { copyTimingGroups } from "@/lib/timingGroupSettings";
 import SEO from "@/components/SEO";
 import {
   DropdownMenu,
@@ -319,6 +320,12 @@ const Dashboard = () => {
           exam_category: exam.exam_category,
           user_id: user.id,
           is_published: false,
+          // The copied sections carry their language rows, so the exam row
+          // must carry the language settings too — without these the copy
+          // defaults to English-only and every non-English section (and the
+          // timing groups resolved through the primary language) goes dark.
+          supported_languages: (exam as any).supported_languages || ["en"],
+          primary_language: (exam as any).primary_language || "en",
         })
         .select()
         .single();
@@ -333,19 +340,34 @@ const Dashboard = () => {
 
       if (sectionsError) throw sectionsError;
 
-      // Duplicate all sections and their questions
+      // Duplicate all sections and their questions. Carry sort_order, language
+      // and a remapped section_group_id — dropping them (as this flow used to)
+      // silently flattened multi-language exams and lost the paper's order.
+      const sectionGroupIdMap = new Map<string, string>();
+      const sectionIdMap = new Map<string, string>();
       for (const section of sectionsData || []) {
+        let newGroupId: string | null = null;
+        if ((section as any).section_group_id) {
+          if (!sectionGroupIdMap.has((section as any).section_group_id)) {
+            sectionGroupIdMap.set((section as any).section_group_id, crypto.randomUUID());
+          }
+          newGroupId = sectionGroupIdMap.get((section as any).section_group_id)!;
+        }
         const { data: newSection, error: sectionError } = await supabase
           .from("sections")
           .insert({
             exam_id: newExam.id,
             name: section.name,
             time_minutes: section.time_minutes,
+            sort_order: (section as any).sort_order ?? 0,
+            language: (section as any).language || "en",
+            section_group_id: newGroupId,
           })
           .select()
           .single();
 
         if (sectionError) throw sectionError;
+        sectionIdMap.set(section.id, newSection.id);
 
         // Get questions for this section
         const { data: sectionQuestions, error: questionsError } = await supabase
@@ -382,6 +404,10 @@ const Dashboard = () => {
           if (insertError) throw insertError;
         }
       }
+
+      // Timing groups travel with the copy (pool, names, membership) — a
+      // silent no-op on a database without the migration.
+      await copyTimingGroups(exam.id, newExam.id, sectionIdMap, (sectionsData || []) as any);
 
       // Refresh the exams list
       fetchExams();

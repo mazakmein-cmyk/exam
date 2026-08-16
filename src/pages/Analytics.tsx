@@ -11,6 +11,8 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import SEO from "@/components/SEO";
 import { formatDuration } from "@/lib/utils";
+import { fetchTimingGroups } from "@/lib/timingGroupSettings";
+import { groupDisplayName, groupPoolMinutes, resolveTimingGroupIds } from "@/lib/timingGroups.js";
 
 interface Attempt {
   id: string;
@@ -92,6 +94,12 @@ export default function Analytics() {
   const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
   // Maps examId -> Set of firstSectionIds (used for session-based history grouping)
   const [firstSectionsByExamId, setFirstSectionsByExamId] = useState<Record<string, Set<string>>>({});
+  /**
+   * Timing-group pools by section id (creator view). A section in a group has
+   * no time limit of its own — displaying its time_minutes as the denominator
+   * would read a legitimate 40-of-45-pooled-minutes sitting as an overrun.
+   */
+  const [sharedPools, setSharedPools] = useState<Record<string, { minutes: number; name: string }>>({});
   // True once the rank pass has finished, however it finished. An empty
   // firstSectionsByExamId is a legitimate result (every attempted exam
   // unpublished, sections deleted, query failed), so it cannot double as
@@ -180,11 +188,14 @@ export default function Analytics() {
           { data: allSections, error: sectionsError },
           { data: sectionAttempts, error: attemptsError },
           { data: questionsData, error: questionsError },
+          timingGroupRows,
         ] = await Promise.all([
-          supabase.from("exams").select("name, user_id").eq("id", examId).single(),
+          supabase.from("exams").select("name, user_id, primary_language").eq("id", examId).single(),
           supabase
             .from("sections")
-            .select("id, sort_order, created_at, language")
+            // select * so the hand-migrated timing_group_id rides along when the
+            // live schema has it — naming it in a list would fail pre-migration.
+            .select("*")
             .eq("exam_id", examId)
             .order("sort_order", { ascending: true })
             .order("created_at", { ascending: true }),
@@ -219,6 +230,8 @@ export default function Analytics() {
             // denominator and silently deflates everyone's accuracy.
             .eq("is_excluded", false)
             .eq("section.exam_id", examId),
+          // Timing groups. [] on a database without the migration.
+          fetchTimingGroups(examId),
         ]);
 
         if (examError) throw examError;
@@ -227,6 +240,35 @@ export default function Analytics() {
         const examCreatorId = examData.user_id; // Store creator ID to filter out their attempts
 
         if (sectionsError) throw sectionsError;
+
+        // Shared-pool denominators for the Section Analytics table. Structure
+        // resolves through primary rows; pools sum over the SAME language's
+        // members, so a Hindi section shows the Hindi paper's pool.
+        {
+          const pools: Record<string, { minutes: number; name: string }> = {};
+          if (timingGroupRows.length > 0) {
+            const resolved = resolveTimingGroupIds(
+              allSections || [],
+              (examData as any).primary_language || "en"
+            );
+            for (const s of allSections || []) {
+              const gid = resolved.get(s.id);
+              if (!gid) continue;
+              const group = timingGroupRows.find((g) => g.id === gid);
+              if (!group) continue;
+              const lang = (s as any).language || "en";
+              const members = (allSections || []).filter(
+                (x) => ((x as any).language || "en") === lang && resolved.get(x.id) === gid
+              );
+              if (members.length < 2) continue;
+              pools[s.id] = {
+                minutes: groupPoolMinutes(group, members as any),
+                name: groupDisplayName(group, lang),
+              };
+            }
+          }
+          setSharedPools(pools);
+        }
 
         const localFirstIds = new Set<string>();
         const localLastIds = new Set<string>();
@@ -1035,6 +1077,7 @@ export default function Analytics() {
     if (!acc[sectionName]) {
       acc[sectionName] = {
         name: sectionName,
+        sectionId: attempt.section_id,
         totalAttempts: 0,
         avgAccuracy: 0,
         totalAccuracy: 0,
@@ -1554,7 +1597,13 @@ export default function Analytics() {
                         {formatDuration(Math.round(section.avgTime))}
                       </td>
                       <td className="px-2 py-3 text-center text-muted-foreground">
-                        {formatDuration(Math.round(section.totalTimeSpent / section.totalAttempts))} / {section.timeLimit}m
+                        {formatDuration(Math.round(section.totalTimeSpent / section.totalAttempts))} /{" "}
+                        {sharedPools[section.sectionId]
+                          // The pool is the only limit the runner enforces over a
+                          // grouped section — its own minutes would read a fair
+                          // 40-of-45-pooled sitting as an overrun.
+                          ? `${sharedPools[section.sectionId].minutes}m shared`
+                          : `${section.timeLimit}m`}
                       </td>
                     </tr>
                   ))}

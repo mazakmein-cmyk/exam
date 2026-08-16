@@ -15,6 +15,8 @@ import { MarksAwardedBadge } from "@/components/marks/MarksAwardedBadge";
 import { formatMarks } from "@/services/scoringEngine";
 import { formatDuration } from "@/lib/utils";
 import OnboardingModal from "@/components/OnboardingModal";
+import { fetchTimingGroups, type TimingGroupRow } from "@/lib/timingGroupSettings";
+import { groupDisplayName, groupPoolMinutes, resolveTimingGroupIds } from "@/lib/timingGroups.js";
 
 interface Response {
   id: string;
@@ -54,6 +56,9 @@ export default function ExamReview() {
   const [loading, setLoading] = useState(true);
   const [sectionId, setSectionId] = useState<string>("");
   const [sections, setSections] = useState<any[]>([]);
+  /** Timing groups (shared pools). [] on an un-migrated database. */
+  const [timingGroups, setTimingGroups] = useState<TimingGroupRow[]>([]);
+  const [primaryLanguage, setPrimaryLanguage] = useState<string>("en");
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [answerKeyInSamePdf, setAnswerKeyInSamePdf] = useState(false);
   const [uploadingAnswerKey, setUploadingAnswerKey] = useState(false);
@@ -98,14 +103,16 @@ export default function ExamReview() {
       const userId = currentAttempt.user_id;
       setSectionId(currentAttempt.sections.id); // Default to current section for uploads
 
-      // 2. Parallelize the three independent follow-up fetches.
-      // examData, current user, and sections all key off examId — no dependency between them.
+      // 2. Parallelize the independent follow-up fetches.
+      // examData, current user, sections and timing groups all key off examId —
+      // no dependency between them. Groups resolve to [] on an un-migrated DB.
       const [
         { data: examData, error: examError },
         { data: { user } },
         { data: sections, error: sectionsError },
+        timingGroupRows,
       ] = await Promise.all([
-        supabase.from("exams").select("name, user_id").eq("id", examId).single(),
+        supabase.from("exams").select("name, user_id, primary_language").eq("id", examId).single(),
         supabase.auth.getUser(),
         supabase
           .from("sections")
@@ -113,7 +120,10 @@ export default function ExamReview() {
           .eq("exam_id", examId)
           .order("sort_order", { ascending: true })
           .order("created_at"),
+        fetchTimingGroups(examId),
       ]);
+      setTimingGroups(timingGroupRows);
+      setPrimaryLanguage((examData as any)?.primary_language || "en");
 
       if (!examError && examData) {
         setExamName(examData.name);
@@ -1047,6 +1057,27 @@ export default function ExamReview() {
             const sectionResponses = groupedResponses[section.id] || [];
             if (sectionResponses.length === 0) return null;
 
+            // A section inside a timing group has no clock of its own — the
+            // pool is the only limit the runner enforced, so "spent / limit"
+            // must name the pool or a fair sitting reads as an overrun.
+            const sharedPool = (() => {
+              if (timingGroups.length === 0) return null;
+              const resolved = resolveTimingGroupIds(sections, primaryLanguage);
+              const gid = resolved.get(section.id);
+              if (!gid) return null;
+              const group = timingGroups.find((g) => g.id === gid);
+              if (!group) return null;
+              const lang = section.language || "en";
+              const members = sections.filter(
+                (x) => (x.language || "en") === lang && resolved.get(x.id) === gid
+              );
+              if (members.length < 2) return null;
+              return {
+                minutes: groupPoolMinutes(group, members),
+                name: groupDisplayName(group, lang),
+              };
+            })();
+
             const isSectionExpanded = expandedSections[section.id] !== false; // Default expanded
             const correctCount = sectionResponses.filter(r => r.is_correct === true).length;
             const partialCount = sectionResponses.filter(r => r.is_correct === false && r.is_partial).length;
@@ -1075,7 +1106,11 @@ export default function ExamReview() {
                         {formatDuration(sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0))}
                       </span>
                       <span className="mx-1 text-muted-foreground/50">/</span>
-                      <span>{section.time_minutes}m</span>
+                      <span>
+                        {sharedPool
+                          ? `${sharedPool.minutes}m shared (${sharedPool.name})`
+                          : `${section.time_minutes}m`}
+                      </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

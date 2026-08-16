@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass, Ungroup } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
@@ -84,6 +84,24 @@ import { navigationCopyPatch, readNavigationSettings, saveNavigationSettings } f
 import { sumSectionMinutes } from "@/lib/examNavigation.js";
 import { auditInstructionTiming, describeTimingDrift } from "@/lib/instructionTimingAudit.js";
 import { reconcileTimingLine } from "@/lib/examInstructionEngine.js";
+import {
+  copyTimingGroups,
+  createTimingGroup,
+  deleteTimingGroup,
+  fetchTimingGroups,
+  setTimingGroupMembership,
+  TIMING_GROUPS_MIGRATION,
+  updateTimingGroup,
+  type TimingGroupRow,
+} from "@/lib/timingGroupSettings";
+import {
+  groupDisplayName,
+  hasGroupUnits,
+  membershipChangeAfterReorder,
+  resolveTimingGroupIds,
+  timingUnits,
+} from "@/lib/timingGroups.js";
+import GroupPoolField from "@/components/exam/GroupPoolField";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
@@ -120,6 +138,8 @@ type Section = {
   sort_order?: number;
   language?: string;
   section_group_id?: string | null;
+  /** Timing group (shared pool). Set on PRIMARY-language rows only; absent = the migration has not been applied. */
+  timing_group_id?: string | null;
 };
 
 type Question = {
@@ -166,6 +186,17 @@ export default function ExamDetail() {
   const [allowSectionSwitching, setAllowSectionSwitching] = useState(false);
   const [totalTimeMinutes, setTotalTimeMinutes] = useState<number | null>(null);
   const [savingNavMode, setSavingNavMode] = useState(false);
+
+  // ── Timing groups (shared pools — "Session I: two subjects, one clock") ──
+  // Structure (membership, pool) is edited on the PRIMARY language tab only
+  // and stored on primary section rows; secondary tabs see a read-only mirror
+  // and may translate the group's NAME. [] on an un-migrated database.
+  const [timingGroups, setTimingGroups] = useState<TimingGroupRow[]>([]);
+  const [groupSelectMode, setGroupSelectMode] = useState(false);
+  const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
+  const [savingGroups, setSavingGroups] = useState(false);
+  /** Local name drafts while a group header is being typed in (id → text). */
+  const [groupNameDrafts, setGroupNameDrafts] = useState<Record<string, string>>({});
 
   // Form State
   const [examTitle, setExamTitle] = useState("");
@@ -288,6 +319,41 @@ export default function ExamDetail() {
     return m;
   }, [questions, marksModule.resolveQuestionConfig]);
 
+  // ── Timing groups: the editor's derived view ─────────────────────────────
+  // Membership resolves through primary rows (secondary tabs mirror it), and
+  // the list renders as RUNS: consecutive members of one group share a
+  // container; everything else is a solo row. A group down to one member
+  // renders solo — a pool of one is no pool.
+  const resolvedGroupIds = useMemo(
+    () => resolveTimingGroupIds(allSections, primaryLanguage),
+    [allSections, primaryLanguage]
+  );
+  const sectionRuns = useMemo(() => {
+    const runs: { group: TimingGroupRow | null; sections: Section[] }[] = [];
+    for (const s of sections) {
+      const gid = resolvedGroupIds.get(s.id);
+      const group = (!allowSectionSwitching && gid && timingGroups.find((g) => g.id === gid)) || null;
+      const last = runs[runs.length - 1];
+      if (group && last && last.group?.id === group.id) last.sections.push(s);
+      else runs.push({ group, sections: [s] });
+    }
+    return runs.map((r) => (r.group && r.sections.length < 2 ? { ...r, group: null } : r));
+  }, [sections, resolvedGroupIds, timingGroups, allowSectionSwitching]);
+  const groupedPaper = useMemo(() => sectionRuns.some((r) => r.group !== null), [sectionRuns]);
+  /** The engine's group facts for the active language — shared by drift audit and generation. */
+  const instructionGroupFacts = useMemo(
+    () =>
+      timingGroups.length > 0
+        ? Object.fromEntries(
+            timingGroups.map((g) => [
+              g.id,
+              { name: groupDisplayName(g, activeLanguage), minutes: g.time_minutes ?? null },
+            ])
+          )
+        : null,
+    [timingGroups, activeLanguage]
+  );
+
   /**
    * Does the written Exam Instruction still describe this paper's clock?
    *
@@ -299,11 +365,19 @@ export default function ExamDetail() {
    */
   const timingDrift = useMemo(() => {
     const text = examSpecificInstructionTrans[activeLanguage] || "";
+    // Grouped papers audit against UNIT clocks (pools once per group, solo
+    // clocks as-is) — a grouped member's own minutes is a number no candidate
+    // ever sees, so prose claiming it must be flagged, not allowed.
+    const units =
+      !allowSectionSwitching && timingGroups.length > 0
+        ? timingUnits(sections, timingGroups, resolvedGroupIds)
+        : [];
     const drift = describeTimingDrift(
       auditInstructionTiming(text, {
         allowSectionSwitching,
         totalMinutes: totalTimeMinutes,
         sectionMinutes: sections.map((s) => s.time_minutes),
+        unitMinutes: hasGroupUnits(units) ? units.map((u) => u.minutes) : null,
       })
     );
     if (!drift) return null;
@@ -313,9 +387,15 @@ export default function ExamDetail() {
     const { changed: autoCorrected } = reconcileTimingLine(
       text,
       {
-        sections: sections.map((s) => ({ name: s.name, minutes: s.time_minutes, questionCount: null })),
+        sections: sections.map((s) => ({
+          name: s.name,
+          minutes: s.time_minutes,
+          questionCount: null,
+          groupId: resolvedGroupIds.get(s.id) ?? null,
+        })),
         allowSectionSwitching,
         totalMinutes: totalTimeMinutes,
+        groups: instructionGroupFacts,
         marking: null,
         answerTypes: null,
         languageNames: null,
@@ -323,7 +403,7 @@ export default function ExamDetail() {
       activeLanguage
     );
     return { drift, autoCorrected };
-  }, [examSpecificInstructionTrans, activeLanguage, allowSectionSwitching, totalTimeMinutes, sections]);
+  }, [examSpecificInstructionTrans, activeLanguage, allowSectionSwitching, totalTimeMinutes, sections, timingGroups, resolvedGroupIds, instructionGroupFacts]);
 
   // ── "Generate from exam" on the Exam Instruction field ──────────────────
   // The facts the engine wants are NOT all in this page's state: `questions`
@@ -411,11 +491,15 @@ export default function ExamDetail() {
         name: s.name,
         minutes: Number.isFinite(s.time_minutes) && s.time_minutes > 0 ? s.time_minutes : null,
         questionCount: countBySection.get(s.id) ?? 0,
+        groupId: resolvedGroupIds.get(s.id) ?? null,
       })),
       allowSectionSwitching,
       // The runner's rule (totalExamMinutes): the explicit total wins, else the
       // section sum — and a sum of 0 is "unknown", not a zero-minute paper.
       totalMinutes: totalTimeMinutes ?? (sumSectionMinutes(sections) || null),
+      // Timing groups, named in the active language — so the generated Hindi
+      // instruction says सत्र I where the Hindi player screens say सत्र I.
+      groups: instructionGroupFacts,
       marking:
         examDefault === null
           ? null
@@ -547,10 +631,12 @@ export default function ExamDetail() {
     const lang = langOverride || activeLanguage;
     try {
       setLoading(true);
-      // Parallelize exam + sections — both keyed by examId, independent.
+      // Parallelize exam + sections + timing groups — all keyed by examId,
+      // independent. Groups resolve to [] on an un-migrated database.
       const [
         { data: examData, error: examError },
         { data: allSectionsData, error: sectionsError },
+        groupRows,
       ] = await Promise.all([
         supabase.from("exams").select("*").eq("id", examId).single(),
         supabase
@@ -559,7 +645,9 @@ export default function ExamDetail() {
           .eq("exam_id", examId)
           .order("sort_order", { ascending: true })
           .order("created_at", { ascending: true }),
+        fetchTimingGroups(examId!),
       ]);
+      setTimingGroups(groupRows);
 
       if (examError) throw examError;
       setExam(examData as unknown as Exam);
@@ -669,16 +757,20 @@ export default function ExamDetail() {
    */
   const refreshSectionsFromDb = async () => {
     if (!examId) return;
-    const { data, error } = await supabase
-      .from("sections")
-      .select("*")
-      .eq("exam_id", examId)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+    const [{ data, error }, groupRows] = await Promise.all([
+      supabase
+        .from("sections")
+        .select("*")
+        .eq("exam_id", examId)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true }),
+      fetchTimingGroups(examId),
+    ]);
     if (error) {
       console.error("refreshSectionsFromDb error:", error);
       return;
     }
+    setTimingGroups(groupRows);
     const allSecs = (data || []) as Section[];
     setAllSections(allSecs);
 
@@ -899,6 +991,10 @@ export default function ExamDetail() {
         if (sectionError) throw sectionError;
         sectionIdMap.set(sec.id, newSection.id);
       }
+
+      // Timing groups travel with the copy (pool, names, membership) — a
+      // silent no-op on a database without the migration.
+      await copyTimingGroups(exam.id, newExam.id, sectionIdMap, allSections);
 
       // Duplicate questions for all sections, maintaining question_group_id links
       const questionGroupIdMap = new Map<string, string>();
@@ -1261,6 +1357,10 @@ export default function ExamDetail() {
     const previous = { allow: allowSectionSwitching, total: totalTimeMinutes };
     setAllowSectionSwitching(next);
     if (seedTotal !== undefined) setTotalTimeMinutes(seedTotal);
+    // Group-select mode is a locked-mode affordance; whichever way the switch
+    // flips, an in-flight selection no longer means what it meant.
+    setGroupSelectMode(false);
+    setSelectedForGroup([]);
     setSavingNavMode(true);
 
     const result = await saveNavigationSettings(exam.id, {
@@ -1332,6 +1432,257 @@ export default function ExamDetail() {
     setExam((prev) => (prev ? { ...prev, total_time_minutes: minutes } : prev));
   };
 
+  // ── Timing group handlers ──────────────────────────────────────────────────
+  // Structure lives on PRIMARY-language rows only (one copy that cannot drift
+  // between languages); these handlers translate active-tab clicks into
+  // primary-row writes, all gated on the hand-pasted migration.
+
+  const timingGroupMigrationToast = () =>
+    toast({
+      title: "Timing groups need a migration",
+      description: `Apply migration ${TIMING_GROUPS_MIGRATION}, then reload this page.`,
+      variant: "destructive",
+    });
+
+  /**
+   * The primary-language row that carries a section's grouping. On the primary
+   * tab that is the section itself; on a secondary tab, its language twin.
+   */
+  const primaryTwinId = (sectionId: string): string | null => {
+    const s = allSections.find((x) => x.id === sectionId);
+    if (!s) return null;
+    if (!s.language || s.language === primaryLanguage) return s.id;
+    if (!s.section_group_id) return null;
+    return (
+      allSections.find(
+        (x) => x.section_group_id === s.section_group_id && x.language === primaryLanguage
+      )?.id ?? null
+    );
+  };
+
+  /** Mirror a membership write into local state (primary rows carry it). */
+  const applyLocalMembership = (primaryIds: string[], groupId: string | null) => {
+    const idSet = new Set(primaryIds);
+    const patch = (s: Section) => (idSet.has(s.id) ? { ...s, timing_group_id: groupId } : s);
+    setAllSections((prev) => prev.map(patch));
+    setSections((prev) => prev.map(patch));
+  };
+
+  /**
+   * Groups that no longer own two primary members are deleted — a pool of one
+   * is no pool. `primaryRows` is the caller's post-change picture of the rows,
+   * passed explicitly because state setters have not flushed yet.
+   */
+  const pruneThinGroups = async (
+    primaryRows: { id: string; language?: string; timing_group_id?: string | null }[]
+  ) => {
+    if (timingGroups.length === 0) return;
+    const counts = new Map<string, number>();
+    for (const s of primaryRows) {
+      if (s.language && s.language !== primaryLanguage) continue;
+      if (s.timing_group_id) counts.set(s.timing_group_id, (counts.get(s.timing_group_id) || 0) + 1);
+    }
+    const thin = timingGroups.filter((g) => (counts.get(g.id) || 0) < 2);
+    if (thin.length === 0) return;
+    for (const g of thin) await deleteTimingGroup(g.id);
+    const thinIds = new Set(thin.map((g) => g.id));
+    setTimingGroups((prev) => prev.filter((g) => !thinIds.has(g.id)));
+    const clear = (s: Section) =>
+      s.timing_group_id && thinIds.has(s.timing_group_id) ? { ...s, timing_group_id: null } : s;
+    setAllSections((prev) => prev.map(clear));
+    setSections((prev) => prev.map(clear));
+  };
+
+  const handleCreateGroup = async () => {
+    if (!exam || savingGroups) return;
+    // Only ids still in THIS tab's list count: a selection can go stale across
+    // a language-tab or mode switch, and grouping rows the creator cannot see
+    // would defeat both the anchor math and the contiguity invariant.
+    const validSelected = selectedForGroup.filter((id) => sections.some((s) => s.id === id));
+    if (validSelected.length < 2) return;
+    const primaryIds = validSelected
+      .map((id) => primaryTwinId(id))
+      .filter((id): id is string => Boolean(id));
+    if (primaryIds.length < 2) {
+      toast({
+        title: "Couldn't group these sections",
+        description: "Their primary-language rows could not be found.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSavingGroups(true);
+    try {
+      // Contiguity first: members move together, anchored at the first
+      // selected row. The new order must actually REACH the database before
+      // any membership is written — a group whose members are adjacent only
+      // in this tab's memory would split into solo runs on the next reload.
+      const selectedSet = new Set(validSelected);
+      const anchor = sections.findIndex((s) => selectedSet.has(s.id));
+      const members = sections.filter((s) => selectedSet.has(s.id));
+      const rest = sections.filter((s) => !selectedSet.has(s.id));
+      const reordered = [...rest.slice(0, anchor), ...members, ...rest.slice(anchor)].map(
+        (item, index) => ({ ...item, sort_order: index })
+      );
+      if (reordered.some((s, i) => s.id !== sections[i]?.id)) {
+        const orderSaved = await commitSectionOrder(reordered);
+        if (!orderSaved) {
+          toast({
+            title: "Couldn't create the group",
+            description: "The new section order didn't save — try again in a moment.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      const result = await createTimingGroup(
+        exam.id,
+        `Group ${timingGroups.length + 1}`,
+        primaryIds,
+        // Materialize the pool as the members' current sum: their own minute
+        // boxes give way to the group's clock, so the pool must start as a
+        // visible, editable number — not an invisible fallback.
+        sumSectionMinutes(members)
+      );
+      if (!result.ok || !result.group) {
+        if (result.reason === "missing-migration") timingGroupMigrationToast();
+        else
+          toast({
+            title: "Couldn't create the group",
+            description: result.message,
+            variant: "destructive",
+          });
+        return;
+      }
+      setTimingGroups((prev) => [...prev, result.group!]);
+      applyLocalMembership(primaryIds, result.group.id);
+
+      // Donor groups DISSOLVE. Taking a member out of an existing group can
+      // leave it thin, split around the new group, or both — and a split
+      // group's runs render solo, hiding its Ungroup button while the stale
+      // pool waits in the database to resurrect on the next reorder. Deleting
+      // the donor row un-groups its remaining members (FK SET NULL), which is
+      // the predictable outcome: build a new group from pieces of an old one
+      // and the old one is gone, visibly.
+      const donorIds = Array.from(
+        new Set(
+          validSelected
+            .map((id) => resolvedGroupIds.get(id))
+            .filter((gid): gid is string => Boolean(gid))
+        )
+      );
+      for (const donorId of donorIds) {
+        await deleteTimingGroup(donorId);
+      }
+      if (donorIds.length > 0) {
+        const donorSet = new Set(donorIds);
+        setTimingGroups((prev) =>
+          prev.filter((g) => !donorSet.has(g.id) || g.id === result.group!.id)
+        );
+        const clear = (s: Section) =>
+          s.timing_group_id && donorSet.has(s.timing_group_id) && s.timing_group_id !== result.group!.id
+            ? { ...s, timing_group_id: null }
+            : s;
+        setAllSections((prev) => prev.map(clear));
+        setSections((prev) => prev.map(clear));
+      }
+
+      setGroupSelectMode(false);
+      setSelectedForGroup([]);
+      toast({
+        title: "Sections grouped",
+        description:
+          "They now share one clock. Name the group and set its time on its header." +
+          (donorIds.length > 0 ? " Their previous group was dissolved." : ""),
+      });
+    } finally {
+      setSavingGroups(false);
+    }
+  };
+
+  const handleUngroup = async (group: TimingGroupRow) => {
+    if (savingGroups) return;
+    setSavingGroups(true);
+    try {
+      const result = await deleteTimingGroup(group.id);
+      if (!result.ok) {
+        if (result.reason === "missing-migration") timingGroupMigrationToast();
+        else
+          toast({ title: "Couldn't ungroup", description: result.message, variant: "destructive" });
+        return;
+      }
+      setTimingGroups((prev) => prev.filter((g) => g.id !== group.id));
+      const clear = (s: Section) =>
+        s.timing_group_id === group.id ? { ...s, timing_group_id: null } : s;
+      setAllSections((prev) => prev.map(clear));
+      setSections((prev) => prev.map(clear));
+      toast({ title: "Ungrouped", description: "Each section keeps its own clock again." });
+    } finally {
+      setSavingGroups(false);
+    }
+  };
+
+  const clearGroupNameDraft = (groupId: string) =>
+    setGroupNameDrafts((prev) => {
+      const next = { ...prev };
+      delete next[groupId];
+      return next;
+    });
+
+  const handleRenameGroup = async (group: TimingGroupRow, rawName: string) => {
+    const name = rawName.trim();
+    if (!name || name === groupDisplayName(group, activeLanguage)) {
+      clearGroupNameDraft(group.id);
+      return;
+    }
+    // The primary tab renames the group itself; any other tab translates it.
+    // Translations merge over a FRESH copy of the row, not this tab's state:
+    // name_translations is one jsonb column, and spreading a stale snapshot
+    // would silently delete every translation written since this page loaded.
+    let patch: Partial<Pick<TimingGroupRow, "name" | "name_translations">>;
+    if (isPrimaryLanguage) {
+      patch = { name };
+    } else {
+      const fresh = exam
+        ? (await fetchTimingGroups(exam.id)).find((g) => g.id === group.id) ?? group
+        : group;
+      patch = { name_translations: { ...(fresh.name_translations || {}), [activeLanguage]: name } };
+    }
+    const result = await updateTimingGroup(group.id, patch);
+    if (!result.ok || !result.group) {
+      if (result.reason === "missing-migration") timingGroupMigrationToast();
+      else
+        toast({
+          title: "Couldn't rename the group",
+          description: result.message,
+          variant: "destructive",
+        });
+      // The draft stays: the typed name is the creator's work, and clearing it
+      // on a failed write would snap the field back and lose it.
+      return;
+    }
+    setTimingGroups((prev) => prev.map((g) => (g.id === group.id ? result.group! : g)));
+    clearGroupNameDraft(group.id);
+  };
+
+  const handleGroupPoolChange = async (group: TimingGroupRow, minutes: number | null) => {
+    const next = minutes && minutes > 0 ? Math.floor(minutes) : null;
+    if (next === (group.time_minutes ?? null)) return;
+    const result = await updateTimingGroup(group.id, { time_minutes: next });
+    if (!result.ok || !result.group) {
+      if (result.reason === "missing-migration") timingGroupMigrationToast();
+      else
+        toast({
+          title: "Couldn't save the group's time",
+          description: result.message,
+          variant: "destructive",
+        });
+      return;
+    }
+    setTimingGroups((prev) => prev.map((g) => (g.id === group.id ? result.group! : g)));
+  };
+
   const handleDeleteSectionClick = (sectionId: string) => {
     setDeleteSectionId(sectionId);
     setShowDeleteDialog(true);
@@ -1345,6 +1696,7 @@ export default function ExamDetail() {
       const sectionData = allSections.find(s => s.id === deleteSectionId);
       const groupId = sectionData?.section_group_id;
 
+      let remainingAll: Section[];
       if (isMultiLang && groupId) {
         // Delete all sections with this group_id (all language variants)
         const { error } = await supabase
@@ -1355,6 +1707,7 @@ export default function ExamDetail() {
         if (error) throw error;
 
         // Update allSections
+        remainingAll = allSections.filter(s => s.section_group_id !== groupId);
         setAllSections(prev => prev.filter(s => s.section_group_id !== groupId));
       } else {
         const { error } = await supabase
@@ -1364,8 +1717,12 @@ export default function ExamDetail() {
 
         if (error) throw error;
 
+        remainingAll = allSections.filter(s => s.id !== deleteSectionId);
         setAllSections(prev => prev.filter(s => s.id !== deleteSectionId));
       }
+
+      // A deleted member can leave its timing group with one section — no pool.
+      await pruneThinGroups(remainingAll);
 
       const updatedSections = sections.filter(s => s.id !== deleteSectionId);
       setSections(updatedSections);
@@ -1797,7 +2154,7 @@ export default function ExamDetail() {
     }
   };
 
-  const saveSectionOrder = async (updatedSections: Section[]) => {
+  const saveSectionOrder = async (updatedSections: Section[]): Promise<boolean> => {
     try {
       const updates = updatedSections.map((s) => ({
         id: s.id,
@@ -1818,9 +2175,12 @@ export default function ExamDetail() {
           description: "Visual order updated, but failed to save to server.",
           variant: "destructive"
         });
+        return false;
       }
+      return true;
     } catch (e) {
       console.error("Error saving section order:", e);
+      return false;
     }
   };
 
@@ -1836,10 +2196,47 @@ export default function ExamDetail() {
     }
   };
 
+  /**
+   * Apply a new active-language order to state and the database. Multi-lang
+   * exams fan the sort_order out across language twins via section_group_id.
+   * Functional state updates on allSections, so a membership patch applied in
+   * the same handler is never clobbered by a stale closure. Returns whether
+   * the order actually REACHED the database — callers about to build on the
+   * new order (group creation) must not proceed on a local-only reorder.
+   */
+  const commitSectionOrder = async (updatedItems: Section[]): Promise<boolean> => {
+    // Instantly update the visual UI
+    setSections(updatedItems);
+
+    if (isMultiLang) {
+      // Map group IDs to new sort_order from the currently active language sections
+      const groupOrderMap = new Map(updatedItems.map(s => [s.section_group_id, s.sort_order]));
+
+      setAllSections((prev) => prev.map(s =>
+        s.section_group_id && groupOrderMap.has(s.section_group_id)
+          ? { ...s, sort_order: groupOrderMap.get(s.section_group_id)! }
+          : s
+      ));
+
+      // saveSectionOrder writes a fixed column list (no timing_group_id), so a
+      // stale membership value in this closure cannot reach the database.
+      const sectionsToUpdateDb = allSections
+        .filter(s => s.section_group_id && groupOrderMap.has(s.section_group_id))
+        .map(s => ({ ...s, sort_order: groupOrderMap.get(s.section_group_id!)! }));
+      return saveSectionOrder(sectionsToUpdateDb as Section[]);
+    } else {
+      setAllSections(prev => prev.map(s => {
+        const updated = updatedItems.find(ui => ui.id === s.id);
+        return updated ? { ...s, sort_order: updated.sort_order } : s;
+      }));
+      return saveSectionOrder(updatedItems);
+    }
+  };
+
   const processSectionReorder = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
-    
+
     // Calculate new order synchronously using the current sections state
     const oldIndex = sections.findIndex((item) => item.id === active.id);
     const newIndex = sections.findIndex((item) => item.id === over.id);
@@ -1851,36 +2248,55 @@ export default function ExamDetail() {
       sort_order: index,
     }));
 
-    // Instantly update the visual UI
-    setSections(updatedItems);
+    await commitSectionOrder(updatedItems);
 
     if (isMultiLang) {
-      // Map group IDs to new sort_order from the currently active language sections
-      const groupOrderMap = new Map(updatedItems.map(s => [s.section_group_id, s.sort_order]));
-      
-      const newAllSections = allSections.map(s => {
-        if (s.section_group_id && groupOrderMap.has(s.section_group_id)) {
-          return { ...s, sort_order: groupOrderMap.get(s.section_group_id)! };
-        }
-        return s;
-      });
-      setAllSections(newAllSections as Section[]);
-      
-      const sectionsToUpdateDb = newAllSections.filter(s => s.section_group_id && groupOrderMap.has(s.section_group_id));
-      saveSectionOrder(sectionsToUpdateDb as Section[]);
-      
       toast({
         title: "Sections Reordered",
         description: "Section order synced across all languages.",
       });
-    } else {
-      setAllSections(prev => prev.map(s => {
-        const updated = updatedItems.find(ui => ui.id === s.id);
-        return updated ? { ...s, sort_order: updated.sort_order } : s;
-      }));
-      saveSectionOrder(updatedItems);
     }
-    
+
+    // Timing groups are contiguous runs, and a drag can break that in exactly
+    // two ways, each with one predictable repair: dropped strictly INSIDE a
+    // group → join it; a member dragged clean away → leave it.
+    //
+    // Locked mode ONLY. While whole-paper switching is on the groups are
+    // dormant and their containers hidden — a drag then would silently rewrite
+    // and prune structure the creator cannot even see. Dormant groups sleep
+    // untouched, exactly like the per-section minutes do.
+    if (!allowSectionSwitching) {
+      const change = membershipChangeAfterReorder(updatedItems, String(active.id), resolvedGroupIds);
+      if (change) {
+        const primaryId = primaryTwinId(change.sectionId);
+        if (primaryId) {
+          const result = await setTimingGroupMembership([primaryId], change.timingGroupId);
+          if (result.ok) {
+            applyLocalMembership([primaryId], change.timingGroupId);
+            const joined = change.timingGroupId
+              ? timingGroups.find((g) => g.id === change.timingGroupId)
+              : null;
+            toast({
+              title: change.timingGroupId ? "Added to group" : "Removed from group",
+              description: change.timingGroupId
+                ? `${sections.find((s) => s.id === change.sectionId)?.name ?? "The section"} now shares ${
+                    joined ? groupDisplayName(joined, activeLanguage) : "the group"
+                  }'s clock.`
+                : "The dragged section keeps its own clock now.",
+            });
+            // EVERY membership change can thin a group: a leave thins the
+            // group left, and a join thins the DONOR group the dragged member
+            // came from. Prune with the post-change picture of the rows.
+            await pruneThinGroups(
+              allSections.map((s) =>
+                s.id === primaryId ? { ...s, timing_group_id: change.timingGroupId } : s
+              )
+            );
+          }
+        }
+      }
+    }
+
     setPendingSectionReorder(null);
   };
 
@@ -3062,6 +3478,13 @@ export default function ExamDetail() {
 
     setActiveLanguage(newLang);
 
+    // A group selection belongs to the tab it was made on: the ids in it are
+    // that language's rows, and grouping is edited on the primary tab only —
+    // carried across, the checkboxes and click-hijack would follow the creator
+    // onto a tab with no way to act on them.
+    setGroupSelectMode(false);
+    setSelectedForGroup([]);
+
     // Filter sections for the new language from allSections and sort by updated sort_order
     const langSections = allSections
       .filter(s => s.language === newLang)
@@ -3540,6 +3963,95 @@ export default function ExamDetail() {
                   <span className="h-px flex-1 bg-border" />
                 </div>
 
+                {/* Timing groups — "these sections share one clock". Structure
+                    is edited on the PRIMARY language tab only; other tabs see a
+                    read-only mirror and may translate the group's name. While
+                    whole-paper switching is on, groups do not apply (the rows
+                    are kept, like the section minutes, and come back). */}
+                {!allowSectionSwitching && isPrimaryLanguage && sections.length >= 2 && (
+                  groupSelectMode ? (
+                    <div className="flex items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/[0.05] px-2.5 py-2">
+                      <span className="min-w-0 text-[11px] font-medium leading-snug text-muted-foreground">
+                        {selectedForGroup.length < 2 ? (
+                          "Pick 2+ sections to share one clock"
+                        ) : (
+                          <>
+                            {selectedForGroup.length} selected ·{" "}
+                            <span className="font-bold tabular-nums text-primary">
+                              {sumSectionMinutes(
+                                sections.filter((s) => selectedForGroup.includes(s.id))
+                              )}{" "}
+                              min
+                            </span>{" "}
+                            pool
+                          </>
+                        )}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => {
+                            setGroupSelectMode(false);
+                            setSelectedForGroup([]);
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-7 gap-1 px-2.5 text-xs"
+                          disabled={selectedForGroup.length < 2 || savingGroups}
+                          onClick={handleCreateGroup}
+                        >
+                          {savingGroups ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Check className="h-3 w-3" />
+                          )}
+                          Group{selectedForGroup.length >= 2 ? ` ${selectedForGroup.length}` : ""} sections
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      // hover:bg is explicit because the outline variant's own
+                      // hover is solid accent-purple — combined with
+                      // hover:text-primary that was purple-on-purple, an
+                      // invisible label. Same treatment as Add Section below.
+                      className="h-8 w-full gap-1.5 rounded-xl border-dashed text-xs text-muted-foreground hover:border-primary/40 hover:bg-primary/[0.03] hover:text-primary"
+                      onClick={() => {
+                        setGroupSelectMode(true);
+                        setSelectedForGroup([]);
+                      }}
+                      title="Pick sections that should share one clock — like Session I of a two-session paper. Marks stay per section."
+                    >
+                      <Hourglass className="h-3.5 w-3.5" />
+                      Group sections to share one clock
+                    </Button>
+                  )
+                )}
+                {allowSectionSwitching && timingGroups.length > 0 && (
+                  <p className="rounded-lg bg-muted/50 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground">
+                    Timing groups don't apply while the whole paper shares one clock. They come
+                    back when section switching is turned off.
+                  </p>
+                )}
+                {!allowSectionSwitching && !isPrimaryLanguage && groupedPaper && (
+                  <p className="rounded-lg bg-muted/50 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground">
+                    Grouping is managed on the{" "}
+                    {AVAILABLE_LANGUAGES.find((l) => l.code === primaryLanguage)?.label ||
+                      primaryLanguage}{" "}
+                    tab. Group names can be translated here.
+                  </p>
+                )}
+
                 <DndContext
                   sensors={sensors}
                   collisionDetection={closestCenter}
@@ -3549,21 +4061,66 @@ export default function ExamDetail() {
                     items={sections.map((s) => s.id)}
                     strategy={verticalListSortingStrategy}
                   >
-                    {sections.map((s, index) => (
+                    {sectionRuns.map((run) => {
+                      const renderSectionRow = (s: Section) => {
+                        const index = sections.findIndex((x) => x.id === s.id);
+                        return (
                       <SortableSectionItem key={s.id} id={s.id}>
                         <div
-                          className={`relative p-3 pl-4 rounded-xl border cursor-pointer transition-all overflow-hidden ${section?.id === s.id
-                            ? "border-primary/40 bg-primary/[0.04] shadow-sm ring-1 ring-primary/20"
-                            : "border-border/70 bg-card hover:border-primary/25 hover:bg-muted/40"
-                            }`}
-                          onClick={() => handleSectionChange(s.id)}
+                          className={`relative cursor-pointer transition-all overflow-hidden ${
+                            run.group
+                              ? // Inside a group: flat rows on the rail — the
+                                // container carries the border so the members
+                                // don't repeat it.
+                                `p-2.5 pl-3 rounded-lg border ${
+                                  section?.id === s.id
+                                    ? "border-primary/30 bg-background shadow-sm"
+                                    : "border-transparent bg-background/70 hover:bg-background"
+                                }`
+                              : `p-3 pl-4 rounded-xl border ${
+                                  section?.id === s.id
+                                    ? "border-primary/40 bg-primary/[0.04] shadow-sm ring-1 ring-primary/20"
+                                    : "border-border/70 bg-card hover:border-primary/25 hover:bg-muted/40"
+                                }`
+                          }${
+                            groupSelectMode && selectedForGroup.includes(s.id)
+                              ? " ring-2 ring-primary/60 border-primary/40"
+                              : ""
+                          }`}
+                          onClick={() => {
+                            if (groupSelectMode) {
+                              setSelectedForGroup((prev) =>
+                                prev.includes(s.id)
+                                  ? prev.filter((id) => id !== s.id)
+                                  : [...prev, s.id]
+                              );
+                              return;
+                            }
+                            handleSectionChange(s.id);
+                          }}
                         >
                           {section?.id === s.id && (
                             <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-primary" />
                           )}
-                          <div className="flex flex-col gap-1 mb-2">
+                          <div className={`flex flex-col gap-1 ${run.group ? "" : "mb-2"}`}>
                             <span className={`text-[10px] font-bold uppercase tracking-widest ${section?.id === s.id ? "text-primary" : "text-muted-foreground"}`}>Section {index + 1}</span>
                             <div className="flex justify-between items-start gap-2 w-full">
+                            {groupSelectMode && (
+                              <Checkbox
+                                className="mt-1 shrink-0"
+                                checked={selectedForGroup.includes(s.id)}
+                                onCheckedChange={(checked) =>
+                                  setSelectedForGroup((prev) =>
+                                    checked === true
+                                      ? prev.includes(s.id)
+                                        ? prev
+                                        : [...prev, s.id]
+                                      : prev.filter((id) => id !== s.id)
+                                  )
+                                }
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            )}
                             <SectionNameEditor
                               lang={activeLanguage}
                               value={s.name}
@@ -3611,6 +4168,14 @@ export default function ExamDetail() {
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
+                          ) : run.group ? (
+                            // In a timing group: the group header is the ONLY
+                            // clock, so the member row carries no time chrome
+                            // at all — a pill repeating "shared clock" on every
+                            // row is the container's job said N times. The
+                            // stored minutes are kept (not zeroed); the Ungroup
+                            // tooltip is where "they come back" is promised.
+                            null
                           ) : (
                             <MinutesField
                               minutes={s.time_minutes}
@@ -3622,7 +4187,95 @@ export default function ExamDetail() {
                           )}
                         </div>
                       </SortableSectionItem>
-                    ))}
+                        );
+                      };
+
+                      if (!run.group) {
+                        return run.sections.map(renderSectionRow);
+                      }
+                      return (
+                        // A timing group: one container, one shared clock. The
+                        // member rows inside stay individually sortable — the
+                        // sortable ids are still the flat section list. The
+                        // head strip owns everything the group IS (name, one
+                        // clock, the way out); the rail under it owns what the
+                        // group CONTAINS. Members carry no clock chrome of
+                        // their own — the whole point is that they have none.
+                        <div
+                          key={`timing-group-${run.group.id}`}
+                          className="rounded-2xl border border-primary/30 bg-primary/[0.03] shadow-sm"
+                        >
+                          <div className="space-y-1 rounded-t-2xl border-b border-primary/15 bg-primary/[0.06] px-3 pb-2 pt-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-primary">
+                                <Hourglass className="h-3 w-3 shrink-0" />
+                                Shared clock
+                              </span>
+                              {isPrimaryLanguage && !groupSelectMode && (
+                                <TooltipProvider delayDuration={200}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                        disabled={savingGroups}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleUngroup(run.group!);
+                                        }}
+                                      >
+                                        <Ungroup className="h-3 w-3" />
+                                        Ungroup
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom" className="max-w-[240px] text-xs">
+                                      Each section gets its own clock again — the minutes they
+                                      had before grouping ({run.sections
+                                        .map((m) => m.time_minutes)
+                                        .join(" + ")}) come back if you ungroup.
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
+                            <div className="flex items-start justify-between gap-2">
+                              <SectionNameEditor
+                                lang={activeLanguage}
+                                value={
+                                  groupNameDrafts[run.group.id] ??
+                                  groupDisplayName(run.group, activeLanguage)
+                                }
+                                onValueChange={(text) =>
+                                  setGroupNameDrafts((prev) => ({ ...prev, [run.group!.id]: text }))
+                                }
+                                onCommit={(name) => handleRenameGroup(run.group!, name)}
+                              />
+                              <GroupPoolField
+                                poolMinutes={run.group.time_minutes ?? null}
+                                memberSum={sumSectionMinutes(run.sections)}
+                                onCommit={(minutes) => handleGroupPoolChange(run.group!, minutes)}
+                                readOnly={!isPrimaryLanguage}
+                              />
+                            </div>
+                          </div>
+                          <div className="p-2 pt-2">
+                            {/* One rail, all members on it: the bracket says
+                                "these hang off one clock" without repeating it
+                                on every row. */}
+                            <div className="ml-1 space-y-2 border-l-2 border-primary/20 pl-2">
+                              {run.sections.map(renderSectionRow)}
+                            </div>
+                            <p className="flex items-center gap-1.5 px-1 pt-2 text-[10px] font-medium leading-snug text-muted-foreground">
+                              <ArrowLeftRight className="h-3 w-3 shrink-0 text-primary/60" />
+                              Students move freely between these {run.sections.length} sections —
+                              one clock, submitted together.
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </SortableContext>
                 </DndContext>
                 <div className="pt-1">
