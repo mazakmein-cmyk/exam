@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Clock, CheckCircle2, XCircle, Circle, Upload, ChevronDown, ChevronRight, Award, Target, Timer } from "lucide-react";
+import { ArrowLeft, Clock, CheckCircle2, XCircle, Circle, MinusCircle, Upload, ChevronDown, ChevronRight, Award, Target, Timer } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -26,6 +26,8 @@ interface Response {
   time_spent_seconds: number;
   is_correct: boolean | null;
   is_partial?: boolean;
+  /** No option was ever selected — skipped, not answered wrongly. */
+  is_unanswered?: boolean;
   question: {
     text: string;
     options: any;
@@ -294,9 +296,23 @@ export default function ExamReview() {
         return { isCorrect: normalize(selected) === normalize(correct), isPartial: false };
       };
 
+      // A question the student never touched is not a wrong answer. Index 0 and
+      // "0" are real picks, so only null/undefined/""/[] count as untouched.
+      const hasSelection = (selected: any): boolean => {
+        if (selected === null || selected === undefined) return false;
+        if (Array.isArray(selected)) return selected.length > 0;
+        if (typeof selected === "string") return selected.trim() !== "";
+        return true;
+      };
+
       const gradedResponses = sortedResponses.map((r: any) => {
         const { isCorrect, isPartial } = checkCorrectness(r);
-        return { ...r, is_correct: isCorrect, is_partial: isPartial };
+        return {
+          ...r,
+          is_correct: isCorrect,
+          is_partial: isPartial,
+          is_unanswered: !isCorrect && !hasSelection(r.selected_answer),
+        };
       });
 
       gradedResponses.forEach((r: any) => {
@@ -533,6 +549,9 @@ export default function ExamReview() {
     if (response.is_partial) {
       return <CheckCircle2 className="w-5 h-5 text-amber-500" />;
     }
+    if (response.is_unanswered) {
+      return <MinusCircle className="w-5 h-5 text-muted-foreground" />;
+    }
     return <XCircle className="w-5 h-5 text-destructive" />;
   };
 
@@ -542,7 +561,8 @@ export default function ExamReview() {
     }
     if (response.is_correct) return "Correct";
     if (response.is_partial) return "Partially Correct";
-    return "Wrong";
+    if (response.is_unanswered) return "Unanswered";
+    return "Incorrect";
   };
 
   // Helper to check if a value is an index (numeric string or number)
@@ -1081,50 +1101,71 @@ export default function ExamReview() {
             const isSectionExpanded = expandedSections[section.id] !== false; // Default expanded
             const correctCount = sectionResponses.filter(r => r.is_correct === true).length;
             const partialCount = sectionResponses.filter(r => r.is_correct === false && r.is_partial).length;
-            const wrongCount = sectionResponses.filter(r => r.is_correct === false && !r.is_partial).length;
+            const wrongCount = sectionResponses.filter(
+              r => r.is_correct === false && !r.is_partial && !r.is_unanswered
+            ).length;
+            const unansweredCount = sectionResponses.filter(r => r.is_unanswered).length;
 
             return (
               <Card key={section.id} className="overflow-hidden">
                 {/* Section Header - Clickable */}
                 <div
-                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+                  className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 p-4 cursor-pointer hover:bg-muted/50 transition-colors"
                   onClick={() => toggleSection(section.id)}
                 >
-                  <div className="flex items-center gap-3">
+                  {/* Title stacks over its own meta line — a single row ran out of
+                      width on long section names and wrapped mid-phrase. */}
+                  <div className="flex items-start gap-3 min-w-0">
                     {isSectionExpanded ? (
-                      <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                      <ChevronDown className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
                     ) : (
-                      <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                      <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
                     )}
-                    <h3 className="text-lg font-bold text-primary">{section.name}</h3>
-                    <span className="text-sm text-muted-foreground">
-                      ({sectionResponses.length} questions)
-                    </span>
-                    <div className="flex items-center text-sm text-muted-foreground ml-2 px-2 py-0.5 bg-muted rounded-md border">
-                      <Clock className="w-3 h-3 mr-1.5" />
-                      <span className="font-medium">
-                        {formatDuration(sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0))}
-                      </span>
-                      <span className="mx-1 text-muted-foreground/50">/</span>
-                      <span>
-                        {sharedPool
-                          ? `${sharedPool.minutes}m shared (${sharedPool.name})`
-                          : `${section.time_minutes}m`}
-                      </span>
+                    <div className="min-w-0">
+                      <h3 className="text-base font-bold text-primary leading-snug">{section.name}</h3>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span>{sectionResponses.length} questions</span>
+                        <span className="text-muted-foreground/40">•</span>
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="w-3 h-3 shrink-0" />
+                          <span className="font-medium text-foreground/80">
+                            {formatDuration(sectionResponses.reduce((acc, r) => acc + (r.time_spent_seconds || 0), 0))}
+                          </span>
+                          <span className="text-muted-foreground/40">/</span>
+                          <span>
+                            {sharedPool
+                              ? `${sharedPool.minutes}m shared (${sharedPool.name})`
+                              : `${section.time_minutes}m`}
+                          </span>
+                        </span>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
-                      {correctCount} correct
-                    </Badge>
+                  {/* One divided strip instead of 3-4 competing pills */}
+                  <div className="flex items-center gap-3 shrink-0 rounded-lg border bg-muted/30 px-3 py-1.5">
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-sm font-semibold text-green-600 dark:text-green-400">{correctCount}</span>
+                      <span className="text-xs text-muted-foreground">correct</span>
+                    </span>
                     {partialCount > 0 && (
-                      <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                        {partialCount} partial
-                      </Badge>
+                      <>
+                        <span className="h-3.5 w-px bg-border" />
+                        <span className="flex items-baseline gap-1.5">
+                          <span className="text-sm font-semibold text-amber-600 dark:text-amber-400">{partialCount}</span>
+                          <span className="text-xs text-muted-foreground">partial</span>
+                        </span>
+                      </>
                     )}
-                    <Badge variant="secondary" className="bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300">
-                      {wrongCount} wrong
-                    </Badge>
+                    <span className="h-3.5 w-px bg-border" />
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-sm font-semibold text-red-600 dark:text-red-400">{wrongCount}</span>
+                      <span className="text-xs text-muted-foreground">incorrect</span>
+                    </span>
+                    <span className="h-3.5 w-px bg-border" />
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="text-sm font-semibold text-foreground/70">{unansweredCount}</span>
+                      <span className="text-xs text-muted-foreground">unanswered</span>
+                    </span>
                   </div>
                 </div>
 
@@ -1150,13 +1191,21 @@ export default function ExamReview() {
                               {getStatusIcon(response)}
                               <span className="font-medium">Question {response.question.q_no}</span>
                               <Badge
-                                variant={response.is_correct ? "default" : response.is_partial ? "secondary" : "destructive"}
+                                variant={
+                                  response.is_correct
+                                    ? "default"
+                                    : response.is_partial || response.is_unanswered
+                                      ? "secondary"
+                                      : "destructive"
+                                }
                                 className={
                                   response.is_correct
                                     ? "bg-green-500"
                                     : response.is_partial
                                       ? "bg-amber-500 text-white hover:bg-amber-500/90"
-                                      : ""
+                                      : response.is_unanswered
+                                        ? "bg-muted text-muted-foreground"
+                                        : ""
                                 }
                               >
                                 {getStatusText(response)}
