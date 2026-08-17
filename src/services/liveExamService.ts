@@ -222,7 +222,13 @@ export async function createLiveExam(data: CreateLiveExamData): Promise<LiveExam
 // ─── Fetch Live Exams (Creator Dashboard) ────────────────────
 
 export async function fetchMyLiveExams(): Promise<LiveExam[]> {
-  const { data: { user } } = await supabase.auth.getUser();
+  // getSession(), not getUser(): this gates a list the creator dashboard paints,
+  // and getUser() is a round trip to /auth/v1/user before the real query can even
+  // start. getSession() reads the persisted session locally (refreshing only on
+  // an actually-expired token) and yields the same id. Nothing is trusted to the
+  // client here — the rows are RLS-scoped to the owner server-side either way.
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error("Not authenticated");
 
   const { data, error } = await supabase
@@ -1261,13 +1267,20 @@ export async function flagLiveConfusion(examId: string): Promise<void> {
 // ─── Fetch My Participated Live Exams (Student Dashboard) ────
 
 export async function fetchMyParticipatedLiveExams(): Promise<any[]> {
-  const { data: { user } } = await supabase.auth.getUser();
+  // getSession() rather than getUser() — same reasoning as fetchMyLiveExams: this
+  // is a list the student library paints, and the id it needs is already on the
+  // device.
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error("Not authenticated");
 
   const { data, error } = await supabase
     .from("live_participants")
     .select(`
-      *,
+      id,
+      rank,
+      total_correct,
+      joined_at,
       live_exam:live_exams (
         id,
         name,
@@ -1480,6 +1493,42 @@ export async function getParticipantCount(examId: string): Promise<number> {
 
   if (error) throw error;
   return count || 0;
+}
+
+/**
+ * Participant counts for MANY exams in ONE request.
+ *
+ * The creator dashboard used to call getParticipantCount once per live exam, so
+ * a creator with twenty rooms fired twenty count queries every time they opened
+ * the tab. This selects a single narrow column — no participant names, no
+ * scores, just which exam each row belongs to — and tallies client-side.
+ *
+ * Returns a map with an entry for every id asked about (0 where there are no
+ * participants), so callers never have to distinguish "none" from "not loaded".
+ * An empty input short-circuits without touching the network.
+ */
+export async function getParticipantCounts(examIds: string[]): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  examIds.forEach((id) => {
+    counts[id] = 0;
+  });
+  if (examIds.length === 0) return counts;
+
+  const { data, error } = await supabase
+    .from("live_participants")
+    .select("live_exam_id")
+    .in("live_exam_id", examIds);
+
+  if (error) throw error;
+
+  (data || []).forEach((row: any) => {
+    const id = row.live_exam_id as string;
+    // Guard on hasOwnProperty rather than truthiness: a row for an id we did not
+    // ask about must not invent a key.
+    if (id in counts) counts[id] += 1;
+  });
+
+  return counts;
 }
 
 // ─── Responses (Student) ─────────────────────────────────────

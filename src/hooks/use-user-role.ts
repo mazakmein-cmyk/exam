@@ -12,7 +12,17 @@ export const useUserRole = () => {
     useEffect(() => {
         const checkUser = async () => {
             try {
-                const { data: { user } } = await supabase.auth.getUser();
+                // getSession(), not getUser(): this hook gates the first paint of
+                // both library pages, and getUser() is a round trip to
+                // /auth/v1/user before either can decide what to render.
+                // getSession() reads the persisted session locally (refreshing
+                // only if the access token has actually expired) and carries the
+                // same user object — including the user_metadata.user_type this
+                // hook reads. Nothing here is a security decision: the role only
+                // picks which screen to show, and every table is guarded by RLS
+                // server-side regardless of what the client believes.
+                const { data: { session } } = await supabase.auth.getSession();
+                const user = session?.user;
 
                 if (!user) {
                     setLoading(false);
@@ -54,7 +64,11 @@ export const useUserRole = () => {
         // Previously, location.pathname was in the dep array, which caused the entire effect (including
         // this subscription) to teardown and recreate on EVERY URL change — leaking subscriptions.
         // Now the subscription lives for the component's entire lifetime, not per-navigation.
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+            // Skip INITIAL_SESSION: supabase-js fires it immediately on subscribe,
+            // which duplicated the checkUser() call above on every single mount.
+            // Harmless but pure waste — and it used to be a second network call.
+            if (event === "INITIAL_SESSION") return;
             checkUser();
         });
 

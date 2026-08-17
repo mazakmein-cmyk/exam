@@ -323,14 +323,43 @@ test("the search box only matches the non-default type label", () => {
   );
 });
 
-test("the library reads with select(*) and never names the column", () => {
+/**
+ * This invariant used to read "the library reads with select(*) and never names
+ * the column", because select(*) is the one way to name no gated column at all
+ * and so the one way a pre-migration database could not be turned into an empty
+ * library.
+ *
+ * select(*) also meant every visitor downloaded `instruction`,
+ * `exam_instruction` and three `*_translations` JSONB blobs for every published
+ * exam in order to draw a title, a category and a description — by far the
+ * largest thing on the page, and none of it rendered. So the library now names
+ * its columns and routes the read through queryExamList, which asks for
+ * `paper_type` optimistically and re-asks without it if the schema has never
+ * heard of it.
+ *
+ * The REQUIREMENT is unchanged and is what this still tests: a database without
+ * the migration must serve a full library. What changed is where that is
+ * enforced — no longer "never name it" but "only name it somewhere that can
+ * retry". exam-list-query.test.mjs drives the retry itself against both error
+ * shapes PostgREST produces.
+ */
+test("the library never names the column anywhere that cannot retry", () => {
   assert(
-    /\.from\("exams"\)\s*\.select\("\*"\)/.test(LIBRARY),
-    "the published-exams read must stay select(*) so paper_type rides along when it exists"
+    /queryExamList\(\(columns\) =>/.test(LIBRARY),
+    "the published-exams read must go through the helper that can fall back"
   );
   assert(
-    !/select\([^)]*paper_type/.test(LIBRARY),
-    "naming paper_type in a select would empty the library pre-migration"
+    !/select\(\s*"[^"]*paper_type/.test(LIBRARY),
+    "hardcoding paper_type into a select string would empty the library pre-migration — the helper owns that decision"
+  );
+  const HELPER = readSrc("lib/examListQuery.ts");
+  assert(
+    /isColumnMissingError\(result\.error\)/.test(HELPER),
+    "the fallback has to be keyed off the missing-column signal, not off any error"
+  );
+  assert(
+    /return build\(EXAM_LIST_BASE_COLUMNS\)/.test(HELPER),
+    "the retry must drop the optional columns rather than give up"
   );
 });
 

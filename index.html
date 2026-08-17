@@ -85,15 +85,57 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
     <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+    <!--
+      The very first thing every page does is talk to Supabase (auth session,
+      then the page's own query). Warming DNS + TLS to that origin here means
+      the first query starts on an already-open connection instead of paying
+      for the handshake after the JS bundle has parsed. Biggest effect on the
+      exam library pages, which paint only once their query returns.
+
+      This host must match VITE_SUPABASE_URL in .env — it is hardcoded because a
+      static file cannot read the env. Nothing breaks if it drifts (a preconnect
+      to a host nobody calls is dropped), but the speed-up is silently lost, so
+      update it here too if the project URL ever changes. No secret is exposed:
+      the same URL already ships inside the JS bundle.
+    -->
+    <link rel="preconnect" href="https://dwqlxyvrlrwzjwmjiost.supabase.co" crossorigin />
+    <link rel="dns-prefetch" href="https://dwqlxyvrlrwzjwmjiost.supabase.co" />
+
+    <!--
+      Fonts are loaded NON-BLOCKING. `media="print"` means the stylesheet does
+      not hold up first paint, and the onload handler promotes it to `all` the
+      moment it arrives; the preload above keeps the request at the front of the
+      queue, so in practice the swap lands before there is much to look at.
+      Previously this was a plain <link rel="stylesheet"> to a third-party
+      origin, which blocked rendering the whole app behind a DNS + TLS +
+      round-trip to fonts.googleapis.com. `display=swap` already meant text
+      painted in the fallback stack first, so nothing about the typography
+      contract changes — only what has to finish before the first pixel.
+      The <noscript> copy keeps the fonts working with JavaScript disabled.
+
+      The `wght@300..900` range asks for the variable axis explicitly. Google
+      serves the same variable files for the old weight-list form, so this is
+      not a byte saving; it is written this way so intermediate weights the CSS
+      actually uses (there is a `font-weight: 650`) resolve on the axis instead
+      of being snapped to a listed instance.
+    -->
     <link
       rel="preload"
       as="style"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&display=swap"
     />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all';this.onload=null"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
 
     <!-- Structured data: Organization (with Brand sub-entity for Mockset alt-spelling disambiguation) -->
     <script type="application/ld+json">

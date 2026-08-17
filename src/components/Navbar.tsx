@@ -1,6 +1,6 @@
 import { LogIn, LogOut, Menu, User, ChevronRight, Sparkles } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { lazy, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Sheet,
@@ -17,7 +17,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import MockSetuLogo from "@/components/MockSetuLogo";
-import ProfileDialog from "@/components/ProfileDialog";
+import LazyDialogHost from "@/components/LazyDialogHost";
+
+/**
+ * The Navbar renders on nearly every page, so anything it imports statically is
+ * on the critical path for all of them. The profile dialog is behind a menu
+ * click and fetches nothing until it opens, so it loads on demand instead.
+ */
+const ProfileDialog = lazy(() => import("@/components/ProfileDialog"));
 
 interface NavbarProps {
   navButtonLabel?: string;
@@ -32,6 +39,8 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
   const [isOpen, setIsOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+
+  const openProfile = () => setShowProfile(true);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
@@ -64,7 +73,9 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
 
   return (
     <>
-      <ProfileDialog isOpen={showProfile} onOpenChange={setShowProfile} />
+      <LazyDialogHost open={showProfile}>
+        <ProfileDialog isOpen={showProfile} onOpenChange={setShowProfile} />
+      </LazyDialogHost>
       <nav
         className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
           scrolled || !isHome
@@ -111,7 +122,7 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48 rounded-xl shadow-xl shadow-black/10 border-border/60">
                     <DropdownMenuItem
-                      onClick={() => setShowProfile(true)}
+                      onClick={openProfile}
                       className="flex items-center gap-2.5 py-2.5 cursor-pointer"
                     >
                       <User className="h-4 w-4 text-[#6C3EF4]" />
@@ -151,7 +162,7 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44 rounded-xl shadow-xl shadow-black/10 border-border/60">
                     <DropdownMenuItem
-                      onClick={() => setShowProfile(true)}
+                      onClick={openProfile}
                       className="flex items-center gap-2.5 py-2.5 cursor-pointer"
                     >
                       <User className="h-4 w-4 text-[#6C3EF4]" />

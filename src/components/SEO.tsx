@@ -86,6 +86,21 @@ const mergeKeywords = (pageKeywords?: string) => {
 };
 
 const SEO = ({ title, description, path, keywords, ogImage, noindex, jsonLd }: SEOProps) => {
+  /**
+   * Every caller passes `jsonLd` as an inline object/array literal, so the prop
+   * is a brand-new reference on every render of the host page. With `jsonLd` in
+   * the dependency array directly, the effect below re-ran on EVERY render —
+   * tearing every managed JSON-LD script out of <head>, re-stringifying the
+   * payload, and re-appending it. On the exam library that meant a full head
+   * rewrite per keystroke in the search box.
+   *
+   * Serializing gives the effect a value-equal dependency (strings compare by
+   * value), so it runs when the structured data actually changes and not when
+   * the parent happens to re-render. The serialized string is what gets
+   * injected anyway, so nothing extra is computed.
+   */
+  const jsonLdKey = jsonLd ? JSON.stringify(jsonLd) : "";
+
   useEffect(() => {
     const url = `${SITE_URL}${path}`;
     const image = ogImage || DEFAULT_OG_IMAGE;
@@ -121,15 +136,19 @@ const SEO = ({ title, description, path, keywords, ogImage, noindex, jsonLd }: S
     if (!noindex) {
       appendJsonLd(buildWebPageJsonLd(url, title, description));
     }
-    if (jsonLd) {
-      const payloads = Array.isArray(jsonLd) ? jsonLd : [jsonLd];
+    if (jsonLdKey) {
+      // Read back from the serialized key rather than the prop, so the effect
+      // depends on exactly the value it uses and can never inject a payload
+      // from a stale closure.
+      const parsed = JSON.parse(jsonLdKey) as Record<string, unknown> | Record<string, unknown>[];
+      const payloads = Array.isArray(parsed) ? parsed : [parsed];
       payloads.forEach(appendJsonLd);
     }
 
     return () => {
       clearManagedJsonLd();
     };
-  }, [title, description, path, keywords, ogImage, noindex, jsonLd]);
+  }, [title, description, path, keywords, ogImage, noindex, jsonLdKey]);
 
   return null;
 };

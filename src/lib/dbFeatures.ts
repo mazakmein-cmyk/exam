@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 const cache = new Map<string, Promise<boolean>>();
 
 /** Postgres "undefined_column" — the only DEFINITIVE "column missing" signal. */
-function isColumnMissingError(error: { code?: string; message?: string } | null): boolean {
+export function isColumnMissingError(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false;
   if (error.code === "42703") return true;
   return /column .* does not exist|could not find .* column/i.test(error.message ?? "");

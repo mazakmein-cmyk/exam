@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -7,14 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { LogOut, Plus, BookOpen, Trash2, MoreVertical, Share2, Copy, User, Users, BarChart, FileText, Radio, Eye } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import CreateExamDialog from "@/components/CreateExamDialog";
-import ExamTypeDialog from "@/components/ExamTypeDialog";
-import CreateLiveExamDialog from "@/components/CreateLiveExamDialog";
-import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCount, type LiveExam, type LiveExamStatus } from "@/services/liveExamService";
-import PublishExamDialog from "@/components/PublishExamDialog";
+import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCounts, type LiveExam, type LiveExamStatus } from "@/services/liveExamService";
 import { navigationCopyPatch } from "@/lib/examSettings";
 import { paperTypeCopyPatch } from "@/lib/paperTypeSettings";
 import { copyTimingGroups } from "@/lib/timingGroupSettings";
+import { EXAM_LIST_BASE_COLUMNS } from "@/lib/examListQuery";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
+import LazyDialogHost from "@/components/LazyDialogHost";
 import SEO from "@/components/SEO";
 import {
   DropdownMenu,
@@ -33,29 +32,40 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import OnboardingModal from "@/components/OnboardingModal";
-import ProfileDialog from "@/components/ProfileDialog";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+/**
+ * Every one of these is a dialog behind a click that most visits never make, so
+ * none of them belong in the chunk that has to arrive before the exam list can
+ * be drawn. They mount only once opened.
+ */
+const CreateExamDialog = lazy(() => import("@/components/CreateExamDialog"));
+const ExamTypeDialog = lazy(() => import("@/components/ExamTypeDialog"));
+const CreateLiveExamDialog = lazy(() => import("@/components/CreateLiveExamDialog"));
+const PublishExamDialog = lazy(() => import("@/components/PublishExamDialog"));
+const OnboardingModal = lazy(() => import("@/components/OnboardingModal"));
+const ProfileDialog = lazy(() => import("@/components/ProfileDialog"));
+
+/**
+ * What the LIST needs. Deliberately not the whole row: `select("*")` also
+ * dragged down `instruction`, `exam_instruction` and the three `*_translations`
+ * JSONB blobs for every exam a creator owns, none of which any card draws. On a
+ * multi-language paper those are by far the largest columns in the row.
+ *
+ * Duplication does need the full row — it copies the translations across — so it
+ * reads the one row it is about on demand. See handleDuplicateExam.
+ */
 type Exam = {
   id: string;
   name: string;
   description: string | null;
-  description_translations?: Record<string, string> | null;
-  instruction: string | null;
-  instruction_translations?: Record<string, string> | null;
-  exam_instruction?: string | null;
-  exam_instruction_translations?: Record<string, string> | null;
   created_at: string;
   is_published: boolean;
   exam_category: string | null;
-  /** Section navigation mode — absent when the migration has not been applied. */
-  allow_section_switching?: boolean;
-  total_time_minutes?: number | null;
 };
 
 import { useUserRole } from "@/hooks/use-user-role";
@@ -90,19 +100,47 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const publishedCount = exams.filter((e) => e.is_published).length;
+  const publishedCount = useMemo(() => exams.filter((e) => e.is_published).length, [exams]);
   const unpublishedCount = exams.length - publishedCount;
-  const filteredExams =
-    publishFilter === "all"
-      ? exams
-      : exams.filter((e) => (publishFilter === "published" ? e.is_published : !e.is_published));
-
-  const liveStatusCounts = liveExams.reduce(
-    (acc, e) => ({ ...acc, [e.status]: (acc[e.status] ?? 0) + 1 }),
-    {} as Record<LiveExamStatus, number>
+  const filteredExams = useMemo(
+    () =>
+      publishFilter === "all"
+        ? exams
+        : exams.filter((e) => (publishFilter === "published" ? e.is_published : !e.is_published)),
+    [exams, publishFilter]
   );
-  const filteredLiveExams =
-    liveStatusFilter === "all" ? liveExams : liveExams.filter((e) => e.status === liveStatusFilter);
+
+  const liveStatusCounts = useMemo(
+    () =>
+      liveExams.reduce(
+        (acc, e) => ({ ...acc, [e.status]: (acc[e.status] ?? 0) + 1 }),
+        {} as Record<LiveExamStatus, number>
+      ),
+    [liveExams]
+  );
+  const filteredLiveExams = useMemo(
+    () =>
+      liveStatusFilter === "all" ? liveExams : liveExams.filter((e) => e.status === liveStatusFilter),
+    [liveExams, liveStatusFilter]
+  );
+
+  /**
+   * Infinite scroll for both grids. A creator card is the heaviest one on the
+   * site — it mounts a switch, a tooltip and a dropdown-menu root each — so
+   * building every one of them before the page could paint was the single
+   * biggest cost of a large library. The counts in the filter pills above still
+   * come from the full lists.
+   */
+  const {
+    visible: shownExams,
+    hasMore: examsHasMore,
+    sentinelRef: examsSentinelRef,
+  } = useInfiniteList(filteredExams);
+  const {
+    visible: shownLiveExams,
+    hasMore: liveHasMore,
+    sentinelRef: liveSentinelRef,
+  } = useInfiniteList(filteredLiveExams);
 
   // Get user initial for avatar
   const getUserInitial = () => {
@@ -120,13 +158,16 @@ const Dashboard = () => {
       setUser(session.user);
       fetchExams(session.user.id);
 
-      const { data: profile } = await supabase
+      // `select("id")` with maybeSingle: this only asks whether a profile row
+      // exists. It used to pull the whole row (and treat "no row" as an error)
+      // to answer the same yes/no question.
+      const { data: profile, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id')
         .eq('id', session.user.id)
-        .single();
+        .maybeSingle();
 
-      if (!profile) {
+      if (!error && !profile) {
         setShowOnboardingModal(true);
       }
     };
@@ -159,7 +200,7 @@ const Dashboard = () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("exams")
-      .select("*")
+      .select(EXAM_LIST_BASE_COLUMNS as "*")
       .eq("user_id", targetUserId)
       .order("created_at", { ascending: false });
 
@@ -193,14 +234,12 @@ const Dashboard = () => {
       const data = await fetchMyLiveExams();
       setLiveExams(data);
       // Paint the list immediately; participant counts fill in as they arrive
-      // (cards render `?? 0` in the meantime).
+      // (cards render `?? 0` in the meantime). One batched query rather than one
+      // per exam — see getParticipantCounts.
       setLiveLoading(false);
-      Promise.all(data.map(e => getParticipantCount(e.id).catch(() => 0)))
-        .then(counts => {
-          const countMap: Record<string, number> = {};
-          data.forEach((e, i) => { countMap[e.id] = counts[i]; });
-          setLiveParticipantCounts(countMap);
-        });
+      getParticipantCounts(data.map(e => e.id))
+        .then(setLiveParticipantCounts)
+        .catch(() => { /* counts are decoration; the list is the page */ });
     } catch (error: any) {
       toast({
         title: "Error loading live exams",
@@ -315,9 +354,31 @@ const Dashboard = () => {
     });
   };
 
-  const handleDuplicateExam = async (exam: Exam) => {
+  /**
+   * @param listExam the row as the GRID holds it — id, name, publish state. Not
+   *   enough to copy from; see below.
+   */
+  const handleDuplicateExam = async (listExam: Exam) => {
     try {
       setLoading(true);
+
+      // The grid only holds what the cards draw, but a duplicate has to carry
+      // everything the row can express — instructions, all three translation
+      // blobs, the language settings, and the gated navigation/paper-type
+      // columns. So read the one row being copied in full, here, rather than
+      // keeping every column of every exam in memory for the whole session.
+      //
+      // `select("*")` on purpose, and the only place on this page that still
+      // does: this is the flow that must not silently drop a column, including
+      // one added by a migration this code has never heard of.
+      const { data: exam, error: sourceError } = await supabase
+        .from("exams")
+        .select("*")
+        .eq("id", listExam.id)
+        .single();
+
+      if (sourceError) throw sourceError;
+      if (!exam) throw new Error("Could not read the exam to duplicate.");
 
       // Create a copy of the exam. Navigation mode travels with it via a gated
       // patch — absent (and so default-locked) on a database that has not had
@@ -764,8 +825,9 @@ const Dashboard = () => {
                 </Button>
               </div>
             ) : (
+              <>
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredExams.map((exam) => (
+                {shownExams.map((exam) => (
                   <Card key={exam.id} className="flex flex-col justify-between group hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 border-border/60">
                     <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                       <div className="space-y-1">
@@ -854,6 +916,11 @@ const Dashboard = () => {
                   </Card>
                 ))}
               </div>
+              {/* Trip-wire for the next batch. Deliberately has height: a
+                  zero-height element can sit exactly on a scroll boundary and
+                  never register as intersecting. */}
+              {examsHasMore && <div ref={examsSentinelRef} aria-hidden="true" className="h-8" />}
+              </>
             )}
           </>
         )}
@@ -893,8 +960,9 @@ const Dashboard = () => {
                 </Button>
               </div>
             ) : (
+              <>
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredLiveExams.map((exam) => (
+                {shownLiveExams.map((exam) => (
                   <Card key={exam.id} className="flex flex-col justify-between group hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 border-border/60">
                     <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                       <div className="space-y-1">
@@ -994,29 +1062,37 @@ const Dashboard = () => {
                   </Card>
                 ))}
               </div>
+              {liveHasMore && <div ref={liveSentinelRef} aria-hidden="true" className="h-8" />}
+              </>
             )}
           </>
         )}
       </main>
 
-      <ExamTypeDialog
-        open={showExamTypeDialog}
-        onOpenChange={setShowExamTypeDialog}
-        onSelectMock={() => setShowCreateDialog(true)}
-        onSelectLive={() => setShowCreateLiveDialog(true)}
-      />
+      <LazyDialogHost open={showExamTypeDialog}>
+        <ExamTypeDialog
+          open={showExamTypeDialog}
+          onOpenChange={setShowExamTypeDialog}
+          onSelectMock={() => setShowCreateDialog(true)}
+          onSelectLive={() => setShowCreateLiveDialog(true)}
+        />
+      </LazyDialogHost>
 
-      <CreateExamDialog
-        open={showCreateDialog}
-        onOpenChange={setShowCreateDialog}
-        onExamCreated={handleExamCreated}
-      />
+      <LazyDialogHost open={showCreateDialog}>
+        <CreateExamDialog
+          open={showCreateDialog}
+          onOpenChange={setShowCreateDialog}
+          onExamCreated={handleExamCreated}
+        />
+      </LazyDialogHost>
 
-      <CreateLiveExamDialog
-        open={showCreateLiveDialog}
-        onOpenChange={setShowCreateLiveDialog}
-        onExamCreated={handleLiveExamCreated}
-      />
+      <LazyDialogHost open={showCreateLiveDialog}>
+        <CreateLiveExamDialog
+          open={showCreateLiveDialog}
+          onOpenChange={setShowCreateLiveDialog}
+          onExamCreated={handleLiveExamCreated}
+        />
+      </LazyDialogHost>
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
@@ -1038,35 +1114,41 @@ const Dashboard = () => {
       {/* Publish/Unpublish Confirmation Dialog — shares the exact validation
           used on the edit-exam page via the PublishExamDialog component. */}
       {publishAction && (
-        <PublishExamDialog
-          open={showPublishDialog}
-          onOpenChange={(open) => {
-            setShowPublishDialog(open);
-            if (!open) setPublishAction(null);
-          }}
-          examId={publishAction.examId}
-          examName={publishAction.examName}
-          isPublishing={publishAction.isPublishing}
-          onSuccess={(isPublishing) => {
-            setExams(prev => prev.map(e => e.id === publishAction.examId ? { ...e, is_published: isPublishing } : e));
-          }}
-          onNavigateToQuestion={(sectionId, qNo) => {
-            // The dashboard has no inline section editor, so send the creator to
-            // the full editor to fix the flagged question.
-            navigate(`/exam/${publishAction.examId}`);
-          }}
-        />
+        <Suspense fallback={null}>
+          <PublishExamDialog
+            open={showPublishDialog}
+            onOpenChange={(open) => {
+              setShowPublishDialog(open);
+              if (!open) setPublishAction(null);
+            }}
+            examId={publishAction.examId}
+            examName={publishAction.examName}
+            isPublishing={publishAction.isPublishing}
+            onSuccess={(isPublishing) => {
+              setExams(prev => prev.map(e => e.id === publishAction.examId ? { ...e, is_published: isPublishing } : e));
+            }}
+            onNavigateToQuestion={(sectionId, qNo) => {
+              // The dashboard has no inline section editor, so send the creator to
+              // the full editor to fix the flagged question.
+              navigate(`/exam/${publishAction.examId}`);
+            }}
+          />
+        </Suspense>
       )}
 
-      <OnboardingModal
-        isOpen={showOnboardingModal}
-        onComplete={() => setShowOnboardingModal(false)}
-      />
+      <LazyDialogHost open={showOnboardingModal}>
+        <OnboardingModal
+          isOpen={showOnboardingModal}
+          onComplete={() => setShowOnboardingModal(false)}
+        />
+      </LazyDialogHost>
 
-      <ProfileDialog
-        isOpen={showProfile}
-        onOpenChange={setShowProfile}
-      />
+      <LazyDialogHost open={showProfile}>
+        <ProfileDialog
+          isOpen={showProfile}
+          onOpenChange={setShowProfile}
+        />
+      </LazyDialogHost>
     </div >
   );
 };
