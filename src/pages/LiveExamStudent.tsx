@@ -92,9 +92,11 @@ import {
   isMuted as soundsAreMuted,
 } from "@/lib/liveSounds";
 
+// No flag emoji here on purpose: a language is not a country, and Windows has
+// no colour emoji for regional indicators anyway — it rendered as "GB EN".
 const AVAILABLE_LANGUAGES = [
-  { code: "en", label: "English", nativeLabel: "English", flag: "🇬🇧" },
-  { code: "hi", label: "Hindi", nativeLabel: "हिंदी", flag: "🇮🇳" },
+  { code: "en", label: "English", nativeLabel: "English" },
+  { code: "hi", label: "Hindi", nativeLabel: "हिंदी" },
 ];
 
 /**
@@ -1202,9 +1204,7 @@ export default function LiveExamStudent() {
       <SelectTrigger className={compact ? "h-8 w-[86px] px-2 text-xs" : "h-11 w-full"}>
         <Globe className="mr-1.5 h-3.5 w-3.5 shrink-0 text-primary" />
         <span className="truncate">
-          {compact
-            ? `${activeLang?.flag ?? ""} ${activeLanguage.toUpperCase()}`.trim()
-            : `${activeLang?.flag ?? ""} ${activeLang?.label || activeLanguage}`.trim()}
+          {compact ? activeLanguage.toUpperCase() : activeLang?.label || activeLanguage}
         </span>
       </SelectTrigger>
       <SelectContent>
@@ -1212,10 +1212,7 @@ export default function LiveExamStudent() {
           const lang = AVAILABLE_LANGUAGES.find((l) => l.code === langCode);
           return (
             <SelectItem key={langCode} value={langCode}>
-              <span className="flex items-center gap-2">
-                <span>{lang?.flag}</span>
-                <span>{lang?.label || langCode}</span>
-              </span>
+              {lang?.label || langCode}
             </SelectItem>
           );
         })}
