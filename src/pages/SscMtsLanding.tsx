@@ -27,6 +27,8 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
 import { supabase } from "@/integrations/supabase/client";
+import { PAPER_TYPE_COLUMN, PAPER_TYPE_PYQ } from "@/lib/paperType.js";
+import { hasPaperTypeColumn } from "@/lib/paperTypeSettings";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * EDIT ME FIRST
@@ -40,6 +42,13 @@ import { supabase } from "@/integrations/supabase/client";
  * ──────────────────────────────────────────────────────────────────────────── */
 const EXAM_CATEGORY = "SSC MTS";
 const MARKETPLACE_LINK = `/marketplace?category=${encodeURIComponent(EXAM_CATEGORY)}`;
+/**
+ * The same library, narrowed to previous-year papers — `?type=` is what
+ * Marketplace parses (parsePaperTypeParam). Only the papers shelf links here;
+ * the page's other CTAs stay on the unfiltered category so "browse SSC MTS"
+ * keeps meaning every SSC MTS paper.
+ */
+const PYQ_MARKETPLACE_LINK = `${MARKETPLACE_LINK}&type=${PAPER_TYPE_PYQ}`;
 const OFFICIAL_SITE = "https://ssc.gov.in";
 
 /**
@@ -607,6 +616,9 @@ const CbePreview = () => {
  * ──────────────────────────────────────────────────────────────────────────── */
 type PaperRow = { id: string; name: string };
 
+/** How many papers the shelf shows — the grid is 3 across, plus a "view all" tile. */
+const PAPER_SHELF_LIMIT = 5;
+
 /**
  * `from=marketplace` is not cosmetic: it is the only value that points the
  * intro screen's Back button at the exam library. Without it students get sent
@@ -633,23 +645,45 @@ const paperYear = (name: string) => name.match(/\b(19|20)\d{2}\b/)?.[0] ?? null;
  * that lists papers the page does not actually show is exactly the mismatch
  * Google treats as spam, so the two must not be able to drift apart.
  * `null` means in flight.
+ *
+ * The shelf is published SSC MTS papers tagged as previous-year (exams.paper_type
+ * = 'pyq'), so tagging a paper in the editor is all it takes to put it here.
+ *
+ * That column arrives by hand-pasted migration, and naming a column PostgREST
+ * has not seen fails the WHOLE request — so it is probed before it is filtered
+ * on. On a database without it there is no way to tell a PYQ from a mock, and a
+ * shelf that quietly went dark would be worse than the pre-feature behaviour, so
+ * that case falls back to every published SSC MTS paper. `typeFiltered` reports
+ * which of the two happened, so the "view all" links can only send someone to a
+ * filtered library when that filter is one the library can actually apply.
  */
 const useSscMtsPapers = () => {
   const [papers, setPapers] = useState<PaperRow[] | null>(null);
+  const [typeFiltered, setTypeFiltered] = useState(false);
 
   useEffect(() => {
     let active = true;
     (async () => {
+      // false on a transient failure too, which costs at most an unfiltered
+      // shelf until the next reload — never an empty one.
+      const canFilterByType = await hasPaperTypeColumn();
+      if (!active) return;
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from("exams")
           .select("id, name")
           .eq("is_published", true)
-          .eq("exam_category", EXAM_CATEGORY)
+          .eq("exam_category", EXAM_CATEGORY);
+        if (canFilterByType) query = query.eq(PAPER_TYPE_COLUMN, PAPER_TYPE_PYQ);
+
+        const { data, error } = await query
           .order("created_at", { ascending: false })
-          .limit(5);
+          .limit(PAPER_SHELF_LIMIT);
         if (error) throw error;
-        if (active) setPapers(data ?? []);
+        if (active) {
+          setPapers(data ?? []);
+          setTypeFiltered(canFilterByType);
+        }
       } catch {
         // A marketing shelf is not worth an error state — it just doesn't render.
         if (active) setPapers([]);
@@ -660,10 +694,16 @@ const useSscMtsPapers = () => {
     };
   }, []);
 
-  return papers;
+  return { papers, typeFiltered };
 };
 
-const PreviousYearPapers = ({ papers }: { papers: PaperRow[] | null }) => {
+const PreviousYearPapers = ({
+  papers,
+  libraryLink,
+}: {
+  papers: PaperRow[] | null;
+  libraryLink: string;
+}) => {
   // null while in flight, so the shelf can render a skeleton instead of flashing
   // an empty state at the one moment the page is being judged.
   const loading = papers === null;
@@ -715,7 +755,7 @@ const PreviousYearPapers = ({ papers }: { papers: PaperRow[] | null }) => {
             </div>
           </div>
           <Link
-            to={MARKETPLACE_LINK}
+            to={libraryLink}
             className="hidden sm:inline-flex items-center gap-1.5 text-[13px] font-semibold text-white/60 hover:text-white transition-colors whitespace-nowrap flex-shrink-0 mt-1"
           >
             View all
@@ -773,7 +813,7 @@ const PreviousYearPapers = ({ papers }: { papers: PaperRow[] | null }) => {
             /* Violet on purpose: this one goes to the library, not into a paper.
                Colour carries the difference so nobody has to read to find it. */
             <Link
-              to={MARKETPLACE_LINK}
+              to={libraryLink}
               className="group rounded-xl border border-dashed border-white/20 hover:border-[#8B6BF7]/70 hover:bg-[#6C3EF4]/[0.12] p-4 transition-all duration-200 grid place-items-center text-center min-h-[132px]"
             >
               <span>
@@ -867,7 +907,11 @@ const TakeExamButton = ({ label = "Take a Free Mock Test", className = "" }: { l
 
 const SscMtsLanding = () => {
   const [showSticky, setShowSticky] = useState(false);
-  const papers = useSscMtsPapers();
+  const { papers, typeFiltered } = useSscMtsPapers();
+  // A `?type=pyq` library on a database that cannot tell the two apart lands on
+  // "Nothing published under Previous Year Paper yet" — so the shelf only
+  // pre-filters the link when its own rows were filtered the same way.
+  const papersLibraryLink = typeFiltered ? PYQ_MARKETPLACE_LINK : MARKETPLACE_LINK;
 
   // The sticky bar is for the WhatsApp-forward crowd on a phone: by the time the
   // hero has scrolled away, the one action worth taking should still be a thumb
@@ -1137,7 +1181,7 @@ const SscMtsLanding = () => {
                 the pitch. Straight after the CTAs on mobile; a full-width row
                 under both columns on desktop. */}
             <div className="order-2 lg:order-3 lg:col-span-2 min-w-0">
-              <PreviousYearPapers papers={papers} />
+              <PreviousYearPapers papers={papers} libraryLink={papersLibraryLink} />
             </div>
           </div>
         </div>

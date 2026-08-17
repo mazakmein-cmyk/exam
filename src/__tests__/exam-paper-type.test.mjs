@@ -92,6 +92,7 @@ const LIBRARY = readSrc("pages/Marketplace.tsx");
 const SETTINGS = readSrc("lib/paperTypeSettings.ts");
 const ADMIN = readSrc("pages/AdminDashboard.tsx");
 const FIELD = readSrc("components/exam/PaperTypeSelect.tsx");
+const SSC_MTS_LANDING = readSrc("pages/SscMtsLanding.tsx");
 const MIGRATION = readSql("20260825000000_add_exam_paper_type.sql");
 
 console.log("\n📋 PAPER TYPE\n");
@@ -331,6 +332,35 @@ test("the library reads with select(*) and never names the column", () => {
     !/select\([^)]*paper_type/.test(LIBRARY),
     "naming paper_type in a select would empty the library pre-migration"
   );
+});
+
+test("the SSC MTS shelf probes the column before it filters on it", () => {
+  assertContains(
+    SSC_MTS_LANDING,
+    "await hasPaperTypeColumn()",
+    "filtering on a column PostgREST has not seen fails the whole request"
+  );
+  assertContains(
+    SSC_MTS_LANDING,
+    "if (canFilterByType) query = query.eq(PAPER_TYPE_COLUMN, PAPER_TYPE_PYQ);",
+    "the shelf must list previous-year papers, not whatever was published last"
+  );
+  assert(
+    !/select\("[^"]*paper_type/.test(SSC_MTS_LANDING),
+    "naming the column in the select would empty the shelf pre-migration"
+  );
+});
+
+test("the shelf only links to a ?type= library it could filter itself", () => {
+  assertContains(SSC_MTS_LANDING, "typeFiltered ? PYQ_MARKETPLACE_LINK : MARKETPLACE_LINK");
+  assertContains(
+    SSC_MTS_LANDING,
+    "const PYQ_MARKETPLACE_LINK = `${MARKETPLACE_LINK}&type=${PAPER_TYPE_PYQ}`",
+    "the library parses ?type=, and the key must come from the shared constant"
+  );
+  // Pre-migration every row reads as a mock, so ?type=pyq would land on an
+  // empty library — the fallback link is the unfiltered category.
+  assertContains(SSC_MTS_LANDING, "setTypeFiltered(canFilterByType)");
 });
 
 // ─── 5. The migration ───────────────────────────────────────────────────────
