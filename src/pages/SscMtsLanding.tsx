@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
   BadgeCheck,
   BarChart3,
-  BookOpenCheck,
   CalendarDays,
   ChevronDown,
   Clock,
@@ -16,10 +15,12 @@ import {
   ListChecks,
   Minus,
   MonitorSmartphone,
+  MousePointerClick,
   ShieldCheck,
   Sparkles,
   Timer,
   TrendingUp,
+  Trophy,
   Wallet,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
@@ -90,6 +91,7 @@ const QUICK_FACTS = [
   { icon: GraduationCap, label: "Qualification", value: "Matriculation (Class 10) pass" },
   { icon: CalendarDays, label: "Age limit", value: "18–25 yrs · Havaldar 18–27 yrs" },
   { icon: Wallet, label: "Pay", value: "Level-1 · ₹18,000 – ₹56,900" },
+  { icon: ListChecks, label: "Selection", value: "CBE only · Havaldar adds PET/PST" },
 ];
 
 const SYLLABUS = [
@@ -150,6 +152,12 @@ const SYLLABUS = [
     ],
   },
 ];
+
+/** "20 questions · 60 marks" captions on the syllabus cards, derived from
+    SESSIONS so the two sections can never quote different numbers. */
+const SUBJECT_META = Object.fromEntries(
+  SESSIONS.flatMap((s) => s.subjects.map((sub) => [sub.name, `${sub.questions} questions · ${sub.marks} marks`]))
+) as Record<string, string>;
 
 /** Recommended split of each 45-minute session. Widths are % of the session. */
 const TIME_PLAN = [
@@ -577,7 +585,8 @@ const CbePreview = () => {
       </div>
 
       <p className="px-4 py-2.5 text-[10.5px] text-white/30 bg-white/[0.02] border-t border-white/10">
-        Live preview · 3 sample questions. The real paper runs 90 questions across two sessions.
+        <span className="text-white/50 font-semibold">Interactive preview</span> — tap an option,
+        everything works. The real paper runs 90 questions across two sessions.
       </p>
     </div>
   );
@@ -810,6 +819,41 @@ const FaqItem = ({ q, a, defaultOpen }: { q: string; a: string; defaultOpen: boo
   );
 };
 
+/* One header idiom for eight sections: an eyebrow chip gives the eye a landing
+   point before each H2, and keeps a long page reading as a single system rather
+   than eight stacked pages. */
+const SectionHead = ({
+  eyebrow,
+  title,
+  lede,
+  align = "center",
+  className = "",
+}: {
+  eyebrow: string;
+  title: ReactNode;
+  lede?: ReactNode;
+  align?: "center" | "left";
+  className?: string;
+}) => (
+  <div className={`${align === "center" ? "text-center" : ""} ${className}`}>
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/[0.07] px-3.5 py-1.5 text-[10.5px] font-black uppercase tracking-[0.16em] text-primary">
+      {eyebrow}
+    </span>
+    <h2 className="mt-4 text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em]">
+      {title}
+    </h2>
+    {lede && (
+      <p
+        className={`mt-3 text-[15px] text-muted-foreground leading-[1.7] ${
+          align === "center" ? "max-w-2xl mx-auto" : "max-w-xl"
+        }`}
+      >
+        {lede}
+      </p>
+    )}
+  </div>
+);
+
 /** The primary action, used in the hero, mid-page and the sticky mobile bar. */
 const TakeExamButton = ({ label = "Take a Free Mock Test", className = "" }: { label?: string; className?: string }) => (
   <Link
@@ -960,11 +1004,16 @@ const SscMtsLanding = () => {
           </nav>
 
           <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,540px)] gap-10 lg:gap-12 lg:items-center">
-            {/* Copy */}
-            <div className="order-1">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] backdrop-blur-sm px-3.5 py-1.5 mb-6">
-                <Sparkles className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
-                <span className="text-[11.5px] font-semibold text-white/70 tracking-wide">
+            {/* Copy. min-w-0 on every hero grid item: below lg the implicit
+                track has no minmax(0,…), so without it the track sizes to the
+                preview's intrinsic width and the whole hero overflows a phone. */}
+            <div className="order-1 min-w-0 motion-safe:animate-slide-up">
+              {/* Amber on purpose: this chip and the papers shelf below are the
+                  same "previous-year gold" offer, and colour ties them together
+                  before a single word is read. Violet stays the action colour. */}
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-400/25 bg-amber-400/[0.08] backdrop-blur-sm px-3.5 py-1.5 mb-6">
+                <Sparkles className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
+                <span className="text-[11.5px] font-semibold text-amber-100/90 tracking-wide">
                   Free forever · Previous year papers included
                 </span>
               </div>
@@ -972,54 +1021,122 @@ const SscMtsLanding = () => {
               {/* The H1 carries the target phrase verbatim; the gradient still
                   lands on the benefit half, so ranking and conversion are not
                   fighting over the same line. */}
-              <h1 className="text-[32px] sm:text-[44px] lg:text-[52px] font-black text-white leading-[1.06] tracking-[-0.035em] mb-5">
+              <h1 className="text-[32px] sm:text-[44px] lg:text-[52px] font-black text-white leading-[1.08] tracking-[-0.035em] mb-6">
                 SSC MTS previous year papers on the{" "}
-                <span className="bg-gradient-to-r from-[#A78BFA] to-[#F0ABFC] bg-clip-text text-transparent">
-                  real exam screen
+                <span className="relative inline-block">
+                  <span className="bg-gradient-to-r from-[#A78BFA] via-[#C4B5FD] to-[#F0ABFC] bg-clip-text text-transparent">
+                    real exam screen
+                  </span>
+                  {/* Hand-drawn underline — the one organic stroke on a page of
+                      rectangles, so it lands on the words that matter most. */}
+                  <svg
+                    className="absolute -bottom-2 left-0 w-full h-[10px]"
+                    viewBox="0 0 300 12"
+                    fill="none"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M3 9 C 60 2.5, 240 2.5, 297 7.5"
+                      stroke="url(#ssc-underline)"
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                    />
+                    <defs>
+                      <linearGradient id="ssc-underline" x1="0" y1="0" x2="300" y2="0" gradientUnits="userSpaceOnUse">
+                        <stop stopColor="#8B5CF6" stopOpacity="0.95" />
+                        <stop offset="1" stopColor="#F0ABFC" stopOpacity="0.45" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
                 </span>
               </h1>
 
-              <p className="text-[16px] sm:text-[17px] text-white/55 leading-[1.7] mb-3 max-w-xl">
+              <p className="text-[16px] sm:text-[17px] text-white/60 leading-[1.7] mb-3 max-w-xl">
                 Attempt real SSC MTS previous year question papers — 2024 and 2023 shifts — with two
                 timed sessions, the exact negative marking of the real paper, and the same question
                 palette you will see at the test centre.
               </p>
-              <p className="text-[15px] text-white/45 leading-[1.75] mb-8 max-w-xl">
+              <p className="flex items-start gap-2 text-[14.5px] text-white/45 leading-[1.75] mb-8 max-w-xl">
+                <Languages className="h-4 w-4 text-white/35 flex-shrink-0 mt-1" aria-hidden="true" />
                 असली परीक्षा जैसा इंटरफ़ेस — हिंदी और अंग्रेज़ी दोनों में। पूरी तरह मुफ़्त।
               </p>
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-8">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-6">
                 <TakeExamButton />
                 <a
                   href="#exam-pattern"
-                  className="inline-flex items-center justify-center gap-2.5 rounded-xl border border-white/10 hover:border-white/20 bg-white/[0.04] hover:bg-white/[0.08] backdrop-blur-sm px-7 py-3.5 text-[15px] font-semibold text-white/70 hover:text-white transition-all duration-200"
+                  className="inline-flex items-center justify-center gap-2.5 rounded-xl border border-white/10 hover:border-white/25 bg-white/[0.04] hover:bg-white/[0.08] backdrop-blur-sm px-7 py-3.5 text-[15px] font-semibold text-white/70 hover:text-white transition-all duration-200"
                 >
                   <ListChecks className="h-4 w-4" aria-hidden="true" />
                   See the exam pattern
                 </a>
               </div>
 
-              <ul className="flex flex-wrap gap-x-5 gap-y-2.5">
-                {["100% free", "No card needed", "English + हिंदी", "Unlimited attempts"].map((t) => (
+              <ul className="flex flex-wrap gap-x-5 gap-y-2.5 mb-7">
+                {["No card needed", "Unlimited attempts", "English + हिंदी"].map((t) => (
                   <li key={t} className="flex items-center gap-1.5 text-[12.5px] text-white/50">
                     <BadgeCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
                     {t}
                   </li>
                 ))}
               </ul>
+
+              {/* The paper, quantified. Exact numbers are the trust currency of
+                  this audience — "45+45" tells an aspirant we know the exam in a
+                  way no adjective can. */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-xl">
+                {[
+                  { v: "90", l: "questions" },
+                  { v: "270", l: "marks" },
+                  { v: "45+45", l: "minutes" },
+                  { v: "₹0", l: "free forever" },
+                ].map((s) => (
+                  <div
+                    key={s.l}
+                    className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm px-3 py-3 text-center"
+                  >
+                    <div className="font-display text-[19px] font-extrabold text-white tracking-tight tabular-nums">
+                      {s.v}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/35 mt-0.5">
+                      {s.l}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Interface preview. Ordered LAST on a phone deliberately: it is a
-                tall panel, and stacking it above the papers shelf buried the
-                shelf a full screen below the fold. */}
-            <div className="order-3 lg:order-2 lg:pl-2">
-              <CbePreview />
+            {/* Interface preview, staged as the product shot: halo behind it,
+                bevel around it, callouts floating off its corners. Ordered LAST
+                on a phone deliberately: it is a tall panel, and stacking it above
+                the papers shelf buried the shelf a full screen below the fold. */}
+            <div className="order-3 lg:order-2 lg:pl-2 min-w-0 motion-safe:animate-scale-in motion-safe:delay-200">
+              <div className="relative">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -inset-5 rounded-[28px] bg-gradient-to-br from-[#6C3EF4]/30 via-transparent to-[#F0ABFC]/20 blur-2xl opacity-70"
+                />
+                <div className="relative rounded-[17px] bg-gradient-to-b from-white/[0.16] via-white/[0.05] to-transparent p-px">
+                  <CbePreview />
+                </div>
+
+                {/* Callouts float outside the frame and never intercept a tap. */}
+                <div className="pointer-events-none absolute -top-4 left-5 hidden lg:flex items-center gap-1.5 rounded-full border border-white/15 bg-[#0C1024]/95 px-3 py-1.5 shadow-xl animate-float">
+                  <MousePointerClick className="h-3.5 w-3.5 text-[#A78BFA]" aria-hidden="true" />
+                  <span className="text-[11px] font-semibold text-white/80">Interactive — try a question</span>
+                </div>
+                <div className="pointer-events-none absolute -bottom-4 right-5 hidden lg:flex items-center gap-1.5 rounded-full border border-white/15 bg-[#0C1024]/95 px-3 py-1.5 shadow-xl animate-float delay-700">
+                  <Languages className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
+                  <span className="text-[11px] font-semibold text-white/80">हिंदी one tap away</span>
+                </div>
+              </div>
             </div>
 
             {/* Previous year papers — the proof that there is real content behind
                 the pitch. Straight after the CTAs on mobile; a full-width row
                 under both columns on desktop. */}
-            <div className="order-2 lg:order-3 lg:col-span-2">
+            <div className="order-2 lg:order-3 lg:col-span-2 min-w-0">
               <PreviousYearPapers papers={papers} />
             </div>
           </div>
@@ -1027,21 +1144,31 @@ const SscMtsLanding = () => {
       </section>
 
       {/* ══ Quick facts ══ */}
-      <section className="border-b border-border/50 bg-secondary/25 px-5 py-8">
-        <div className="container mx-auto max-w-5xl grid sm:grid-cols-3 gap-5 sm:gap-8">
-          {QUICK_FACTS.map(({ icon: Icon, label, value }) => (
-            <div key={label} className="flex items-start gap-3">
-              <span className="grid place-items-center w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex-shrink-0">
-                <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
-              </span>
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/70">
-                  {label}
+      <section className="border-b border-border/50 bg-secondary/25 px-5 py-10">
+        <div className="container mx-auto max-w-5xl">
+          <p className="text-center text-[11px] font-black uppercase tracking-[0.18em] text-muted-foreground/60 mb-5">
+            The job, at a glance
+          </p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {QUICK_FACTS.map(({ icon: Icon, label, value }) => (
+              <div
+                key={label}
+                className="flex items-start gap-3 rounded-2xl border border-border/60 bg-card p-4 shadow-sm"
+              >
+                <span className="grid place-items-center w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex-shrink-0">
+                  <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[10.5px] font-bold uppercase tracking-widest text-muted-foreground/70">
+                    {label}
+                  </div>
+                  <div className="text-[13.5px] font-semibold text-foreground mt-0.5 leading-snug">
+                    {value}
+                  </div>
                 </div>
-                <div className="text-[14px] font-semibold text-foreground mt-0.5">{value}</div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </section>
 
@@ -1051,11 +1178,14 @@ const SscMtsLanding = () => {
           gets answered, and where link equity flows out to the SSC articles. */}
       <section className="py-16 sm:py-20 px-5">
         <div className="container mx-auto max-w-3xl">
-          <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em] mb-5">
-            Why SSC MTS previous year papers beat any practice set
-          </h2>
+          <SectionHead
+            align="left"
+            className="mb-6"
+            eyebrow="The case for PYQs"
+            title="Why SSC MTS previous year papers beat any practice set"
+          />
           <div className="space-y-5 text-[15px] sm:text-[16px] text-muted-foreground leading-[1.85]">
-            <p>
+            <p className="text-[16px] sm:text-[17px] text-foreground/75">
               SSC writes its own papers, and it writes them to a house style. Across MTS cycles the
               same arithmetic templates reappear with different numbers, the same reasoning families
               rotate, and General Awareness returns to the same narrow band of static topics. A
@@ -1152,16 +1282,63 @@ const SscMtsLanding = () => {
       {/* ══ Exam pattern ══ */}
       <section id="exam-pattern" className="scroll-mt-20 py-16 sm:py-20 px-5">
         <div className="container mx-auto max-w-5xl">
-          <div className="text-center mb-10">
-            <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em] mb-3">
-              SSC MTS exam pattern
-            </h2>
-            <p className="text-[15px] text-muted-foreground max-w-2xl mx-auto leading-[1.7]">
-              90 questions, 270 marks, 90 minutes — but the two sessions do completely different
-              jobs. Session I is a <strong className="text-foreground/85">qualifying gate</strong>;
-              Session II is your <strong className="text-foreground/85">entire merit score</strong>.
-              Understanding that is worth more marks than any chapter you revise.
-            </p>
+          <SectionHead
+            className="mb-8 sm:mb-10"
+            eyebrow="Exam pattern"
+            title="SSC MTS exam pattern"
+            lede={
+              <>
+                90 questions, 270 marks, 90 minutes — but the two sessions do completely different
+                jobs. Session I is a <strong className="text-foreground/85">qualifying gate</strong>;
+                Session II is your <strong className="text-foreground/85">entire merit score</strong>.
+                Understanding that is worth more marks than any chapter you revise.
+              </>
+            }
+          />
+
+          {/* The mechanic aspirants get wrong most often, drawn instead of
+              footnoted. Three nodes, two arrows — the arrows rotate to point
+              down when the flow stacks on a phone. */}
+          <div className="mb-8 flex flex-col md:flex-row items-stretch md:items-center gap-3">
+            <div className="flex-1 rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.05] p-5">
+              <div className="text-[10.5px] font-black uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400">
+                Session I · 120 marks
+              </div>
+              <div className="text-[18px] font-black text-foreground tracking-tight mt-1">The gate</div>
+              <p className="text-[12.5px] text-muted-foreground leading-[1.6] mt-1.5">
+                Clear your category cutoff — 30% UR/EWS, 25% OBC, 20% SC/ST — and these marks are
+                then discarded.
+              </p>
+            </div>
+            <div className="grid place-items-center" aria-hidden="true">
+              <span className="grid place-items-center w-9 h-9 rounded-full border border-border bg-card shadow-sm rotate-90 md:rotate-0">
+                <ArrowRight className="h-4 w-4 text-muted-foreground" />
+              </span>
+            </div>
+            <div className="flex-1 rounded-2xl border border-amber-500/30 bg-amber-500/[0.05] p-5">
+              <div className="text-[10.5px] font-black uppercase tracking-[0.14em] text-amber-600 dark:text-amber-400">
+                Session II · 150 marks
+              </div>
+              <div className="text-[18px] font-black text-foreground tracking-tight mt-1">The race</div>
+              <p className="text-[12.5px] text-muted-foreground leading-[1.6] mt-1.5">
+                Every mark counts, and every wrong answer costs 1. This is the score that ranks you.
+              </p>
+            </div>
+            <div className="grid place-items-center" aria-hidden="true">
+              <span className="grid place-items-center w-9 h-9 rounded-full border border-border bg-card shadow-sm rotate-90 md:rotate-0">
+                <ArrowRight className="h-4 w-4 text-muted-foreground" />
+              </span>
+            </div>
+            <div className="flex-1 rounded-2xl bg-primary text-primary-foreground p-5 shadow-glow">
+              <div className="flex items-center gap-1.5 text-[10.5px] font-black uppercase tracking-[0.14em] text-white/70">
+                <Trophy className="h-3.5 w-3.5" aria-hidden="true" />
+                The result
+              </div>
+              <div className="text-[18px] font-black tracking-tight mt-1">Merit list</div>
+              <p className="text-[12.5px] text-white/75 leading-[1.6] mt-1.5">
+                Drawn on your normalised Session II score out of 150 — nothing else.
+              </p>
+            </div>
           </div>
 
           <div className="grid md:grid-cols-2 gap-5">
@@ -1235,45 +1412,57 @@ const SscMtsLanding = () => {
                   </table>
 
                   <div
-                    className={`px-6 py-3 border-t flex items-center gap-2 ${
+                    className={`px-6 py-4 border-t space-y-2.5 ${
                       isNeg
                         ? "bg-amber-500/[0.06] border-amber-500/20"
                         : "bg-emerald-500/[0.06] border-emerald-500/20"
                     }`}
                   >
-                    <span
-                      className={`text-[10.5px] font-black uppercase tracking-widest ${
-                        isNeg
-                          ? "text-amber-600 dark:text-amber-400"
-                          : "text-emerald-600 dark:text-emerald-400"
-                      }`}
-                    >
-                      {s.role}
-                    </span>
+                    <p className="text-[12.5px] text-muted-foreground leading-[1.65]">
+                      <strong
+                        className={`text-[11px] font-black uppercase tracking-widest mr-1.5 ${
+                          isNeg
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-emerald-600 dark:text-emerald-400"
+                        }`}
+                      >
+                        {s.role}.
+                      </strong>
+                      {s.roleNote}
+                    </p>
+                    <p className="text-[12.5px] text-muted-foreground leading-[1.65]">{s.negativeNote}</p>
                   </div>
-                  <p className="px-6 pt-3 text-[12.5px] text-muted-foreground leading-[1.65]">
-                    {s.roleNote}
-                  </p>
-                  <p className="px-6 py-4 text-[12.5px] text-muted-foreground leading-[1.65]">
-                    {s.negativeNote}
-                  </p>
                 </div>
               );
             })}
           </div>
 
-          <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 rounded-2xl border border-border/60 bg-secondary/30 px-6 py-4">
+          {/* The merit tile is the only tinted one, because "150" is the only
+              number on this row an aspirant actually competes against. */}
+          <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { label: "Questions", value: "90" },
-              { label: "Paper total", value: "270" },
-              { label: "Counts for merit", value: "150" },
-              { label: "Total time", value: "90 min" },
+              { label: "Questions", value: "90", hint: "45 + 45 across two sessions" },
+              { label: "Paper total", value: "270", hint: "120 + 150 marks" },
+              { label: "Counts for merit", value: "150", hint: "Session II only, normalised", hot: true },
+              { label: "Total time", value: "90 min", hint: "Two locked 45-min clocks" },
             ].map((t) => (
-              <div key={t.label} className="text-center">
-                <div className="text-[19px] font-black text-foreground tracking-tight">{t.value}</div>
-                <div className="text-[11px] uppercase tracking-widest text-muted-foreground/70 mt-0.5">
+              <div
+                key={t.label}
+                className={`rounded-2xl border p-5 text-center ${
+                  t.hot ? "border-primary/40 bg-primary/[0.06]" : "border-border/60 bg-card"
+                }`}
+              >
+                <div
+                  className={`font-display text-[26px] font-extrabold tracking-tight tabular-nums ${
+                    t.hot ? "text-primary" : "text-foreground"
+                  }`}
+                >
+                  {t.value}
+                </div>
+                <div className="text-[10.5px] font-black uppercase tracking-widest text-muted-foreground/70 mt-1">
                   {t.label}
                 </div>
+                <div className="text-[11.5px] text-muted-foreground/80 mt-1">{t.hint}</div>
               </div>
             ))}
           </div>
@@ -1297,15 +1486,12 @@ const SscMtsLanding = () => {
       {/* ══ Strategy: the asymmetry between the two sessions ══ */}
       <section className="py-16 sm:py-20 px-5 bg-secondary/20 border-y border-border/50">
         <div className="container mx-auto max-w-5xl">
-          <div className="text-center mb-10">
-            <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em] mb-3">
-              The 90 minutes, planned
-            </h2>
-            <p className="text-[15px] text-muted-foreground max-w-2xl mx-auto leading-[1.7]">
-              Most SSC MTS marks are lost to the clock, not to the syllabus. Here is a split worth
-              rehearsing in your mocks until it needs no thinking on exam day.
-            </p>
-          </div>
+          <SectionHead
+            className="mb-8 sm:mb-10"
+            eyebrow="Time strategy"
+            title="The 90 minutes, planned"
+            lede="Most SSC MTS marks are lost to the clock, not to the syllabus. Here is a split worth rehearsing in your mocks until it needs no thinking on exam day."
+          />
 
           <div className="space-y-5">
             {TIME_PLAN.map((plan) => {
@@ -1392,22 +1578,25 @@ const SscMtsLanding = () => {
       {/* ══ Syllabus ══ */}
       <section className="py-16 sm:py-20 px-5">
         <div className="container mx-auto max-w-5xl">
-          <div className="text-center mb-10">
-            <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em] mb-3">
-              SSC MTS syllabus
-            </h2>
-            <p className="text-[15px] text-muted-foreground max-w-xl mx-auto leading-[1.7]">
-              Four subjects, all pitched at Class 10 level. Every paper in the library maps to this.
-            </p>
-          </div>
+          <SectionHead
+            className="mb-8 sm:mb-10"
+            eyebrow="Syllabus"
+            title="SSC MTS syllabus"
+            lede="Four subjects, all pitched at Class 10 level. Every paper in the library maps to this."
+          />
 
           <div className="grid sm:grid-cols-2 gap-5">
             {SYLLABUS.map((s) => (
               <div key={s.subject} className="rounded-2xl border border-border/60 bg-card p-6">
                 <div className="flex items-start justify-between gap-3 mb-4">
-                  <h3 className="text-[15px] font-bold text-foreground tracking-tight leading-snug">
-                    {s.subject}
-                  </h3>
+                  <div className="min-w-0">
+                    <h3 className="text-[15px] font-bold text-foreground tracking-tight leading-snug">
+                      {s.subject}
+                    </h3>
+                    <p className="text-[11.5px] font-medium text-muted-foreground/80 mt-1">
+                      {SUBJECT_META[s.subject]}
+                    </p>
+                  </div>
                   <span
                     className={`text-[10.5px] font-bold px-2 py-1 rounded-full whitespace-nowrap ${
                       s.session === "Session I"
@@ -1437,22 +1626,20 @@ const SscMtsLanding = () => {
       {/* ══ Why MockSetu ══ */}
       <section className="py-16 sm:py-20 px-5 bg-secondary/20 border-y border-border/50">
         <div className="container mx-auto max-w-5xl">
-          <div className="text-center mb-10">
-            <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em] mb-3">
-              What you actually get
-            </h2>
-            <p className="text-[15px] text-muted-foreground max-w-xl mx-auto leading-[1.7]">
-              Built for the SSC computer-based test specifically — not a generic quiz with an SSC label.
-            </p>
-          </div>
+          <SectionHead
+            className="mb-8 sm:mb-10"
+            eyebrow="Built for the CBE"
+            title="What you actually get"
+            lede="Built for the SSC computer-based test specifically — not a generic quiz with an SSC label."
+          />
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {FEATURES.map(({ icon: Icon, title, desc }) => (
               <div
                 key={title}
-                className="rounded-2xl border border-border/60 bg-card p-6 hover:border-primary/35 transition-colors"
+                className="group rounded-2xl border border-border/60 bg-card p-6 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-primary/30"
               >
-                <span className="grid place-items-center w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 mb-4">
+                <span className="grid place-items-center w-11 h-11 rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 border border-primary/20 mb-4 transition-transform duration-300 group-hover:scale-105">
                   <Icon className="h-[18px] w-[18px] text-primary" aria-hidden="true" />
                 </span>
                 <h3 className="text-[15px] font-bold text-foreground tracking-tight mb-2">{title}</h3>
@@ -1466,14 +1653,18 @@ const SscMtsLanding = () => {
       {/* ══ How it works ══ */}
       <section className="py-16 sm:py-20 px-5">
         <div className="container mx-auto max-w-4xl">
-          <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em] mb-10 text-center">
-            How to use this properly
-          </h2>
-          <div className="grid sm:grid-cols-3 gap-6">
+          <SectionHead className="mb-10 sm:mb-12" eyebrow="How it works" title="How to use this properly" />
+          <div className="relative grid sm:grid-cols-3 gap-8 sm:gap-6">
+            {/* The rail behind the step markers; it fades out at both ends so it
+                reads as a path, not a border. */}
+            <div
+              className="hidden sm:block absolute top-5 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent"
+              aria-hidden="true"
+            />
             {STEPS.map((s) => (
-              <div key={s.n}>
-                <div className="text-[28px] font-black text-primary/25 tracking-tight leading-none mb-3">
-                  {s.n}
+              <div key={s.n} className="relative">
+                <div className="relative z-10 grid place-items-center w-10 h-10 rounded-full bg-background border border-primary/30 shadow-sm mb-4">
+                  <span className="text-[13px] font-black text-primary tabular-nums">{s.n}</span>
                 </div>
                 <h3 className="text-[15px] font-bold text-foreground tracking-tight mb-2">{s.title}</h3>
                 <p className="text-[13.5px] text-muted-foreground leading-[1.7]">{s.desc}</p>
@@ -1486,13 +1677,13 @@ const SscMtsLanding = () => {
       {/* ══ FAQ ══ */}
       <section className="py-16 sm:py-20 px-5 bg-secondary/20 border-t border-border/50">
         <div className="container mx-auto max-w-3xl">
-          <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.028em] mb-3 text-center">
-            SSC MTS mock test — FAQs
-          </h2>
-          <p className="text-center text-[15px] text-muted-foreground mb-10">
-            The questions aspirants ask before their first attempt.
-          </p>
-          <div className="rounded-2xl border border-border/60 bg-card px-6 sm:px-8">
+          <SectionHead
+            className="mb-8 sm:mb-10"
+            eyebrow="FAQ"
+            title="SSC MTS mock test — FAQs"
+            lede="The questions aspirants ask before their first attempt."
+          />
+          <div className="rounded-2xl border border-border/60 bg-card px-6 sm:px-8 shadow-sm">
             {FAQS.map((f, i) => (
               <FaqItem key={f.question} q={f.question} a={f.answer} defaultOpen={i === 0} />
             ))}
@@ -1501,23 +1692,46 @@ const SscMtsLanding = () => {
       </section>
 
       {/* ══ Final CTA ══ */}
-      <section className="relative overflow-hidden bg-[#07091A] py-20 px-5 text-center">
-        <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[620px] h-[400px] rounded-full bg-[#6C3EF4] opacity-[0.16] blur-[110px]"
-          aria-hidden="true"
-        />
-        <div className="relative z-10 container mx-auto max-w-2xl">
-          <BookOpenCheck className="h-9 w-9 text-white/25 mx-auto mb-5" aria-hidden="true" />
-          <h2 className="text-[28px] sm:text-[38px] font-black text-white tracking-[-0.03em] leading-[1.1] mb-4">
-            Your first SSC MTS mock is 90 minutes away
-          </h2>
-          <p className="text-[15px] text-white/55 leading-[1.75] mb-3">
-            Unlimited attempts, real exam conditions, honest analytics. Free, and staying that way.
-          </p>
-          <p className="text-[14px] text-white/40 leading-[1.75] mb-8">
-            अभी शुरू करें — कोई शुल्क नहीं, कोई कार्ड नहीं।
-          </p>
-          <TakeExamButton label="Take a Free Mock Test" className="px-8 py-4" />
+      <section className="relative overflow-hidden bg-[#07091A] py-20 sm:py-24 px-5">
+        <div className="absolute inset-0" aria-hidden="true">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[620px] h-[400px] rounded-full bg-[#6C3EF4] opacity-[0.18] blur-[110px]" />
+          <div
+            className="absolute inset-0 opacity-[0.07]"
+            style={{
+              backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.5) 1px, transparent 1px)",
+              backgroundSize: "32px 32px",
+              maskImage: "radial-gradient(ellipse 60% 70% at 50% 50%, black 30%, transparent 100%)",
+              WebkitMaskImage: "radial-gradient(ellipse 60% 70% at 50% 50%, black 30%, transparent 100%)",
+            }}
+          />
+        </div>
+        <div className="relative z-10 container mx-auto max-w-3xl">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.03] backdrop-blur-sm px-6 py-12 sm:px-14 sm:py-14 text-center">
+            <span className="inline-flex items-center gap-2 rounded-full border border-amber-400/25 bg-amber-400/[0.08] px-3.5 py-1.5 mb-6">
+              <Sparkles className="h-3.5 w-3.5 text-amber-300" aria-hidden="true" />
+              <span className="text-[11px] font-black uppercase tracking-[0.14em] text-amber-100/90">
+                Free forever
+              </span>
+            </span>
+            <h2 className="text-[28px] sm:text-[38px] font-black text-white tracking-[-0.03em] leading-[1.1] mb-4">
+              Your first SSC MTS mock is 90 minutes away
+            </h2>
+            <p className="text-[15px] text-white/55 leading-[1.75] mb-2">
+              Unlimited attempts, real exam conditions, honest analytics. Free, and staying that way.
+            </p>
+            <p className="text-[14px] text-white/40 leading-[1.75] mb-8">
+              अभी शुरू करें — कोई शुल्क नहीं, कोई कार्ड नहीं।
+            </p>
+            <TakeExamButton label="Take a Free Mock Test" className="px-8 py-4" />
+            <ul className="mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+              {["No card needed", "Unlimited attempts", "English + हिंदी"].map((t) => (
+                <li key={t} className="flex items-center gap-1.5 text-[12px] text-white/45">
+                  <BadgeCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                  {t}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </section>
 
