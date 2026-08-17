@@ -1,5 +1,5 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PAPER_TYPES } from "@/lib/paperType.js";
+import { PAPER_TYPES, paperTypeLabel } from "@/lib/paperType.js";
 
 type Props = {
   value: string;
@@ -30,14 +30,27 @@ export default function PaperTypeSelect({ value, onChange, className, disabled, 
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger id={id} className={className}>
-        <SelectValue placeholder="Mock Exam" />
+        {/* The trigger says the choice and nothing else. A childless <SelectValue>
+            mirrors the WHOLE selected item — description included — which stacks
+            two lines inside a one-line-high control and spills the hint out of
+            the field. Naming the label as children keeps the description where
+            it is useful (the open list) and, because an unknown key normalises
+            to the default's label, the trigger can never read blank. */}
+        <SelectValue placeholder="Mock Exam">{paperTypeLabel(value)}</SelectValue>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent className="max-w-[var(--radix-select-content-available-width)]">
         {PAPER_TYPES.map((type) => (
-          <SelectItem key={type.value} value={type.value}>
-            <span className="flex flex-col text-left">
-              <span>{type.label}</span>
-              <span className="text-xs text-muted-foreground">{type.description}</span>
+          /* items-start keeps the tick on the label's line rather than floating
+             between the two lines. `group` + group-focus is how the rest of the
+             app writes a described option (see the question format picker): the
+             highlighted row paints itself accent-purple, so a hint left on
+             text-muted-foreground would sit unreadable on top of it. */
+          <SelectItem key={type.value} value={type.value} className="group items-start py-2">
+            <span className="flex flex-col gap-0.5 text-left">
+              <span className="text-foreground group-focus:text-white">{type.label}</span>
+              <span className="text-xs text-muted-foreground group-focus:text-white/80">
+                {type.description}
+              </span>
             </span>
           </SelectItem>
         ))}
