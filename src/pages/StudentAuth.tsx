@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,6 +42,12 @@ const StudentAuth = () => {
   const rawReturnTo = searchParams.get("returnTo");
   const returnTo = rawReturnTo && rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//") ? rawReturnTo : null;
   const [showExitDialog, setShowExitDialog] = useState(false);
+  // Full-screen overlay while pending exam attempts are being written (4-5s).
+  const [savingResults, setSavingResults] = useState(false);
+  // Latch, not state: state updates are async, so two rapid clicks could both
+  // read savingResults=false and each write a fresh attempt row. The ref flips
+  // synchronously, so only the first invocation ever reaches saveExamAttempt.
+  const savingRef = useRef(false);
 
   useEffect(() => {
     const checkUser = async () => {
@@ -126,7 +132,7 @@ const StudentAuth = () => {
   const handleVerificationComplete = async () => {
     setShowVerificationModal(false);
     toast({ title: "Success!", description: "Account verified successfully." });
-    checkProfileAndRedirect();
+    await checkProfileAndRedirect();
   };
 
   const checkProfileAndRedirect = async () => {
@@ -176,25 +182,32 @@ const StudentAuth = () => {
         toast({ title: "Wrong account type", description: "This is a creator account. Please sign in from the Creator sign-in page.", variant: "destructive" });
       } else {
         toast({ title: "Welcome back!", description: "Signed in successfully." });
-        checkProfileAndRedirect();
+        // Awaited so `loading` holds the button disabled for the full 4-5s
+        // attempt save; releasing it early is what let users re-submit.
+        await checkProfileAndRedirect();
       }
     }
     setLoading(false);
   };
 
   const handlePendingExamSubmission = async () => {
-    const pendingSubmissionsStr = sessionStorage.getItem('pendingExamSubmissions');
-    const singleSubmissionStr = sessionStorage.getItem('pendingExamSubmission');
-    let pendingSubmissions = [];
-    if (pendingSubmissionsStr) {
-      try { pendingSubmissions = JSON.parse(pendingSubmissionsStr); } catch (e) { console.error("Error parsing pending submissions", e); }
-    }
-    if (singleSubmissionStr) {
-      try { pendingSubmissions.push(JSON.parse(singleSubmissionStr)); } catch (e) { console.error("Error parsing single submission", e); }
-    }
-    // No pending mock-exam work: honor returnTo (e.g. back to a live exam) if present.
-    if (pendingSubmissions.length === 0) { navigate(returnTo || "/marketplace"); return; }
+    // A second sign-in click (or a re-fired auth event) while the 4-5s save is
+    // in flight would insert a duplicate attempt for the same sitting.
+    if (savingRef.current) return;
+    savingRef.current = true;
     try {
+      const pendingSubmissionsStr = sessionStorage.getItem('pendingExamSubmissions');
+      const singleSubmissionStr = sessionStorage.getItem('pendingExamSubmission');
+      let pendingSubmissions = [];
+      if (pendingSubmissionsStr) {
+        try { pendingSubmissions = JSON.parse(pendingSubmissionsStr); } catch (e) { console.error("Error parsing pending submissions", e); }
+      }
+      if (singleSubmissionStr) {
+        try { pendingSubmissions.push(JSON.parse(singleSubmissionStr)); } catch (e) { console.error("Error parsing single submission", e); }
+      }
+      // No pending mock-exam work: honor returnTo (e.g. back to a live exam) if present.
+      if (pendingSubmissions.length === 0) { navigate(returnTo || "/marketplace"); return; }
+      setSavingResults(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate("/marketplace"); return; }
       let lastAttemptId = null;
@@ -209,6 +222,9 @@ const StudentAuth = () => {
       console.error("Error saving pending exam:", error);
       toast({ title: "Error", description: "Failed to save your exam attempt.", variant: "destructive" });
       navigate("/marketplace");
+    } finally {
+      savingRef.current = false;
+      setSavingResults(false);
     }
   };
 
@@ -226,6 +242,18 @@ const StudentAuth = () => {
       <div className="absolute top-1/4 right-1/3 w-96 h-96 bg-[#0EA5E9]/15 rounded-full blur-3xl animate-pulse" />
       <div className="absolute bottom-1/4 left-1/4 w-72 h-72 bg-[#6C3EF4]/12 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1.5s' }} />
       <div className="absolute top-2/3 right-1/4 w-64 h-64 bg-[#22D3EE]/8 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '0.7s' }} />
+
+      {/* Saving overlay — blocks every click while the exam attempt is written */}
+      {savingResults && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-[#0a1628]/90 backdrop-blur-md" role="status" aria-live="polite">
+          <svg className="animate-spin h-10 w-10 text-[#38BDF8]" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <p className="text-white font-semibold text-base">Saving your exam results…</p>
+          <p className="text-white/50 text-sm max-w-xs text-center">This takes a few seconds. Please don't close or refresh this page.</p>
+        </div>
+      )}
 
       {/* Modals */}
       <EmailVerificationModal isOpen={showVerificationModal} onOpenChange={setShowVerificationModal} email={email} onVerified={handleVerificationComplete}
