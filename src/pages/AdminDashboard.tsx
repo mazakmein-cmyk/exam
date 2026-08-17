@@ -12,7 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Lock, Users, UserCheck, LogOut, Eye, EyeOff, Search, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, MoreVertical, Ban, TrendingUp, Activity, X, Filter, CalendarIcon, Plus, Tag } from "lucide-react";
+import { Lock, Users, UserCheck, LogOut, Eye, EyeOff, Search, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, MoreVertical, Ban, TrendingUp, Activity, X, Filter, CalendarIcon, Plus, Tag, FileType } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -318,6 +318,37 @@ const AdminDashboard = () => {
         } finally {
             setVerifyConfirmOpen(false);
             setVerifyTargetUser(null);
+        }
+    };
+
+    /**
+     * Grant or revoke the paper type field (Mock / Previous Year) for one creator.
+     *
+     * An explicit set, not a toggle: the RPC is told the state we want, so a
+     * double-click cannot silently flip the grant back. Off for every account
+     * until it is switched on here.
+     */
+    const handleSetPaperTypeAccess = async (user: any, allow: boolean) => {
+        try {
+            const { data, error } = await (supabase.rpc as any)('admin_set_paper_type_access', {
+                target_user_id: user.id,
+                allow,
+            });
+            if (error) throw error;
+            const who = user.username || user.email;
+            toast.success(data
+                ? `${who} can now tag exams as Mock or Previous Year`
+                : `Paper type field removed from ${who}`);
+            setUsers(prev => prev.map(u => u.id === user.id ? { ...u, can_set_paper_type: data } : u));
+        } catch (error: any) {
+            console.error("Error updating paper type access:", error);
+            // The RPC and the column arrive in the same hand-pasted migration,
+            // so "function does not exist" is the expected pre-migration error
+            // and deserves to say which file to paste.
+            const message = /does not exist|schema cache/i.test(error?.message || "")
+                ? "Apply 20260825000000_add_exam_paper_type.sql first"
+                : error?.message || "Failed to update paper type access";
+            toast.error(message);
         }
     };
 
@@ -1041,13 +1072,26 @@ const AdminDashboard = () => {
                                                     {user.phone || "—"}
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset ${
-                                                        user.user_type === 'student'
-                                                            ? "bg-blue-50 text-blue-700 ring-blue-600/20"
-                                                            : "bg-purple-50 text-purple-700 ring-purple-600/20"
-                                                    }`}>
-                                                        {user.user_type === 'student' ? 'Student' : 'Creator'}
-                                                    </span>
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset ${
+                                                            user.user_type === 'student'
+                                                                ? "bg-blue-50 text-blue-700 ring-blue-600/20"
+                                                                : "bg-purple-50 text-purple-700 ring-purple-600/20"
+                                                        }`}>
+                                                            {user.user_type === 'student' ? 'Student' : 'Creator'}
+                                                        </span>
+                                                        {/* Who has the paper type field, visible without
+                                                            opening every action menu to find out. */}
+                                                        {user.can_set_paper_type && (
+                                                            <span
+                                                                className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20"
+                                                                title="Can tag exams as Mock or Previous Year"
+                                                            >
+                                                                <FileType className="h-3 w-3" />
+                                                                Paper type
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </td>
                                                 <td className="px-6 py-4 text-sm text-gray-500">
                                                     {user.user_type === 'student'
@@ -1076,6 +1120,14 @@ const AdminDashboard = () => {
                                                                 >
                                                                     <VerifiedSeal size={16} className="mr-2" />
                                                                     {user.is_verified ? 'Remove Blue Tick' : 'Give Blue Tick'}
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuItem
+                                                                    onClick={() => handleSetPaperTypeAccess(user, !user.can_set_paper_type)}
+                                                                >
+                                                                    <FileType className="mr-2 h-4 w-4" />
+                                                                    {user.can_set_paper_type
+                                                                        ? 'Remove Paper Type Field'
+                                                                        : 'Allow Paper Type Field'}
                                                                 </DropdownMenuItem>
                                                                 <DropdownMenuItem disabled className="opacity-50">
                                                                     <Ban className="mr-2 h-4 w-4" />

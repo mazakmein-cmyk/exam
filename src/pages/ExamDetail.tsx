@@ -81,6 +81,14 @@ import InstructionTemplateAction from "@/components/exam/InstructionTemplateActi
 import GenerateExamInstruction, { type ExamFacts } from "@/components/exam/GenerateExamInstruction";
 import { rowsForText } from "@/lib/instructionTemplates";
 import { navigationCopyPatch, readNavigationSettings, saveNavigationSettings } from "@/lib/examSettings";
+import PaperTypeSelect from "@/components/exam/PaperTypeSelect";
+import { usePaperTypeAccess } from "@/hooks/use-paper-type-access";
+import { DEFAULT_PAPER_TYPE, readPaperType } from "@/lib/paperType.js";
+import {
+  PAPER_TYPE_MIGRATION,
+  paperTypeCopyPatch,
+  paperTypeUpdatePatch,
+} from "@/lib/paperTypeSettings";
 import { sumSectionMinutes } from "@/lib/examNavigation.js";
 import { collectExamFacts as collectInstructionFacts } from "@/services/examInstructionFacts";
 import { auditInstructionDrift } from "@/lib/instructionDrift.js";
@@ -127,6 +135,8 @@ type Exam = {
   exam_instruction?: string | null;
   exam_instruction_translations?: Record<string, string> | null;
   exam_category: string | null;
+  /** Mock vs previous-year paper — absent means the migration has not been applied (reads as mock). */
+  paper_type?: string | null;
   user_id: string;
   is_published: boolean;
   supported_languages?: string[];
@@ -210,6 +220,11 @@ export default function ExamDetail() {
   // Form State
   const [examTitle, setExamTitle] = useState("");
   const [examCategory, setExamCategory] = useState("");
+  // Mock vs previous-year paper. The field renders only for creators the admin
+  // has granted it; for everyone else this holds whatever the row already says
+  // (mock, for every exam made without the grant) and the save leaves it alone.
+  const [paperType, setPaperType] = useState<string>(DEFAULT_PAPER_TYPE);
+  const { canSetPaperType } = usePaperTypeAccess();
   const [examDescriptionTrans, setExamDescriptionTrans] = useState<Record<string, string>>({});
   const [generalInstructionTrans, setGeneralInstructionTrans] = useState<Record<string, string>>({});
   const [examSpecificInstructionTrans, setExamSpecificInstructionTrans] = useState<Record<string, string>>({});
@@ -272,6 +287,7 @@ export default function ExamDetail() {
   const initialExamDataRef = useRef({
     name: "",
     category: "",
+    paper_type: DEFAULT_PAPER_TYPE as string,
     description_translations: {} as Record<string, string>,
     instruction_translations: {} as Record<string, string>,
     exam_instruction_translations: {} as Record<string, string>
@@ -287,6 +303,7 @@ export default function ExamDetail() {
     const isExamChanged =
       examTitle !== initialExamDataRef.current.name ||
       examCategory !== initialExamDataRef.current.category ||
+      paperType !== initialExamDataRef.current.paper_type ||
       JSON.stringify(examDescriptionTrans) !== JSON.stringify(initialExamDataRef.current.description_translations) ||
       JSON.stringify(generalInstructionTrans) !== JSON.stringify(initialExamDataRef.current.instruction_translations) ||
       JSON.stringify(examSpecificInstructionTrans) !== JSON.stringify(initialExamDataRef.current.exam_instruction_translations);
@@ -305,7 +322,7 @@ export default function ExamDetail() {
     const isEditing = editingQuestionId !== null;
 
     setIsDirty(isExamChanged || isEditing || (isQuestionFormDirty && !editingQuestionId));
-  }, [examTitle, examCategory, examDescriptionTrans, generalInstructionTrans, examSpecificInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionOptionImages, newQuestionImages, newQuestionCorrect]);
+  }, [examTitle, examCategory, paperType, examDescriptionTrans, generalInstructionTrans, examSpecificInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionOptionImages, newQuestionImages, newQuestionCorrect]);
 
   // Section Switch Confirmation State
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
@@ -607,6 +624,8 @@ export default function ExamDetail() {
       setExam(examData as unknown as Exam);
       setExamTitle(examData.name);
       setExamCategory((examData as any).exam_category || "");
+      // Absent column (or a row written before the migration) reads as mock.
+      setPaperType(readPaperType(examData));
 
       // Navigation mode. An absent column (migration not applied yet) reads as
       // locked, which is exactly what such a database can serve.
@@ -645,6 +664,7 @@ export default function ExamDetail() {
       initialExamDataRef.current = {
         name: examData.name,
         category: (examData as any).exam_category || "",
+        paper_type: readPaperType(examData),
         description_translations: descTrans,
         instruction_translations: instTrans,
         exam_instruction_translations: examInstTrans
@@ -805,12 +825,27 @@ export default function ExamDetail() {
       JSON.stringify(examSpecificInstructionTrans) !==
         JSON.stringify(initialExamDataRef.current.exam_instruction_translations);
 
+    // Set below, read after the try block: did the paper type get left behind?
+    let paperTypeDropped = false;
+
     setSaving(true);
     try {
+      // Paper type travels ONLY for a creator who was granted the field — an
+      // editor that cannot show a value must not rewrite it. Gated on the
+      // column too, because naming a column PostgREST has not seen fails the
+      // WHOLE update, which would lose the title, description and instructions
+      // along with it.
+      const paperTypePatch = canSetPaperType ? await paperTypeUpdatePatch(paperType) : {};
+      paperTypeDropped =
+        canSetPaperType &&
+        Object.keys(paperTypePatch).length === 0 &&
+        paperType !== initialExamDataRef.current.paper_type;
+
       // Update Exam
       const { error: examError } = await supabase
         .from("exams")
         .update({
+          ...paperTypePatch,
           name: examTitle,
           exam_category: examCategory,
           description: examDescriptionTrans['en'] || currentDesc,
@@ -828,6 +863,17 @@ export default function ExamDetail() {
         title: "Saved",
         description: "Exam details updated successfully",
       });
+
+      // The one case worth interrupting for: the creator moved the picker and
+      // the database cannot store it yet. Everything else did save, and the
+      // field stays dirty so the change is not silently forgotten.
+      if (paperTypeDropped) {
+        toast({
+          title: "Paper type not saved",
+          description: `Every other change saved. Apply ${PAPER_TYPE_MIGRATION} to store the paper type.`,
+          variant: "destructive",
+        });
+      }
     } catch (error: any) {
       toast({
         title: "Error",
@@ -852,6 +898,9 @@ export default function ExamDetail() {
     initialExamDataRef.current = {
       name: examTitle,
       category: examCategory,
+      // A dropped paper type keeps its OLD baseline, so the field reads as
+      // still-unsaved rather than pretending the write landed.
+      paper_type: paperTypeDropped ? initialExamDataRef.current.paper_type : paperType,
       description_translations: examDescriptionTrans,
       instruction_translations: generalInstructionTrans,
       exam_instruction_translations: examSpecificInstructionTrans
@@ -912,11 +961,18 @@ export default function ExamDetail() {
       // The navigation-mode fields come through a gated patch: on a database
       // without the migration they are simply absent and the copy lands in the
       // default locked mode.
-      const navPatch = await navigationCopyPatch(exam);
+      // Paper type comes from the SOURCE row, not the picker: a copy is a copy,
+      // including for a creator whose grant was revoked after the original was
+      // tagged. Absent (so default 'mock') on an un-migrated database.
+      const [navPatch, paperPatch] = await Promise.all([
+        navigationCopyPatch(exam),
+        paperTypeCopyPatch(exam),
+      ]);
       const { data: newExam, error: examError } = await supabase
         .from("exams")
         .insert({
           ...navPatch,
+          ...paperPatch,
           name: `${exam.name} (Copy)`,
           description: exam.description,
           description_translations: exam.description_translations,
@@ -3851,6 +3907,22 @@ export default function ExamDetail() {
                   <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Category <span className="text-destructive">*</span></Label>
                   <CategoryCombobox value={examCategory} onChange={setExamCategory} />
                 </div>
+                {/* Only for creators the admin granted the field. Everyone else
+                    edits the exam exactly as before — no field, no asterisk,
+                    and the row keeps whatever it already says. */}
+                {canSetPaperType && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Paper Type</Label>
+                    <PaperTypeSelect
+                      value={paperType}
+                      onChange={setPaperType}
+                      className="rounded-lg"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Optional — students can filter the library by this.
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Description <span className="text-destructive">*</span></Label>
                   <TransliterateTextarea

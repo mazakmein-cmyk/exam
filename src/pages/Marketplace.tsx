@@ -13,6 +13,14 @@ import SEO from "@/components/SEO";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
 import { orderExamCategories } from "@/hooks/use-exam-categories";
 import {
+    PAPER_TYPE_PYQ,
+    matchesPaperTypeFilter,
+    paperTypeFilterOptions,
+    paperTypeLabel,
+    parsePaperTypeParam,
+    readPaperType,
+} from "@/lib/paperType.js";
+import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
@@ -30,6 +38,8 @@ type Exam = {
     created_at: string;
     is_published: boolean;
     exam_category: string | null;
+    /** 'mock' | 'pyq'. Absent on a database without the migration — reads as mock. */
+    paper_type?: string | null;
     user_id: string;
     creator_username?: string;
     creator_verified?: boolean;
@@ -90,6 +100,13 @@ const Marketplace = () => {
     // Seeded from the URL once, on mount — the landing pages link in pre-filtered.
     const [selectedCategories, setSelectedCategories] = useState<string[]>(() =>
         parseCategoryParam(searchParams)
+    );
+    // Mock vs previous-year paper. Same URL treatment as the category filter, so
+    // "every SSC MTS previous year paper" is one link. Unlike categories these
+    // keys are fixed, so no canonicalization pass is needed — an unrecognized
+    // ?type= value is simply dropped and the library shows everything.
+    const [selectedPaperTypes, setSelectedPaperTypes] = useState<string[]>(() =>
+        parsePaperTypeParam(searchParams)
     );
     const [loading, setLoading] = useState(true);
     const [showOnboardingModal, setShowOnboardingModal] = useState(false);
@@ -213,6 +230,22 @@ const Marketplace = () => {
         );
     };
 
+    // Same contract as handleCategoryChange: the address bar always describes
+    // the list on screen, and Back leaves the library rather than replaying
+    // every filter tweak.
+    const handlePaperTypeChange = (next: string[]) => {
+        setSelectedPaperTypes(next);
+        setSearchParams(
+            (prev) => {
+                const params = new URLSearchParams(prev);
+                params.delete("type");
+                next.forEach((t) => params.append("type", t));
+                return params;
+            },
+            { replace: true }
+        );
+    };
+
     const handleTakeExam = (examId: string) => {
         window.open(`/exam/${examId}/intro?from=marketplace`, '_blank');
     };
@@ -230,10 +263,22 @@ const Marketplace = () => {
         const query = searchQuery.toLowerCase();
         const nameMatch = exam.name.toLowerCase().includes(query);
         const categoryMatch = exam.exam_category?.toLowerCase().includes(query);
-        const textMatch = nameMatch || categoryMatch;
+        // Typing "previous year" finds the papers tagged as such — that label is
+        // what the card shows. ONLY the non-default label joins the search:
+        // every untagged paper reads as "Mock Exam", so letting that match would
+        // return the whole library for a query as short as "m".
+        const typeMatch =
+            readPaperType(exam) === PAPER_TYPE_PYQ &&
+            paperTypeLabel(exam.paper_type).toLowerCase().includes(query);
+        const textMatch = nameMatch || categoryMatch || typeMatch;
         const filterMatch = selectedCategories.length === 0 || (exam.exam_category && selectedCategories.includes(exam.exam_category));
-        return textMatch && filterMatch;
+        // An empty selection is "no filter", and an exam with no paper_type
+        // (pre-migration row) counts as a mock — never as invisible.
+        const paperTypeMatch = matchesPaperTypeFilter(exam, selectedPaperTypes);
+        return textMatch && filterMatch && paperTypeMatch;
     });
+
+    const hasActiveFilters = selectedCategories.length > 0 || selectedPaperTypes.length > 0;
 
     return (
         <div className="min-h-screen bg-background">
@@ -363,6 +408,18 @@ const Marketplace = () => {
                             placeholder="Filter by category"
                         />
                     </div>
+                    {/* Mock vs previous-year paper. Both options are always
+                        offered — unlike categories, these are not derived from
+                        what happens to be published, so "no previous year
+                        papers here yet" is an answer worth being able to get. */}
+                    <div className="w-full md:w-56">
+                        <MultiSelectDropdown
+                            options={paperTypeFilterOptions()}
+                            selected={selectedPaperTypes}
+                            onChange={handlePaperTypeChange}
+                            placeholder="Filter by paper type"
+                        />
+                    </div>
                 </div>
 
                 {loading ? (
@@ -386,8 +443,11 @@ const Marketplace = () => {
                             <Search className="h-16 w-16 text-muted-foreground mb-4" />
                             <h3 className="text-lg font-semibold mb-2">No matching exams</h3>
                             <p className="text-muted-foreground mb-5 max-w-sm text-sm">
-                                {selectedCategories.length > 0
-                                    ? `Nothing published under ${selectedCategories.join(", ")} yet. New papers get added regularly — try the full library in the meantime.`
+                                {hasActiveFilters
+                                    ? `Nothing published under ${[
+                                          ...selectedCategories,
+                                          ...selectedPaperTypes.map((t) => paperTypeLabel(t)),
+                                      ].join(", ")} yet. New papers get added regularly — try the full library in the meantime.`
                                     : "No exams match your search. Try a different title or category."}
                             </p>
                             <Button
@@ -395,6 +455,7 @@ const Marketplace = () => {
                                 onClick={() => {
                                     setSearchQuery("");
                                     handleCategoryChange([]);
+                                    handlePaperTypeChange([]);
                                 }}
                             >
                                 Show all exams
@@ -409,9 +470,19 @@ const Marketplace = () => {
                                     <div className="flex items-start justify-between gap-2 mb-2">
                                         <div className="flex-1 min-w-0">
                                             <h3 className="text-base font-bold text-foreground break-words leading-tight mb-1">{exam.name}</h3>
-                                            {exam.exam_category && (
-                                                <Badge variant="secondary" className="text-[10px] font-medium">{exam.exam_category}</Badge>
-                                            )}
+                                            <div className="flex flex-wrap items-center gap-1">
+                                                {exam.exam_category && (
+                                                    <Badge variant="secondary" className="text-[10px] font-medium">{exam.exam_category}</Badge>
+                                                )}
+                                                {/* Only the previous-year papers are called out. Mock is
+                                                    the default and the tab above already says so — a
+                                                    "Mock Exam" chip on every card would be noise. */}
+                                                {readPaperType(exam) === PAPER_TYPE_PYQ && (
+                                                    <Badge className="text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+                                                        Previous Year Paper
+                                                    </Badge>
+                                                )}
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-0.5 shrink-0">
                                             <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => handleShare(exam.id)}>

@@ -81,6 +81,7 @@ export type Database = {
           instruction_translations: Json | null
           is_published: boolean
           name: string
+          paper_type: string
           primary_language: string
           published_languages: string[]
           supported_languages: string[]
@@ -101,6 +102,7 @@ export type Database = {
           instruction_translations?: Json | null
           is_published?: boolean
           name: string
+          paper_type?: string
           primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]
@@ -121,6 +123,7 @@ export type Database = {
           instruction_translations?: Json | null
           is_published?: boolean
           name?: string
+          paper_type?: string
           primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]
@@ -801,6 +804,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          can_set_paper_type: boolean
           id: string
           updated_at: string | null
           username: string | null
@@ -810,6 +814,7 @@ export type Database = {
           website: string | null
         }
         Insert: {
+          can_set_paper_type?: boolean
           id: string
           updated_at?: string | null
           username?: string | null
@@ -819,6 +824,7 @@ export type Database = {
           website?: string | null
         }
         Update: {
+          can_set_paper_type?: boolean
           id?: string
           updated_at?: string | null
           username?: string | null

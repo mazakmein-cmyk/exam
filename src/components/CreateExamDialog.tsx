@@ -14,7 +14,11 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import InstructionTemplateAction from "@/components/exam/InstructionTemplateAction";
 import GenerateExamInstruction from "@/components/exam/GenerateExamInstruction";
+import PaperTypeSelect from "@/components/exam/PaperTypeSelect";
 import { rowsForText } from "@/lib/instructionTemplates";
+import { usePaperTypeAccess } from "@/hooks/use-paper-type-access";
+import { DEFAULT_PAPER_TYPE } from "@/lib/paperType.js";
+import { paperTypeInsertPatch } from "@/lib/paperTypeSettings";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English" },
@@ -39,6 +43,11 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
   const [generalInstruction, setGeneralInstruction] = useState("");
   const [examSpecificInstruction, setExamSpecificInstruction] = useState("");
   const [examCategory, setExamCategory] = useState<string>("");
+  // Mock vs previous-year paper. Only creators the admin has granted the field
+  // see it; for everyone else this state never moves off "mock", which is what
+  // an untagged paper is and what the column defaults to.
+  const [paperType, setPaperType] = useState<string>(DEFAULT_PAPER_TYPE);
+  const { canSetPaperType } = usePaperTypeAccess();
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["en"]);
   const [primaryLanguage, setPrimaryLanguage] = useState<string>("en");
   const [sections, setSections] = useState<Section[]>([]);
@@ -147,10 +156,19 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
         throw new Error("Not authenticated");
       }
 
+      // Paper type rides along only where the column exists — naming a column
+      // PostgREST has not seen fails the WHOLE insert, and losing an exam over
+      // an unapplied migration is not a trade worth making. A creator without
+      // the grant always sends the default.
+      const paperTypePatch = await paperTypeInsertPatch(
+        canSetPaperType ? paperType : DEFAULT_PAPER_TYPE
+      );
+
       // Create exam first
       const { data: exam, error: examError } = await supabase
         .from("exams")
         .insert({
+          ...paperTypePatch,
           user_id: user.id,
           name: examName,
           description: examDescription || null,
@@ -240,6 +258,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
 
       setExamName("");
       setExamCategory("");
+      setPaperType(DEFAULT_PAPER_TYPE);
       setExamDescription("");
       setGeneralInstruction("");
       setExamSpecificInstruction("");
@@ -311,16 +330,22 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
     if (!user) {
       toast({
         title: "Not authenticated",
-        description: "Please sign in to create an exam",
+        description: "Please log in to create an exam",
         variant: "destructive",
       });
       setLoading(false);
       return;
     }
 
+    // Gated exactly like the PDF path above — see the note there.
+    const paperTypePatch = await paperTypeInsertPatch(
+      canSetPaperType ? paperType : DEFAULT_PAPER_TYPE
+    );
+
     const { data: exam, error: examError } = await supabase
       .from("exams")
       .insert({
+        ...paperTypePatch,
         user_id: user.id,
         name: examName,
         description: examDescription || null,
@@ -386,6 +411,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
 
     setExamName("");
     setExamCategory("");
+    setPaperType(DEFAULT_PAPER_TYPE);
     setExamDescription("");
     setGeneralInstruction("");
     setExamSpecificInstruction("");
@@ -432,6 +458,26 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                 <Label htmlFor="exam-category" className="text-sm font-medium">Exam Category <span className="text-destructive">*</span></Label>
                 <CategoryCombobox value={examCategory} onChange={setExamCategory} />
               </div>
+
+              {/* Paper type — granted per creator from the admin console. No
+                  asterisk and no validation: an untouched picker already says
+                  "Mock Exam", which is what an untagged paper is. Creators
+                  without the grant get no field and the same default. */}
+              {canSetPaperType && (
+                <div className="space-y-2">
+                  <Label htmlFor="exam-paper-type" className="text-sm font-medium">Paper Type</Label>
+                  <PaperTypeSelect
+                    id="exam-paper-type"
+                    value={paperType}
+                    onChange={setPaperType}
+                    className="h-11"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Students can filter the library by this — leave it on Mock Exam if
+                    the paper isn't a past year's.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="exam-description" className="text-sm font-medium">Description <span className="text-destructive">*</span></Label>

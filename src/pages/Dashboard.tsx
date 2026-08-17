@@ -13,6 +13,7 @@ import CreateLiveExamDialog from "@/components/CreateLiveExamDialog";
 import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCount, type LiveExam, type LiveExamStatus } from "@/services/liveExamService";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import { navigationCopyPatch } from "@/lib/examSettings";
+import { paperTypeCopyPatch } from "@/lib/paperTypeSettings";
 import { copyTimingGroups } from "@/lib/timingGroupSettings";
 import SEO from "@/components/SEO";
 import {
@@ -321,11 +322,17 @@ const Dashboard = () => {
       // Create a copy of the exam. Navigation mode travels with it via a gated
       // patch — absent (and so default-locked) on a database that has not had
       // the migration applied.
-      const navPatch = await navigationCopyPatch(exam);
+      // Paper type travels the same way, read off the source row — a copy of a
+      // previous-year paper is still a previous-year paper.
+      const [navPatch, paperPatch] = await Promise.all([
+        navigationCopyPatch(exam),
+        paperTypeCopyPatch(exam),
+      ]);
       const { data: newExam, error: examError } = await supabase
         .from("exams")
         .insert({
           ...navPatch,
+          ...paperPatch,
           name: `${exam.name} (Copy)`,
           description: exam.description,
           description_translations: exam.description_translations,
