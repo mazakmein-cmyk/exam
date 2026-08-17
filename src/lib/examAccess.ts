@@ -38,7 +38,7 @@ export type ExamAccessMode = "take" | "preview" | "blocked";
 
 export const CREATOR_BLOCKED_TITLE = "Creator accounts can't take exams";
 export const CREATOR_BLOCKED_MESSAGE =
-    "You're signed in as a creator. Creator accounts can only preview their own exams — sign in with a student account to take this one.";
+    "You're logged in as a creator. Creator accounts can only preview their own exams — log in with a student account to take this one.";
 
 /** Build a viewer from an already-fetched auth user (no extra round trip). */
 export function toExamViewer(user: { id: string; user_metadata?: Record<string, any> | null } | null | undefined): ExamViewer {

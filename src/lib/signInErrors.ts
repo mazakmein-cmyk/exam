@@ -20,11 +20,11 @@ export const getSignInErrorToast = async (error: AuthError, email: string): Prom
     if (error.code === "email_not_confirmed" || error.message.includes("Email not confirmed")) {
       return {
         title: "Verification required",
-        description: "Please verify your email before signing in.",
+        description: "Please verify your email before logging in.",
         variant: "destructive",
       };
     }
-    return { title: "Sign in failed", description: error.message, variant: "destructive" };
+    return { title: "Log in failed", description: error.message, variant: "destructive" };
   }
 
   try {
@@ -50,7 +50,7 @@ export const getSignInErrorToast = async (error: AuthError, email: string): Prom
   }
 
   return {
-    title: "Sign in failed",
+    title: "Log in failed",
     description: "Incorrect email or password. Please check your details and try again.",
     variant: "destructive",
   };

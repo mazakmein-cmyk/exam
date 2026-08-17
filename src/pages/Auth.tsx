@@ -62,24 +62,24 @@ const Auth = () => {
     });
     if (error) {
       if (error.message.includes("already registered") || error.message.includes("User already exists")) {
-        toast({ title: "Account already exists", description: "Please sign in instead." });
+        toast({ title: "Account already exists", description: "Please log in instead." });
       } else {
         toast({ title: "Sign up failed", description: error.message, variant: "destructive" });
       }
     } else if (data.user && data.user.identities && data.user.identities.length === 0) {
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (!signInError && signInData.user) {
-        toast({ title: "Account already exists", description: "Please sign in to your account." });
+        toast({ title: "Account already exists", description: "Please log in to your account." });
       } else if (signInError && signInError.message.includes("Email not confirmed")) {
         const { error: resendError } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/dashboard` } });
         if (resendError) {
-          toast({ title: "Account already exists", description: "Please sign in instead." });
+          toast({ title: "Account already exists", description: "Please log in instead." });
         } else {
           toast({ title: "Account exists", description: "We've resent the verification email. Please check your inbox." });
           setShowVerificationModal(true);
         }
       } else {
-        toast({ title: "Account already exists", description: "Please sign in instead." });
+        toast({ title: "Account already exists", description: "Please log in instead." });
       }
     } else {
       setShowVerificationModal(true);
@@ -120,16 +120,16 @@ const Auth = () => {
     } else {
       if (!data.user?.email_confirmed_at) {
         await supabase.auth.signOut();
-        toast({ title: "Verification required", description: "Please verify your email before signing in.", variant: "destructive" });
+        toast({ title: "Verification required", description: "Please verify your email before logging in.", variant: "destructive" });
         setLoading(false);
         return;
       }
       const userType = data.user?.user_metadata?.user_type;
       if (userType === "student") {
         await supabase.auth.signOut();
-        toast({ title: "Wrong account type", description: "This is a student account. Please sign in from the Student sign-in page.", variant: "destructive" });
+        toast({ title: "Wrong account type", description: "This is a student account. Please log in from the Student login page.", variant: "destructive" });
       } else {
-        toast({ title: "Welcome back!", description: "Signed in successfully." });
+        toast({ title: "Welcome back!", description: "Logged in successfully." });
         checkProfileAndRedirect();
       }
     }
@@ -139,8 +139,8 @@ const Auth = () => {
   return (
     <div className="min-h-screen relative overflow-hidden flex items-center justify-center p-4">
       <SEO
-        title="Creator Sign In | MockSetu"
-        description="Sign in to your MockSetu creator account to publish and manage mock tests."
+        title="Creator Log In | MockSetu"
+        description="Log in to your MockSetu creator account to publish and manage mock tests."
         path="/auth"
         noindex
       />
@@ -192,11 +192,11 @@ const Auth = () => {
           <div className="p-7">
             <Tabs defaultValue="signin" className="w-full">
               <TabsList className="grid w-full grid-cols-2 bg-white/[0.04] border border-white/[0.07] rounded-xl p-1 mb-6 h-10">
-                <TabsTrigger value="signin" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#6C3EF4] data-[state=active]:text-white transition-all duration-200 h-8">Sign In</TabsTrigger>
+                <TabsTrigger value="signin" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#6C3EF4] data-[state=active]:text-white transition-all duration-200 h-8">Log In</TabsTrigger>
                 <TabsTrigger value="signup" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#6C3EF4] data-[state=active]:text-white transition-all duration-200 h-8">Create Account</TabsTrigger>
               </TabsList>
 
-              {/* Sign In Tab */}
+              {/* Log In Tab */}
               <TabsContent value="signin" className="mt-0">
                 <form onSubmit={handleSignIn} className="space-y-4">
                   <div className="space-y-1.5">
@@ -221,8 +221,8 @@ const Auth = () => {
                   <button type="submit" disabled={loading}
                     className="w-full h-11 mt-2 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-sm shadow-lg shadow-[#6C3EF4]/30 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
                     {loading
-                      ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Signing in...</>
-                      : "Sign In to Dashboard"}
+                      ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Logging in...</>
+                      : "Log In to Dashboard"}
                   </button>
                   <p className="text-center text-[11px] text-white/25 pt-1">
                     Taking exams?{" "}

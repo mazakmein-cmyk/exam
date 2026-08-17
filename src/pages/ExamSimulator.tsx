@@ -457,7 +457,7 @@ const ExamSimulator = () => {
       if (!user && !isPublicExam) {
         toast({
           title: "Access Denied",
-          description: "Please sign in to take this exam",
+          description: "Please log in to take this exam",
           variant: "destructive",
         });
         return;
@@ -1178,7 +1178,7 @@ const ExamSimulator = () => {
       // Anonymous users - redirect to auth to save progress
       toast({
         title: "Almost there!",
-        description: "Please sign in to save your results.",
+        description: "Please log in to save your results.",
       });
       navigate("/student-auth?mode=signin&trigger=exam_submit");
     }

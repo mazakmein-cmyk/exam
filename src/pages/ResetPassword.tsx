@@ -89,7 +89,7 @@ const ResetPassword = () => {
       return;
     }
     const userType = data.user?.user_metadata?.user_type;
-    toast({ title: "Password updated", description: "Your password has been changed. Please sign in with your new password." });
+    toast({ title: "Password updated", description: "Your password has been changed. Please log in with your new password." });
     await supabase.auth.signOut();
     navigate(userType === "creator" ? "/auth" : "/student-auth");
   };
@@ -192,7 +192,7 @@ const ResetPassword = () => {
                 </button>
                 <p className="text-center text-[11px] text-white/25 pt-1">
                   Remembered your password?{" "}
-                  <span className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors" onClick={() => navigate("/student-auth?mode=signin")}>Sign in →</span>
+                  <span className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors" onClick={() => navigate("/student-auth?mode=signin")}>Log in →</span>
                 </p>
               </form>
             )}
