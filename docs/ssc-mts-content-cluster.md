@@ -1,7 +1,8 @@
-# SSC MTS content cluster — 47 articles (COMPLETE)
+# SSC MTS content cluster — 57 articles (COMPLETE)
 
-**Status: all 47 written**, each passing `scripts/generate-blog-index.mjs` with zero
-warnings, and each linking back to the `/ssc-mts` hub.
+**Status: all 57 written** (47 in the original batch, 10 added 2026-08-19), each
+passing `scripts/generate-blog-index.mjs` with zero warnings, and each linking back
+to the `/ssc-mts` hub.
 
 **One planned article was substituted.** `ssc-mts-age-limit-and-relaxation` was dropped
 because age limit and category relaxation are already a full section of
@@ -117,6 +118,22 @@ Legend: ☐ pending · ☑ written
 - ☑ `ssc-mts-vs-ssc-gd-constable`
 - ☑ `ssc-mts-vs-railway-group-d`
 - ☑ `is-ssc-mts-a-good-job`
+
+### I. Batch 2 — gap fill (10, added 2026-08-19)
+
+Chosen against the anti-cannibalisation rule: each targets a query intent no
+existing article owns, and each links *up* to the sibling it borders.
+
+- ☑ `ssc-mts-2025-question-paper-analysis` — completes the 2023/2024/2025 series
+- ☑ `ssc-mts-answer-key-and-response-sheet` — post-exam cluster (key, challenge, score calc)
+- ☑ `ssc-mts-crack-in-first-attempt` — "first attempt" head term
+- ☑ `ssc-mts-last-10-days-revision-plan` — taper; distinct from 30/60/90 *build* plans
+- ☑ `ssc-mts-current-affairs-preparation` — narrower than GA prep, links up to it
+- ☑ `ssc-mts-common-mistakes` — "mistakes to avoid" head term
+- ☑ `ssc-mts-vs-havaldar-which-post` — post preference; distinct from Havaldar PET/PST
+- ☑ `ssc-mts-general-science-preparation` — narrower than GA prep, links up to it
+- ☑ `ssc-mts-hindi-medium-preparation` — strategy; distinct from PYQ-in-Hindi (availability)
+- ☑ `ssc-mts-attempt-strategy` — "how many attempts" PAA term; links up to negative-marking + good-score
 
 ## Hard constraints (enforced by `scripts/generate-blog-index.mjs`)
 

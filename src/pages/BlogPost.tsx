@@ -254,18 +254,38 @@ const BlogPost = () => {
             ))}
           </div>
 
-          {/* CTA */}
-          <div className="mt-12 rounded-2xl bg-gradient-to-br from-[#6C3EF4]/10 via-[#A855F7]/5 to-transparent border border-primary/20 p-6 sm:p-8 text-center">
-            <p className="text-[15px] sm:text-[16px] text-foreground/80 mb-4">
-              Want to actually apply what you just read? Start a free MockSetu mock test now.
-            </p>
-            <Link
-              to="/marketplace"
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-[14px] font-semibold text-white bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-md transition-all"
-            >
-              Browse Free Mock Tests <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
+          {/* CTA. SSC MTS posts funnel to the /ssc-mts pillar page — the URL
+              every post in that cluster exists to lift — instead of the
+              generic library. Tag-driven so a new MTS post joins the funnel by
+              being tagged, with no edit here. Other clusters keep the library
+              CTA: routing a CGL reader to an MTS page helps neither them nor
+              the rankings. */}
+          {post.tags.includes("SSC MTS") ? (
+            <div className="mt-12 rounded-2xl bg-gradient-to-br from-amber-500/10 via-[#6C3EF4]/5 to-transparent border border-amber-500/25 p-6 sm:p-8 text-center">
+              <p className="text-[15px] sm:text-[16px] text-foreground/80 mb-4">
+                Reading diagnoses; attempting improves. Sit a real SSC MTS previous year paper —
+                free, timed, on the actual exam screen.
+              </p>
+              <Link
+                to="/ssc-mts"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-[14px] font-semibold text-white bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-md transition-all"
+              >
+                SSC MTS Previous Year Papers — Free <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-12 rounded-2xl bg-gradient-to-br from-[#6C3EF4]/10 via-[#A855F7]/5 to-transparent border border-primary/20 p-6 sm:p-8 text-center">
+              <p className="text-[15px] sm:text-[16px] text-foreground/80 mb-4">
+                Want to actually apply what you just read? Start a free MockSetu mock test now.
+              </p>
+              <Link
+                to="/marketplace"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-[14px] font-semibold text-white bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-md transition-all"
+              >
+                Browse Free Mock Tests <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          )}
         </article>
       </section>
 

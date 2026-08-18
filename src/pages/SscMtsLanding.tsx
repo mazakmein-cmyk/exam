@@ -242,10 +242,14 @@ const STEPS = [
 ];
 
 /*
- * FAQ order is a ranking decision, not an editorial one. The four
- * previous-year-paper questions lead because that is the cluster this page
+ * FAQ order is a ranking decision, not an editorial one. The previous-year
+ * and 2024-paper questions lead because that is the cluster this page
  * targets, and because FAQPage rich results are truncated — whatever sits at
  * the top is what gets a chance to show under the blue link.
+ *
+ * The 2024 questions live in THIS array on purpose: it is the single source
+ * for the page's FAQPage JSON-LD, and a second FAQPage block on the same URL
+ * reads as markup spam to Google, not as more coverage.
  */
 const FAQS = [
   {
@@ -257,6 +261,31 @@ const FAQS = [
     question: "Can I download the SSC MTS previous year paper PDF?",
     answer:
       "MockSetu serves previous year papers as attemptable mocks instead of PDFs, and that is a deliberate choice. A PDF tells you the questions; it cannot tell you that you spent nine minutes on one arithmetic question, or that four of your Session II guesses cost more marks than they earned. Attempting the same paper on a timed screen gives you the questions plus the diagnosis, which is the part that actually changes your score.",
+  },
+  {
+    question: "Where can I attempt the 2024 SSC MTS paper?",
+    answer:
+      "Right here, free. The 2024 SSC MTS paper shifts run on MockSetu as fully attemptable mock tests — the same computer-based screen as the real exam, both 45-minute sessions timed separately, and Session II's −1 negative marking applied exactly as SSC applies it. Open the SSC MTS library, pick a 2024 shift, and you are in the paper in one tap, in English or हिंदी.",
+  },
+  {
+    question: "Is the 2024 SSC MTS paper still relevant for the 2026 exam?",
+    answer:
+      "It is the single most relevant paper you can attempt. The 2024 shifts ran on exactly the structure the upcoming cycle uses — 90 questions, two locked 45-minute sessions, no penalty in Session I and −1 per wrong answer in Session II. SSC writes to a stable house style, so last year's arithmetic templates, reasoning families and General Awareness topic bands are the closest preview of your own paper that exists anywhere.",
+  },
+  {
+    question: "How should I use last year's SSC MTS paper in the final weeks before the exam?",
+    answer:
+      "One full paper every three or four days, attempted in a single 90-minute sitting under real conditions, then reviewed for at least as long as you spent attempting it. Sort every mistake into one of three bins — didn't know it, knew it but ran out of time, knew it and still picked wrong — because each has a completely different fix. In the final fortnight, stop adding new material and spend that time re-attempting shifts and tightening your Session II guessing discipline.",
+  },
+  {
+    question: "When is the SSC MTS 2026 exam?",
+    answer:
+      "The official SSC examination calendar places the MTS computer-based exam in a September–November 2026 window. Exact shift dates arrive with the admit card, and the notification on ssc.gov.in is the only authoritative source for the schedule — any precise date circulating before it appears there is speculation. Plan for the early end of the window: if your shift lands in September, the remaining weeks belong to full-length papers and review, not new material.",
+  },
+  {
+    question: "What is the full form of SSC MTS?",
+    answer:
+      "Staff Selection Commission Multi Tasking Staff — a Group C, non-technical post in central government ministries and departments, recruited alongside Havaldar posts in CBIC and CBN through the same exam. Eligibility is a Class 10 pass, pay runs on Level-1 (₹18,000–₹56,900 basic), and selection is a single computer-based exam, with a physical test added for Havaldar applicants.",
   },
   {
     question: "How many SSC MTS previous year papers should I solve?",
@@ -1009,14 +1038,18 @@ const SscMtsLanding = () => {
     <div className="min-h-screen bg-background">
       <SEO
         /* Title leads with the exact target phrase and stays under ~60 chars so
-           it is not truncated in the SERP. "PYQ" is in there because that is
-           what aspirants actually type — it outranks "last year paper" in real
-           Indian search volume by a wide margin. */
-        title="SSC MTS Previous Year Question Paper — Free PYQ Mock Test"
-        /* 156 chars — under the ~160 Google renders before truncating. */
-        description="Attempt SSC MTS previous year question papers free — real 2024 & 2023 shifts on the actual CBE screen, timed, with correct negative marking. Hindi & English."
+           it is not truncated in the SERP (53 chars). "2024" is in the title
+           because "2024 ssc mts paper" is a target query in its own right, and
+           the year is the CTR trigger — it reads as "the actual paper", not a
+           practice set. "PYQ" stays because that is what aspirants actually
+           type — it outranks "last year paper" in real Indian search volume. */
+        title="SSC MTS Previous Year Paper 2024 — Free PYQ Mock Test"
+        /* 150 chars — under the ~160 Google renders before truncating. "last
+           year paper" carries that query cluster; "free" + "real shifts" +
+           "actual exam screen" are the click triggers. */
+        description="Attempt every SSC MTS last year paper free — real 2024 & 2023 shifts on the actual exam screen, timed, with correct negative marking. Hindi & English."
         path="/ssc-mts"
-        keywords="SSC MTS previous year question paper, SSC MTS previous year paper, SSC MTS PYQ, SSC MTS last year paper, SSC MTS question paper, SSC MTS previous year paper in hindi, SSC MTS previous year paper pdf, SSC MTS 2024 question paper, SSC MTS 2023 question paper, SSC MTS mock test, SSC MTS mock test free, SSC MTS online test series, SSC MTS practice set, SSC MTS Havaldar previous year paper, SSC MTS exam pattern, SSC MTS syllabus"
+        keywords="SSC MTS previous year question paper, SSC MTS previous year paper, SSC MTS PYQ, SSC MTS last year paper, last year paper for SSC MTS, last year paper for SSC, 2024 SSC MTS paper, SSC MTS paper 2024, SSC MTS question paper, SSC MTS previous year paper in hindi, SSC MTS previous year paper pdf, SSC MTS 2024 question paper, SSC MTS 2023 question paper, SSC MTS mock test, SSC MTS mock test free, SSC MTS online test series, SSC MTS practice set, SSC MTS Havaldar previous year paper, SSC MTS exam pattern, SSC MTS syllabus, SSC MTS 2026, SSC MTS notification 2026, SSC MTS exam date 2026, SSC MTS vacancy 2026, SSC MTS apply online, SSC MTS full form, Multi Tasking Staff, SSC MTS salary, SSC MTS cut off, SSC MTS admit card, SSC MTS answer key, SSC MTS free online test"
         jsonLd={jsonLd}
       />
       <Navbar />
@@ -1216,6 +1249,121 @@ const SscMtsLanding = () => {
         </div>
       </section>
 
+      {/* ══ SSC MTS 2026 — the cycle queries ══
+          "ssc mts 2026", "notification", "exam date", "vacancy" are the
+          highest-volume MTS queries in India — every #1-ranking competitor
+          leads with them. This block earns that cluster WITHOUT lying: as of
+          Aug 2026 the notification is NOT out, so the only honest facts are
+          the calendar window, last cycle's vacancies, and where the real
+          notification will appear. Update the tiles the day it drops. */}
+      <section className="py-16 sm:py-20 px-5">
+        <div className="container mx-auto max-w-5xl">
+          <SectionHead
+            className="mb-8 sm:mb-10"
+            eyebrow="SSC MTS 2026"
+            title="SSC MTS 2026: notification, exam date & vacancies"
+            lede={
+              <>
+                SSC MTS — full form <strong className="text-foreground/85">Multi Tasking Staff</strong> —
+                runs on an annual cycle, and the 2026 one is here. What is confirmed, what is still
+                awaited, and what it means for the weeks you have left.
+              </>
+            }
+          />
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              {
+                icon: CalendarDays,
+                label: "Exam window",
+                value: "Sept – Nov 2026",
+                hint: "Per the official SSC exam calendar",
+                hot: true,
+              },
+              {
+                icon: FileText,
+                label: "Notification 2026",
+                value: "Awaited",
+                hint: "Publishes on ssc.gov.in — the only authoritative source",
+              },
+              {
+                icon: TrendingUp,
+                label: "Vacancies last cycle",
+                value: "7,948",
+                hint: "2025 · MTS + Havaldar (CBIC & CBN) · 2026 TBA",
+              },
+              {
+                icon: GraduationCap,
+                label: "Post",
+                value: "Multi Tasking Staff",
+                hint: "Group C, non-technical · Class 10 pass",
+              },
+            ].map(({ icon: Icon, label, value, hint, hot }) => (
+              <div
+                key={label}
+                className={`rounded-2xl border p-5 text-center ${
+                  hot ? "border-primary/40 bg-primary/[0.06]" : "border-border/60 bg-card"
+                }`}
+              >
+                <Icon
+                  className={`h-4 w-4 mx-auto mb-2 ${hot ? "text-primary" : "text-muted-foreground/70"}`}
+                  aria-hidden="true"
+                />
+                <div
+                  className={`font-display text-[17px] sm:text-[19px] font-extrabold tracking-tight leading-tight ${
+                    hot ? "text-primary" : "text-foreground"
+                  }`}
+                >
+                  {value}
+                </div>
+                <div className="text-[10.5px] font-black uppercase tracking-widest text-muted-foreground/70 mt-1">
+                  {label}
+                </div>
+                <div className="text-[11.5px] text-muted-foreground/80 mt-1 leading-snug">{hint}</div>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-6 max-w-3xl mx-auto text-center text-[14.5px] text-muted-foreground leading-[1.8]">
+            Read the window the way a ranker does: if your shift lands in September, the time for
+            new material is already over — these weeks belong to full-length papers and review.
+            Dates circulating before the notification appears on{" "}
+            <a
+              href={OFFICIAL_SITE}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="font-semibold text-primary hover:underline"
+            >
+              ssc.gov.in
+            </a>{" "}
+            are speculation; the syllabus, pattern and papers below are what you can act on today.
+          </p>
+
+          {/* Spoke links: the cycle queries this page can't fully answer get a
+              dedicated article each — hub ranks, spokes support. */}
+          <div className="mt-8 grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {[
+              { to: "/blog/ssc-mts-notification-and-exam-dates", label: "Notification & exam dates, explained" },
+              { to: "/blog/ssc-mts-vacancies-and-selection-process", label: "Vacancies & selection process" },
+              { to: "/blog/ssc-mts-salary-and-job-profile", label: "SSC MTS salary & job profile" },
+              { to: "/blog/ssc-mts-cutoff-analysis", label: "Cut-off analysis, state-wise logic" },
+            ].map((l) => (
+              <Link
+                key={l.to}
+                to={l.to}
+                className="group flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3 hover:border-primary/40 transition-colors"
+              >
+                <span className="text-[13px] font-medium text-foreground/85">{l.label}</span>
+                <ArrowRight
+                  className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all flex-shrink-0"
+                  aria-hidden="true"
+                />
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ══ Why PYQs — the page's topical body copy ══
           A landing page that only asserts "free mock tests" ranks on the title
           alone. This section is where the previous-year-paper intent actually
@@ -1318,6 +1466,215 @@ const SscMtsLanding = () => {
                   />
                 </Link>
               ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ══ The 2024 paper — the "last year paper" intent, answered ══
+          "last year paper for ssc mts" and "2024 ssc mts paper" are queries
+          this page targets verbatim, so the copy uses the searcher's own words.
+          Deliberately MTS-only: CGL/CHSL get exactly one comparative paragraph,
+          because those clusters belong to their own pages and drifting here is
+          how this page starts cannibalising them. */}
+      <section className="py-16 sm:py-20 px-5 bg-secondary/20 border-y border-border/50">
+        <div className="container mx-auto max-w-3xl">
+          <SectionHead
+            align="left"
+            className="mb-6"
+            eyebrow="Last year's paper"
+            title="The 2024 SSC MTS paper: your most honest rehearsal"
+          />
+
+          {/* PAS intro: the problem is not knowledge, it is calibration — and
+              the agitation is the September 2026 clock, which is real. */}
+          <div className="space-y-5 text-[15px] sm:text-[16px] text-muted-foreground leading-[1.85]">
+            <p className="text-[16px] sm:text-[17px] text-foreground/75">
+              You have the syllabus. You have the books, the one-shot videos, the Telegram notes.
+              What none of them can give you is the one thing that will decide your rank this
+              September: how <em>you</em> behave when a real SSC paper is on the screen and the
+              clock is falling.
+            </p>
+            <p>
+              That gap has a price, and it is paid every cycle. Aspirants who knew enough to clear
+              the cut-off lose out — not to harder questions, but to a slow first ten minutes, a
+              comprehension passage started too late, or four confident guesses that Session II's{" "}
+              <strong className="text-foreground/85">−1 negative marking</strong> quietly turned
+              into lost marks. The syllabus tells you what SSC <em>can</em> ask. Only the{" "}
+              <strong className="text-foreground/85">last year paper for SSC MTS</strong> shows you
+              what it actually asks — and how fast it expects an answer.
+            </p>
+            <p>
+              Which is why the 2024 SSC MTS paper is the highest-return sitting available to you
+              right now: real shifts from the most recent completed cycle, attempted on the same
+              computer-based screen with the same two locked 45-minute clocks, and your score
+              computed against the answer key the instant you submit — no waiting, no PDF hunt.
+            </p>
+          </div>
+
+          <h3 className="mt-10 mb-3 text-[19px] font-black text-foreground tracking-[-0.02em]">
+            What the 2024 SSC MTS paper actually tested
+          </h3>
+          <p className="text-[15px] text-muted-foreground leading-[1.85] mb-4">
+            Individual questions across the 2024 shifts stayed within the matriculation band that
+            defines MTS — very few were genuinely hard. What the paper tested was{" "}
+            <strong className="text-foreground/85">throughput</strong>: whether you could convert
+            knowledge you already had into marked answers before the session clock ran out.
+            Candidates who struggled almost never lacked the knowledge; they lost the clock.
+          </p>
+          <ul className="space-y-2.5 mb-4">
+            {[
+              <>
+                <strong className="text-foreground/85">Arithmetic allowed roughly 70 seconds a
+                question.</strong>{" "}
+                One three-minute struggle eats the budget of two other questions — recognising a
+                question is going long, and abandoning it, was the skill 2024 punished hardest.
+              </>,
+              <>
+                <strong className="text-foreground/85">Reasoning repeated shallow families</strong>{" "}
+                — analogies, series, coding–decoding — the fastest marks on the paper, worth
+                clearing first in Session I.
+              </>,
+              <>
+                <strong className="text-foreground/85">General Awareness returned to the same
+                bands</strong>{" "}
+                — polity, modern history, Class 6–10 science — and rewarded answering in seconds
+                or moving on. A fact is recalled instantly or not at all.
+              </>,
+              <>
+                <strong className="text-foreground/85">English punished late starts on the
+                passage.</strong>{" "}
+                Aspirants who reached comprehension with under ten minutes left donated those
+                marks to the clock.
+              </>,
+            ].map((item, i) => (
+              <li key={i} className="flex gap-3 text-[14.5px] text-muted-foreground leading-[1.75]">
+                <span
+                  className="mt-[9px] h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0"
+                  aria-hidden="true"
+                />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[14px] text-muted-foreground leading-[1.75]">
+            The shift-by-shift breakdown lives in the{" "}
+            <Link
+              to="/blog/ssc-mts-2024-question-paper-analysis"
+              className="font-semibold text-primary hover:underline"
+            >
+              full 2024 question paper analysis
+            </Link>
+            , and the{" "}
+            <Link
+              to="/blog/ssc-mts-pyq-topic-wise-weightage"
+              className="font-semibold text-primary hover:underline"
+            >
+              topic-wise weightage guide
+            </Link>{" "}
+            sets out which chapters those shifts kept returning to.
+          </p>
+
+          <h3 className="mt-10 mb-3 text-[19px] font-black text-foreground tracking-[-0.02em]">
+            How to use last year's paper before the September 2026 exam
+          </h3>
+          <p className="text-[15px] text-muted-foreground leading-[1.85] mb-4">
+            With the exam weeks away, the temptation is to hoard papers. Resist it — between now
+            and your admit card, a handful of shifts attempted properly beats a folder of fifty.
+            The working rhythm is{" "}
+            <strong className="text-foreground/85">
+              one full paper every three or four days, reviewed for as long as it took to attempt
+            </strong>
+            :
+          </p>
+          <ul className="space-y-2.5 mb-4">
+            {[
+              <>
+                <strong className="text-foreground/85">First, diagnose.</strong> Attempt one 2024
+                shift cold, both sessions back to back, phone face down. Your score does not
+                matter yet; your per-subject timing and your guessing pattern do.
+              </>,
+              <>
+                <strong className="text-foreground/85">Then fix the single biggest leak.</strong>{" "}
+                One topic is quietly eating your 45 minutes, or blind guessing is bleeding your
+                Session II total. Attack only that before the next paper — fixing everything at
+                once fixes nothing.
+              </>,
+              <>
+                <strong className="text-foreground/85">Final fortnight: rehearse, don't
+                learn.</strong>{" "}
+                Stop adding material. Re-attempt shifts until the 90-minute rhythm — reasoning
+                first, sweep the blanks, passage last — runs without thinking.
+              </>,
+            ].map((item, i) => (
+              <li key={i} className="flex gap-3 text-[14.5px] text-muted-foreground leading-[1.75]">
+                <span
+                  className="mt-[9px] h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0"
+                  aria-hidden="true"
+                />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[14px] text-muted-foreground leading-[1.75]">
+            The full review method — the three failure types and what each one demands — is in{" "}
+            <Link
+              to="/blog/how-to-solve-ssc-mts-previous-year-papers"
+              className="font-semibold text-primary hover:underline"
+            >
+              how to solve SSC MTS previous year papers
+            </Link>
+            .
+          </p>
+
+          <h3 className="mt-10 mb-3 text-[19px] font-black text-foreground tracking-[-0.02em]">
+            Looking for a last year paper for SSC, beyond MTS?
+          </h3>
+          <p className="text-[15px] text-muted-foreground leading-[1.85]">
+            One caution: SSC's exams share a house style but not a structure. A last year paper for
+            SSC CGL or CHSL runs on a different pattern, different marking and a different clock —
+            useful for its own exam, but it rehearses the wrong instincts for the MTS computer-based
+            test. If MTS in September 2026 is your target, spend your remaining weeks inside MTS
+            shifts, where every minute of practice transfers.
+          </p>
+
+          {/* Gold CTA — same "previous-year gold" idiom as the hero shelf, so
+              the offer reads as one thing across the page. Links through
+              papersLibraryLink, never the raw ?type= URL, for the same
+              missing-column reason as the shelf. */}
+          <div className="mt-10 rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-6 sm:p-7">
+            <div className="flex items-start gap-4">
+              <span className="grid place-items-center w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-500/30 flex-shrink-0">
+                <History className="h-5 w-5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-[16px] font-black text-foreground tracking-tight mb-1.5">
+                  The 2024 paper is open. The clock is set. Free.
+                </h3>
+                <p className="text-[13.5px] text-muted-foreground leading-[1.7] mb-4">
+                  Ninety minutes from now you will know exactly where you stand — which is more
+                  than most aspirants will know on exam morning. No card, no trial, unlimited
+                  re-attempts.
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Link
+                    to={papersLibraryLink}
+                    className="group inline-flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-5 py-2.5 text-[13.5px] font-bold text-[#1A1200] transition-colors"
+                  >
+                    Attempt the 2024 SSC MTS paper
+                    <ArrowRight
+                      className="h-4 w-4 group-hover:translate-x-0.5 transition-transform"
+                      aria-hidden="true"
+                    />
+                  </Link>
+                  <Link
+                    to={MARKETPLACE_LINK}
+                    className="text-[13px] font-semibold text-primary hover:underline"
+                  >
+                    or browse every SSC MTS mock →
+                  </Link>
+                </div>
+              </div>
             </div>
           </div>
         </div>
