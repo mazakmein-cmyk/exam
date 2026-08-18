@@ -61,6 +61,13 @@ const AdminDashboard = () => {
     const [verifyConfirmOpen, setVerifyConfirmOpen] = useState(false);
     const [verifyTargetUser, setVerifyTargetUser] = useState<any>(null);
 
+    // Activity popup state (a student's attempted exams / a creator's created exams)
+    const [activityOpen, setActivityOpen] = useState(false);
+    const [activityLoading, setActivityLoading] = useState(false);
+    const [activityMode, setActivityMode] = useState<'attempted' | 'created'>('attempted');
+    const [activityData, setActivityData] = useState<any[]>([]);
+    const [activityUser, setActivityUser] = useState<any>(null);
+
     // Analytics State
     const [trendTab, setTrendTab] = useState<'month' | 'year'>('month');
     const [activeTrendTab, setActiveTrendTab] = useState<'dau' | 'mau'>('dau');
@@ -354,6 +361,47 @@ const AdminDashboard = () => {
                 : error?.message || "Failed to update paper type access";
             toast.error(message);
         }
+    };
+
+    const handleViewAttempts = async (user: any) => {
+        setActivityUser(user);
+        setActivityMode('attempted');
+        setActivityOpen(true);
+        setActivityLoading(true);
+        setActivityData([]);
+        try {
+            const { data, error } = await (supabase.rpc as any)('admin_get_user_attempts', {
+                target_user_id: user.id,
+            });
+            if (error) throw error;
+            setActivityData(data || []);
+        } catch (error: any) {
+            console.error("Error fetching user attempts:", error);
+            // Migrations are pasted by hand, so name the file that is missing
+            // instead of surfacing a bare "function does not exist".
+            const message = /does not exist|schema cache/i.test(error?.message || "")
+                ? "Apply 20260826000000_admin_user_attempts.sql first"
+                : error?.message || "Failed to load attempted exams";
+            toast.error(message);
+            setActivityOpen(false);
+        } finally {
+            setActivityLoading(false);
+        }
+    };
+
+    const handleViewCreated = (user: any) => {
+        setActivityUser(user);
+        setActivityMode('created');
+        setActivityOpen(true);
+        setActivityLoading(false);
+        // The exams list for the Exams Management table already holds every
+        // exam with its user_id, so the creator popup filters client-side
+        // instead of making another round trip.
+        setActivityData(
+            exams
+                .filter(e => e.user_id === user.id)
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        );
     };
 
     const handleToggleStatus = async (examId: string, currentStatus: boolean) => {
@@ -1100,9 +1148,31 @@ const AdminDashboard = () => {
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4 text-sm text-gray-500">
-                                                    {user.user_type === 'student'
-                                                        ? `${user.exams_attempted || 0} Attempted`
-                                                        : `${user.exams_created || 0} Created`}
+                                                    {user.user_type === 'student' ? (
+                                                        (user.exams_attempted || 0) > 0 ? (
+                                                            <button
+                                                                className="text-indigo-600 font-medium hover:text-indigo-800 hover:underline"
+                                                                title="See which exams were attempted"
+                                                                onClick={() => handleViewAttempts(user)}
+                                                            >
+                                                                {user.exams_attempted} Attempted
+                                                            </button>
+                                                        ) : (
+                                                            '0 Attempted'
+                                                        )
+                                                    ) : (
+                                                        (user.exams_created || 0) > 0 ? (
+                                                            <button
+                                                                className="text-indigo-600 font-medium hover:text-indigo-800 hover:underline"
+                                                                title="See which exams were created"
+                                                                onClick={() => handleViewCreated(user)}
+                                                            >
+                                                                {user.exams_created} Created
+                                                            </button>
+                                                        ) : (
+                                                            '0 Created'
+                                                        )
+                                                    )}
                                                 </td>
                                                 <td className="px-6 py-4 text-sm">
                                                     {new Date(user.created_at).toLocaleDateString('en-IN', {
@@ -1565,6 +1635,82 @@ const AdminDashboard = () => {
                                         </TabsContent>
                                     ))}
                                 </Tabs>
+                            )}
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            {/* User Activity Dialog (student attempts / creator's exams) */}
+            <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>
+                            {activityMode === 'attempted' ? 'Attempted Exams' : 'Created Exams'}
+                        </DialogTitle>
+                        <p className="text-sm text-gray-500">
+                            {activityUser?.username || activityUser?.email}
+                            {!activityLoading && ` — ${activityData.length} ${
+                                activityMode === 'attempted'
+                                    ? `attempt${activityData.length === 1 ? '' : 's'}`
+                                    : `exam${activityData.length === 1 ? '' : 's'}`
+                            }`}
+                        </p>
+                    </DialogHeader>
+
+                    {activityLoading ? (
+                        <div className="flex items-center justify-center py-10 text-sm text-gray-500">
+                            Loading attempts...
+                        </div>
+                    ) : activityData.length === 0 ? (
+                        <p className="text-center text-gray-500 py-10 text-sm">
+                            {activityMode === 'attempted'
+                                ? 'No attempts found for this user.'
+                                : 'No exams found for this creator.'}
+                        </p>
+                    ) : (
+                        <div className="max-h-[60vh] overflow-y-auto pr-1 divide-y divide-gray-100">
+                            {activityMode === 'attempted' ? (
+                                activityData.map((att) => (
+                                    <div key={att.attempt_id} className="py-3 flex items-center justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-gray-900 truncate" title={att.exam_name}>
+                                                {att.exam_name || "Untitled Exam"}
+                                            </p>
+                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                {new Date(att.attempted_at).toLocaleDateString('en-IN', {
+                                                    day: '2-digit', month: 'short', year: 'numeric'
+                                                })}
+                                            </p>
+                                        </div>
+                                        {att.attempt_language && (
+                                            <span className="shrink-0 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-600 ring-1 ring-inset ring-gray-200">
+                                                {att.attempt_language}
+                                            </span>
+                                        )}
+                                    </div>
+                                ))
+                            ) : (
+                                activityData.map((exam) => (
+                                    <div key={exam.id} className="py-3 flex items-center justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-gray-900 truncate" title={exam.name}>
+                                                {exam.name || "Untitled Exam"}
+                                            </p>
+                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                {new Date(exam.created_at).toLocaleDateString('en-IN', {
+                                                    day: '2-digit', month: 'short', year: 'numeric'
+                                                })}
+                                            </p>
+                                        </div>
+                                        <span className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${exam.is_published
+                                            ? "bg-green-50 text-green-700 ring-green-600/20"
+                                            : "bg-gray-50 text-gray-600 ring-gray-500/10"
+                                            }`}>
+                                            {exam.is_published ? "Published" : "Draft"}
+                                        </span>
+                                    </div>
+                                ))
                             )}
                         </div>
                     )}
