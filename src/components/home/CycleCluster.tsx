@@ -1,0 +1,240 @@
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowRight, CalendarClock, History, MonitorPlay, Timer } from "lucide-react";
+import SectionHeader from "@/components/home/SectionHeader";
+import Reveal from "@/components/home/Reveal";
+import { readLastExam, type LastExamMemo } from "@/lib/lastExamMemo";
+import { slugifyCategory } from "@/lib/homeExamContext";
+
+/**
+ * Cluster A — the Zeigarnik engine: two open loops, side by side.
+ *
+ *  · The cycle card counts down to the OPENING of the official SSC MTS 2026
+ *    window (Sept–Nov per the SSC calendar). The notification is not out as of
+ *    Aug 2026, so a countdown to a specific exam date would be fiction — the
+ *    window opening is the honest deadline, and /ssc-mts (the SEO pillar) is
+ *    where the full cycle story lives.
+ *
+ *  · The resume card surfaces the last paper the visitor opened (a local
+ *    breadcrumb, see lastExamMemo.ts). An unfinished thing with a name pulls
+ *    harder than any promotion. First-time visitors get the inline CBT demo
+ *    invitation instead — their open loop is "what does the real screen look
+ *    like?", and #cbt-preview answers it one scroll away.
+ */
+
+/** The official calendar's window for the MTS CBE. */
+const WINDOW_OPENS = new Date("2026-09-01T00:00:00+05:30").getTime();
+const WINDOW_CLOSES = new Date("2026-11-30T23:59:59+05:30").getTime();
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+const CountdownDigits = ({ target }: { target: number }) => {
+    const [now, setNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        const id = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(id);
+    }, []);
+
+    const left = Math.max(0, target - now);
+    const days = Math.floor(left / 86_400_000);
+    const hours = Math.floor((left % 86_400_000) / 3_600_000);
+    const mins = Math.floor((left % 3_600_000) / 60_000);
+    const secs = Math.floor((left % 60_000) / 1000);
+
+    const cells = [
+        { value: String(days), label: "days" },
+        { value: pad(hours), label: "hrs" },
+        { value: pad(mins), label: "min" },
+        { value: pad(secs), label: "sec" },
+    ];
+
+    return (
+        // Ticking numbers are noise to a screen reader — the static copy above
+        // them already says what the date is.
+        <div className="flex items-end gap-2" aria-hidden="true">
+            {cells.map(({ value, label }) => (
+                <div key={label} className="text-center">
+                    <div className="min-w-[52px] px-2 py-2.5 rounded-xl bg-white/[0.07] border border-white/[0.1] text-[24px] font-black text-white tabular-nums leading-none">
+                        {value}
+                    </div>
+                    <div className="mt-1.5 text-[10px] font-bold tracking-widest uppercase text-white/40">{label}</div>
+                </div>
+            ))}
+        </div>
+    );
+};
+
+/** The SSC MTS 2026 cycle card, in whichever phase the calendar is in. */
+const MtsCycleCard = () => {
+    const now = Date.now();
+    const beforeWindow = now < WINDOW_OPENS;
+    const inWindow = now >= WINDOW_OPENS && now <= WINDOW_CLOSES;
+
+    return (
+        <div className="relative overflow-hidden rounded-2xl bg-[#0A0D1E] border border-white/[0.08] p-6 flex flex-col justify-between min-h-[240px]">
+            <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+                <div className="absolute top-[-40%] right-[-20%] w-[300px] h-[240px] rounded-full bg-[#6C3EF4] opacity-[0.16] blur-[80px]" />
+            </div>
+            <div className="relative">
+                <div className="flex items-center gap-2 mb-3">
+                    <span className="relative flex h-2 w-2" aria-hidden="true">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                    </span>
+                    <span className="text-[11px] font-bold tracking-widest uppercase text-red-400">
+                        SSC MTS September 2026
+                    </span>
+                </div>
+                {beforeWindow ? (
+                    <>
+                        <h3 className="text-[19px] font-extrabold text-white tracking-tight leading-snug mb-1">
+                            The Sept–Nov exam window opens in
+                        </h3>
+                        <p className="text-[12.5px] text-white/45 mb-5">
+                            Per the official SSC calendar. Exact shift dates arrive with the admit card.
+                        </p>
+                        <CountdownDigits target={WINDOW_OPENS} />
+                    </>
+                ) : inWindow ? (
+                    <>
+                        <h3 className="text-[20px] font-extrabold text-white tracking-tight leading-snug mb-1">
+                            The 2026 exam window is <span className="text-red-400">open now</span>.
+                        </h3>
+                        <p className="text-[13px] text-white/45">
+                            Shifts are running Sept–Nov. Every practice session from here on is rehearsal.
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        <h3 className="text-[20px] font-extrabold text-white tracking-tight leading-snug mb-1">
+                            The 2026 window has closed.
+                        </h3>
+                        <p className="text-[13px] text-white/45">The next cycle's head start begins today.</p>
+                    </>
+                )}
+            </div>
+            <Link
+                to="/ssc-mts"
+                className="relative mt-6 inline-flex items-center gap-2 self-start px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.1] text-[13px] font-bold text-white transition-all duration-200"
+            >
+                <CalendarClock className="h-4 w-4 text-[#A78BFA]" />
+                Everything about the 2026 cycle
+                <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+        </div>
+    );
+};
+
+/** For non-MTS contexts: the same slot holds that exam's shelf instead. */
+const ShelfCard = ({ category }: { category: string }) => {
+    const navigate = useNavigate();
+    return (
+        <div className="relative overflow-hidden rounded-2xl bg-[#0A0D1E] border border-white/[0.08] p-6 flex flex-col justify-between min-h-[240px]">
+            <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+                <div className="absolute top-[-40%] right-[-20%] w-[300px] h-[240px] rounded-full bg-[#6C3EF4] opacity-[0.16] blur-[80px]" />
+            </div>
+            <div className="relative">
+                <span className="text-[11px] font-bold tracking-widest uppercase text-[#A78BFA]">Your exam shelf</span>
+                <h3 className="mt-3 text-[20px] font-extrabold text-white tracking-tight leading-snug">
+                    Every {category} paper, one shelf.
+                </h3>
+                <p className="mt-1.5 text-[13px] text-white/45">
+                    Mocks and previous year papers, filtered to exactly what you're preparing for.
+                </p>
+            </div>
+            <button
+                onClick={() => navigate(`/marketplace?category=${encodeURIComponent(category)}`)}
+                className="relative mt-6 inline-flex items-center gap-2 self-start px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.1] text-[13px] font-bold text-white transition-all duration-200"
+            >
+                Open the {category} shelf <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+        </div>
+    );
+};
+
+const ResumeCard = ({ memo }: { memo: LastExamMemo }) => {
+    const navigate = useNavigate();
+    return (
+        <div className="rounded-2xl border border-[#6C3EF4]/25 bg-[#6C3EF4]/[0.04] p-6 flex flex-col justify-between min-h-[240px]">
+            <div>
+                <div className="flex items-center gap-2 mb-3">
+                    <History className="h-4 w-4 text-[#6C3EF4]" aria-hidden="true" />
+                    <span className="text-[11px] font-bold tracking-widest uppercase text-[#6C3EF4]">
+                        Pick up where you left off
+                    </span>
+                </div>
+                <h3 className="text-[19px] font-extrabold text-foreground tracking-tight leading-snug">{memo.name}</h3>
+                <p className="mt-1.5 text-[13px] text-muted-foreground">
+                    You opened this paper{memo.category ? ` (${memo.category})` : ""} — finish it under the clock and
+                    see your score against the answer key.
+                </p>
+            </div>
+            <button
+                onClick={() => navigate(`/exam/${memo.id}/intro?from=home`)}
+                className="mt-6 inline-flex items-center justify-center gap-2 self-start px-5 py-3 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white text-[14px] font-bold shadow-md shadow-[#6C3EF4]/25 hover:shadow-lg hover:shadow-[#6C3EF4]/30 hover:-translate-y-px transition-all duration-200"
+            >
+                <MonitorPlay className="h-4 w-4" /> Resume
+            </button>
+        </div>
+    );
+};
+
+/** No breadcrumb yet → invite the one-scroll-away CBT demo instead. */
+const FirstVisitCard = () => (
+    <div className="rounded-2xl border border-border/60 bg-card p-6 flex flex-col justify-between min-h-[240px]">
+        <div>
+            <div className="flex items-center gap-2 mb-3">
+                <MonitorPlay className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+                <span className="text-[11px] font-bold tracking-widest uppercase text-emerald-600">
+                    New here?
+                </span>
+            </div>
+            <h3 className="text-[19px] font-extrabold text-foreground tracking-tight leading-snug">
+                See the real exam screen before exam day.
+            </h3>
+            <p className="mt-1.5 text-[13.5px] text-muted-foreground leading-[1.6]">
+                Every paper here runs in the same computer-based-test interface you'll face in the hall — question
+                palette, mark-for-review, the works. Try it right on this page.
+            </p>
+        </div>
+        <a
+            href="#cbt-preview"
+            className="mt-6 inline-flex items-center gap-2 self-start px-4 py-2.5 rounded-xl bg-secondary hover:bg-secondary/70 border border-border/60 text-[13px] font-bold text-foreground transition-all duration-200"
+        >
+            Try the live demo below <ArrowRight className="h-3.5 w-3.5" />
+        </a>
+    </div>
+);
+
+const CycleCluster = ({ selectedCategory }: { selectedCategory: string | null }) => {
+    // Read once per mount — the memo only changes by navigating away and back.
+    const [memo] = useState(() => readLastExam());
+
+    // Three moods for the left tile: no context → the season card under a
+    // GENERIC heading (the MTS window is genuinely what's live right now, but
+    // the page must not read as MTS-only); MTS chosen → the full MTS framing;
+    // any other exam → that exam's shelf.
+    const isMts = selectedCategory !== null && slugifyCategory(selectedCategory) === "ssc-mts";
+    const title = isMts
+        ? "SSC MTS September 2026 — live mock test series"
+        : selectedCategory
+          ? `${selectedCategory} — your prep, on schedule`
+          : "This exam season, at a glance";
+
+    return (
+        <section aria-label="This exam cycle" className="container mx-auto max-w-6xl px-5 py-14 sm:py-16">
+            <Reveal>
+                <SectionHeader icon={Timer} eyebrow="Live cycle" title={title} accent="#EF4444" />
+            </Reveal>
+            <div className="grid md:grid-cols-2 gap-5">
+                <Reveal delay={80}>
+                    {selectedCategory && !isMts ? <ShelfCard category={selectedCategory} /> : <MtsCycleCard />}
+                </Reveal>
+                <Reveal delay={180}>{memo ? <ResumeCard memo={memo} /> : <FirstVisitCard />}</Reveal>
+            </div>
+        </section>
+    );
+};
+
+export default CycleCluster;

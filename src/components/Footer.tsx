@@ -29,7 +29,16 @@ const MockSetuMark = () => (
   </svg>
 );
 
-const Footer = () => {
+type FooterProps = {
+  /**
+   * The home page is student-only: the Educators column (Become a Creator /
+   * Creator Login) is omitted there, and Legal stands alone. Every other page
+   * keeps the full footer.
+   */
+  hideCreatorLinks?: boolean;
+};
+
+const Footer = ({ hideCreatorLinks = false }: FooterProps) => {
   return (
     <footer className="border-t border-border/50" aria-label="Site footer">
       <div className="container mx-auto max-w-6xl px-5 py-14">
@@ -110,26 +119,30 @@ const Footer = () => {
 
           {/* Educators + Legal */}
           <div>
-            <h4 className="text-[11px] font-bold tracking-widest text-foreground/40 uppercase mb-4">Educators</h4>
-            <ul className="space-y-3 mb-8">
-              <li>
-                <Link
-                  to="/for-creators"
-                  className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary hover:text-primary/80 transition-colors"
-                >
-                  <Sparkles className="h-3 w-3" />
-                  Become a Creator
-                </Link>
-              </li>
-              <li>
-                <Link
-                  to="/auth"
-                  className="text-[13px] text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Creator Login
-                </Link>
-              </li>
-            </ul>
+            {!hideCreatorLinks && (
+              <>
+                <h4 className="text-[11px] font-bold tracking-widest text-foreground/40 uppercase mb-4">Educators</h4>
+                <ul className="space-y-3 mb-8">
+                  <li>
+                    <Link
+                      to="/for-creators"
+                      className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary hover:text-primary/80 transition-colors"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      Become a Creator
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/auth"
+                      className="text-[13px] text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Creator Login
+                    </Link>
+                  </li>
+                </ul>
+              </>
+            )}
 
             <h4 className="text-[11px] font-bold tracking-widest text-foreground/40 uppercase mb-4">Legal</h4>
             <ul className="space-y-3">

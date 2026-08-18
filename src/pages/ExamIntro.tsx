@@ -8,6 +8,7 @@ import { ArrowLeft, BookOpen, ClipboardList, Globe, Eye, ArrowLeftRight, Lock, H
 import { useToast } from "@/hooks/use-toast";
 import { formatMarks, type ScoringConfig } from "@/services/scoringEngine";
 import { getExamViewer, resolveExamAccess, type ExamAccessMode } from "@/lib/examAccess";
+import { rememberLastExam } from "@/lib/lastExamMemo";
 import CreatorExamBlocked from "@/components/CreatorExamBlocked";
 import InstructionText from "@/components/exam/InstructionText";
 import { readNavigationSettings } from "@/lib/examSettings";
@@ -259,6 +260,18 @@ const ExamIntro = () => {
             if (mode === "blocked") return;
 
             setExam(examRecord);
+
+            // Breadcrumb for the home page's "pick up where you left off" card.
+            // Written here — the one door every exam start walks through — and
+            // only for students: a creator previewing their own paper is not a
+            // visitor who wants to be pulled back into it.
+            if (mode !== "preview") {
+                rememberLastExam({
+                    id: examRecord.id,
+                    name: examRecord.name,
+                    category: (examData as any).exam_category ?? null,
+                });
+            }
 
             // A creator previewing their own exam should see every language they
             // authored, not just the published ones — same as the editor's

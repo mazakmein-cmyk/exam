@@ -13,7 +13,11 @@ import Navbar from "@/components/Navbar";
 import SEO from "@/components/SEO";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
 import { orderExamCategories } from "@/hooks/use-exam-categories";
-import { queryExamList } from "@/lib/examListQuery";
+import {
+    PUBLISHED_EXAMS_QUERY_KEY,
+    fetchPublishedExams,
+    type PublishedExam,
+} from "@/lib/publishedExams";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
 import LazyDialogHost from "@/components/LazyDialogHost";
 import {
@@ -39,17 +43,9 @@ import { fetchMyParticipatedLiveExams } from "@/services/liveExamService";
 const OnboardingModal = lazy(() => import("@/components/OnboardingModal"));
 const JoinLiveExamDialog = lazy(() => import("@/components/live/JoinLiveExamDialog"));
 
-type Exam = {
-    id: string;
-    name: string;
-    description: string | null;
-    created_at: string;
-    is_published: boolean;
-    exam_category: string | null;
-    /** 'mock' | 'pyq'. Absent on a database without the migration — reads as mock. */
-    paper_type?: string | null;
-    user_id: string;
-};
+// The row shape and its fetch moved to publishedExams.ts so the home page can
+// share this page's cache entry — see that module for why.
+type Exam = PublishedExam;
 
 import { useUserRole } from "@/hooks/use-user-role";
 
@@ -140,19 +136,6 @@ const canonicalizeCategories = (selected: string[], exams: Exam[]): string[] => 
         return s;
     });
     return changed ? next : selected;
-};
-
-/** The published library, newest first. Column list: see examListQuery.ts. */
-const fetchPublishedExams = async (): Promise<Exam[]> => {
-    const { data, error } = await queryExamList((columns) =>
-        supabase
-            .from("exams")
-            .select(columns as "*")
-            .eq("is_published", true)
-            .order("created_at", { ascending: false })
-    );
-    if (error) throw error;
-    return (data || []) as Exam[];
 };
 
 /**
@@ -312,7 +295,7 @@ const Marketplace = () => {
         data: exams = [],
         isPending: loading,
         error: examsError,
-    } = useQuery({ queryKey: ["marketplace", "published-exams"], queryFn: fetchPublishedExams });
+    } = useQuery({ queryKey: PUBLISHED_EXAMS_QUERY_KEY, queryFn: fetchPublishedExams });
 
     useEffect(() => {
         if (examsError) console.error("Error loading exams:", examsError);

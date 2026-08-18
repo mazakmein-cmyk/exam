@@ -29,10 +29,16 @@ const ProfileDialog = lazy(() => import("@/components/ProfileDialog"));
 interface NavbarProps {
   navButtonLabel?: string;
   navButtonLink?: string;
+  /**
+   * The home page is student-only by design — no route to the creator
+   * platform may exist on it. Everywhere else the mobile sheet keeps its
+   * quiet "Creator Login" entry.
+   */
+  hideCreatorEntry?: boolean;
 }
 
 
-const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace" }: NavbarProps) => {
+const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace", hideCreatorEntry = false }: NavbarProps) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [session, setSession] = useState<any>(null);
@@ -215,13 +221,15 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
                       </Link>
                     )}
 
-                    <div className="mt-4 pt-4 border-t border-border/60">
-                      <Link to="/auth" onClick={() => setIsOpen(false)}>
-                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-secondary transition-colors text-sm text-muted-foreground">
-                          <Sparkles className="h-3.5 w-3.5" /> Creator Login
-                        </div>
-                      </Link>
-                    </div>
+                    {!hideCreatorEntry && (
+                      <div className="mt-4 pt-4 border-t border-border/60">
+                        <Link to="/auth" onClick={() => setIsOpen(false)}>
+                          <div className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-secondary transition-colors text-sm text-muted-foreground">
+                            <Sparkles className="h-3.5 w-3.5" /> Creator Login
+                          </div>
+                        </Link>
+                      </div>
+                    )}
                   </div>
                 </SheetContent>
               </Sheet>

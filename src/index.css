@@ -220,6 +220,17 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* The /for-creators scroll theatre: each act's rail copy arrives with a small
+   staged entrance (anticipation beat) whenever the active act changes — the
+   component re-keys the rail per act, so mounting IS the trigger. */
+@keyframes creator-act-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.creator-act-rail {
+  animation: creator-act-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* ============================================
    UTILITY CLASSES
    ============================================ */

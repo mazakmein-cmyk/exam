@@ -6,22 +6,16 @@ import {
   BookOpen,
   CheckCircle,
   Clock,
-  FileUp,
-  Globe,
-  Layers,
   Lock,
-  Monitor,
-  PenTool,
   Sparkles,
   Target,
-  TrendingUp,
-  Upload,
   Users,
   Zap,
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
+import CreatorJourney from "@/components/creators/CreatorJourney";
 
 /* ═══════════════════════════════════════════════
    SECTION: Animated observe-on-scroll wrapper
@@ -77,94 +71,6 @@ const PAIN_POINTS = [
     icon: Target,
     title: "No real exam simulation",
     desc: "A PDF is not an exam. There's no timer, no section navigation, no auto-submit — students practice casually instead of under real pressure.",
-  },
-];
-
-const FEATURES = [
-  {
-    icon: Upload,
-    title: "Upload Any PDF",
-    desc: "Drop your question paper PDF and our AI extracts each question automatically. Or use the manual editor for full control.",
-    accent: "#6C3EF4",
-    bg: "from-violet-500/[0.07] to-transparent",
-    border: "hover:border-violet-500/25",
-    size: "lg",
-  },
-  {
-    icon: PenTool,
-    title: "Manual Fix Editor",
-    desc: "AI parsing not perfect? The visual editor lets you adjust every question, option, and image in seconds.",
-    accent: "#10B981",
-    bg: "from-emerald-500/[0.07] to-transparent",
-    border: "hover:border-emerald-500/25",
-    size: "sm",
-  },
-  {
-    icon: Layers,
-    title: "Multi-Section Exams",
-    desc: "Create JEE-style multi-section papers with per-section timers, question counts, and marking schemes.",
-    accent: "#F59E0B",
-    bg: "from-amber-500/[0.07] to-transparent",
-    border: "hover:border-amber-500/25",
-    size: "sm",
-  },
-  {
-    icon: Monitor,
-    title: "Real Exam Interface",
-    desc: "Students see a full exam simulator — question palette, section navigation, mark-for-review, auto-submit — identical to JEE/NEET/CAT online format.",
-    accent: "#3B82F6",
-    bg: "from-blue-500/[0.07] to-transparent",
-    border: "hover:border-blue-500/25",
-    size: "sm",
-  },
-  {
-    icon: TrendingUp,
-    title: "Aggregated Analytics",
-    desc: "See how your students perform — average scores, section-wise accuracy, completion rates, and time distribution. All anonymised.",
-    accent: "#EC4899",
-    bg: "from-pink-500/[0.07] to-transparent",
-    border: "hover:border-pink-500/25",
-    size: "lg",
-  },
-  {
-    icon: Globe,
-    title: "One-Click Publish",
-    desc: "Publish to the Exam Library for all students, or share a private link with just your coaching class.",
-    accent: "#06B6D4",
-    bg: "from-cyan-500/[0.07] to-transparent",
-    border: "hover:border-cyan-500/25",
-    size: "sm",
-  },
-];
-
-const STEPS = [
-  {
-    step: "01",
-    icon: FileUp,
-    title: "Upload Your Paper",
-    desc: "Upload any exam PDF — JEE, NEET, CAT, GATE, or your own custom question paper. Our AI extracts questions, options, and images automatically.",
-    color: "#6C3EF4",
-  },
-  {
-    step: "02",
-    icon: PenTool,
-    title: "Review & Refine",
-    desc: "Fine-tune parsed questions with the visual editor. Add answer keys, set marking schemes, configure sections and timers — exactly how the real exam works.",
-    color: "#10B981",
-  },
-  {
-    step: "03",
-    icon: Sparkles,
-    title: "Publish to Students",
-    desc: "Publish to the Exam Library for all students, or generate a private link to share with your class. Students can start practising instantly.",
-    color: "#F59E0B",
-  },
-  {
-    step: "04",
-    icon: BarChart3,
-    title: "Track Performance",
-    desc: "See aggregated analytics on how your students performed — topic-wise, section-wise, and over time. Identify weak areas across your entire class.",
-    color: "#EC4899",
   },
 ];
 
@@ -436,139 +342,13 @@ const ForCreators = () => {
       </section>
 
       {/* ════════════════════════════════════════
-          FEATURES BENTO GRID
+          THE JOURNEY — five acts, one paper
+          (replaces the old features bento + steps list)
       ════════════════════════════════════════ */}
-      <section className="py-16 sm:py-28 px-5 bg-secondary/40">
-        <div className="container mx-auto max-w-5xl">
-          <Reveal>
-            <div className="text-center mb-16">
-              <div className="section-label justify-center mb-4">
-                <span className="w-6 h-px bg-primary/40" />
-                Creator Tools
-                <span className="w-6 h-px bg-primary/40" />
-              </div>
-              <h2 className="text-[28px] sm:text-[36px] md:text-[44px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
-                Everything you need to{" "}
-                <span
-                  style={{
-                    background: "linear-gradient(135deg, #10B981, #34D399)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    backgroundClip: "text",
-                  }}
-                >
-                  deliver exams
-                </span>
-                .
-              </h2>
-              <p className="mt-4 text-[16px] text-muted-foreground max-w-md mx-auto">
-                From PDF upload to student analytics — the complete exam delivery pipeline.
-              </p>
-            </div>
-          </Reveal>
+      <div id="how-it-works" className="scroll-mt-16 bg-secondary/40">
+        <CreatorJourney />
+      </div>
 
-          <div className="grid md:grid-cols-3 gap-4">
-            {FEATURES.map((f, i) => {
-              const Icon = f.icon;
-              return (
-                <Reveal key={i} delay={i * 80} className={f.size === "lg" ? "md:col-span-2" : ""}>
-                  <div className={`bento-card group relative overflow-hidden bg-gradient-to-br ${f.bg} ${f.border} h-full`}>
-                    <div
-                      className="absolute -top-8 -right-8 w-32 h-32 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-3xl"
-                      style={{ background: f.accent }}
-                    />
-                    <div className="relative z-10">
-                      <div
-                        className="inline-flex items-center justify-center w-10 h-10 rounded-xl mb-5"
-                        style={{ background: `${f.accent}15`, border: `1px solid ${f.accent}25` }}
-                      >
-                        <Icon className="h-5 w-5" style={{ color: f.accent }} />
-                      </div>
-                      <h3 className="text-[15px] font-bold text-foreground tracking-tight mb-2">{f.title}</h3>
-                      <p className="text-[13px] text-muted-foreground leading-[1.7]">{f.desc}</p>
-                    </div>
-                  </div>
-                </Reveal>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* ════════════════════════════════════════
-          HOW IT WORKS
-      ════════════════════════════════════════ */}
-      <section id="how-it-works" className="py-16 sm:py-28 px-5 scroll-mt-16">
-        <div className="container mx-auto max-w-5xl">
-          <Reveal>
-            <div className="text-center mb-16">
-              <div className="section-label justify-center mb-4">
-                <span className="w-6 h-px bg-primary/40" />
-                How It Works
-                <span className="w-6 h-px bg-primary/40" />
-              </div>
-              <h2 className="text-[28px] sm:text-[36px] md:text-[44px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
-                From PDF to{" "}
-                <span
-                  style={{
-                    background: "linear-gradient(135deg, #10B981, #34D399)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    backgroundClip: "text",
-                  }}
-                >
-                  live exam
-                </span>
-                {" "}in 4 steps.
-              </h2>
-              <p className="mt-4 text-[16px] text-muted-foreground max-w-md mx-auto">
-                No tech skills required. If you can create a PDF, you can create an exam on MockSetu (Mockset).
-              </p>
-            </div>
-          </Reveal>
-
-          <div className="relative">
-            {/* Connector */}
-            <div className="hidden lg:block absolute left-[39px] top-12 bottom-12 w-px bg-gradient-to-b from-transparent via-border to-transparent" />
-
-            <div className="flex flex-col gap-6">
-              {STEPS.map(({ icon: Icon, step, title, desc, color }, i) => (
-                <Reveal key={i} delay={i * 120}>
-                  <div className="flex gap-5 items-start group">
-                    <div className="relative flex-shrink-0">
-                      <div
-                        className="w-[52px] h-[52px] rounded-2xl flex items-center justify-center relative z-10 transition-all duration-300 group-hover:scale-110 group-hover:rotate-3"
-                        style={{ background: `${color}12`, border: `1.5px solid ${color}25` }}
-                      >
-                        <Icon className="h-5 w-5" style={{ color }} />
-                      </div>
-                      <div
-                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black text-white z-20"
-                        style={{ background: color }}
-                      >
-                        {i + 1}
-                      </div>
-                    </div>
-
-                    <div className="flex-1 pt-1.5 pb-4">
-                      <div className="flex items-center gap-3 mb-1.5">
-                        <h3 className="text-[16px] font-bold text-foreground tracking-tight">{title}</h3>
-                        <span
-                          className="hidden sm:block text-[10px] font-bold px-2 py-0.5 rounded-full"
-                          style={{ background: `${color}12`, color }}
-                        >
-                          Step {step}
-                        </span>
-                      </div>
-                      <p className="text-[14px] text-muted-foreground leading-[1.7]">{desc}</p>
-                    </div>
-                  </div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* ════════════════════════════════════════
           TRUST SIGNALS
