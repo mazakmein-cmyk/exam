@@ -1,4 +1,8 @@
-@import 'katex/dist/katex.min.css';
+/* KaTeX's stylesheet is imported by the modules that render math
+   (renderMath.ts, QuestionForm, RichTextEditor), so it loads with those
+   chunks instead of blocking first paint on every page. The one .katex
+   override below (.live-prose .katex-display) is a two-class selector, so it
+   outranks the library's single-class rules regardless of load order. */
 
 @tailwind base;
 @tailwind components;

@@ -26,7 +26,13 @@
  *    by the fast path and can never be double-rendered.
  */
 import katex from "katex";
+// KaTeX's stylesheet ships with the chunks that render math instead of inside
+// the global CSS bundle. Every screen that can display math imports this
+// module (or katex itself), so the style always arrives with the code that
+// needs it — and the exam library / landing pages stop downloading it.
+import "katex/dist/katex.min.css";
 import { looksLikeHtml, renderClozeBlanks } from "./richText";
+import { sanitizeStoredHtml } from "./sanitizeHtml";
 
 // ─── Bounded cache (exam pages re-render on every timer tick) ─────────────
 const CACHE_MAX = 500;
@@ -246,21 +252,34 @@ function mayContainMath(s: string): boolean {
 /**
  * Render math inside a stored HTML string (question text / passage that is
  * already injected via dangerouslySetInnerHTML). Non-math content passes
- * through untouched; on any failure the original string is returned.
+ * through KaTeX untouched; on any math failure the original markup is kept.
+ *
+ * SANITIZATION BOUNDARY. The returned string is what the pages inject, and
+ * the stored HTML is creator-authored — any creator can write arbitrary HTML
+ * to their own rows through the REST API, editors notwithstanding. So every
+ * exit from this function passes through sanitizeStoredHtml: the math-free
+ * fast path (most instructions and passages), the rendered path, and the
+ * catch path alike. Sanitizing before the cache means the cost is paid once
+ * per distinct string, not once per render tick.
+ *
+ * KaTeX's own output is generated with trust:false and survives the
+ * sanitizer intact (sanitize-question-html.test.mjs holds that, against the
+ * exact config the app ships).
  */
 export function renderMathInHtml(html: string | null | undefined): string {
   // Cloze markers first: they must render as blanks even in math-free text.
   const s = renderClozeBlanks(html ?? "");
-  if (!s || !mayContainMath(s)) return s;
+  if (!s) return s;
   const key = "h:" + s;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
   let result: string;
   try {
-    result = renderMathImpl(s, false);
+    result = mayContainMath(s) ? renderMathImpl(s, false) : s;
   } catch {
     result = s;
   }
+  result = sanitizeStoredHtml(result);
   cacheSet(key, result);
   return result;
 }

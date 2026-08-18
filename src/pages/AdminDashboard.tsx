@@ -12,6 +12,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+// This page is the ONLY caller of sonner toasts, so the sonner <Toaster> mounts
+// here (both render roots below) rather than in App — keeping the library out
+// of the entry chunk every visitor downloads.
+import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { Lock, Users, UserCheck, LogOut, Eye, EyeOff, Search, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, MoreVertical, Ban, TrendingUp, Activity, X, Filter, CalendarIcon, Plus, Tag, FileType } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -535,6 +539,7 @@ const AdminDashboard = () => {
     if (!isAuthenticated) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+                <SonnerToaster />
                 <Card className="w-full max-w-md shadow-xl">
                     <CardHeader className="space-y-1">
                         <CardTitle className="text-2xl font-bold flex items-center gap-2">
@@ -588,6 +593,7 @@ const AdminDashboard = () => {
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">
+            <SonnerToaster />
             <SEO title="Admin | MockSetu" description="Internal admin console." path="/barnwal3008-admin" noindex />
             <div className="max-w-5xl mx-auto space-y-8">
                 <div className="flex items-center justify-between">

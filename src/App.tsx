@@ -1,9 +1,8 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createBrowserRouter, RouterProvider, Outlet } from "react-router-dom";
+import { createBrowserRouter, RouterProvider, Outlet, useLocation } from "react-router-dom";
 import AuthStateListener from "./components/AuthStateListener";
 import GoogleAnalytics from "./components/GoogleAnalytics";
 
@@ -57,17 +56,68 @@ const RouteFallback = () => (
   </div>
 );
 
+/**
+ * Warm the two library chunks while the browser is idle on an entry page.
+ *
+ * Almost every session that starts on the landing or an auth page goes to
+ * /marketplace or /dashboard next, so by the time the login redirect fires,
+ * the route the user lands on is already in cache and renders without a
+ * spinner. Dynamic import() uses the same specifiers as the lazy() routes
+ * above, so this fetches the exact chunks the router will ask for — nothing
+ * is downloaded twice.
+ *
+ * Deliberately narrow: only on the three pages that funnel into the
+ * libraries (never mid-exam, where spare bandwidth isn't ours to spend),
+ * only after the page has gone idle, and not at all when the user has
+ * Data Saver on or is on 2G. Failures are ignored — this is a hint, and the
+ * router will fetch on demand exactly as before if it didn't land.
+ */
+const ENTRY_PATHS = ["/", "/auth", "/student-auth"];
+
+const PrefetchLikelyRoutes = () => {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    if (!ENTRY_PATHS.includes(pathname)) return;
+
+    const connection = (navigator as { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (connection?.saveData) return;
+    if (/(^|\b)(slow-)?2g$/.test(connection?.effectiveType ?? "")) return;
+
+    const warm = () => {
+      import("./pages/Marketplace").catch(() => {});
+      import("./pages/Dashboard").catch(() => {});
+    };
+
+    const w = window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(warm, { timeout: 4000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(warm, 2500);
+    return () => window.clearTimeout(id);
+  }, [pathname]);
+
+  return null;
+};
+
 const Layout = () => (
   <>
     <AuthStateListener />
     {/* Deliberately not on PresentLayout: that route is a projector on a wall,
         and counting it as a session would inflate every engagement metric. */}
     <GoogleAnalytics />
+    <PrefetchLikelyRoutes />
     <Suspense fallback={<RouteFallback />}>
       <Outlet />
     </Suspense>
     <Toaster />
-    <Sonner />
+    {/* The sonner toaster used to mount here too, but the only page that
+        raises sonner toasts is the admin dashboard — so it mounts there, and
+        the sonner library stays out of the chunk every visitor downloads. */}
   </>
 );
 

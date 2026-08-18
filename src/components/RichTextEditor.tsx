@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import katex from "katex";
+// KaTeX styles ride with this chunk, not the global bundle — see renderMath.ts.
+import "katex/dist/katex.min.css";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";

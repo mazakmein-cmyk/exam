@@ -28,3 +28,7 @@ env
 # Vite dev-server artifacts
 vite.config.ts.timestamp-*.mjs
 
+# TypeScript incremental-build state — machine-local, changes on every
+# typecheck, and was previously committed by accident on every unrelated PR.
+*.tsbuildinfo
+
