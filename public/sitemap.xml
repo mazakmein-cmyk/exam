@@ -6,18 +6,40 @@
 
   <!-- ============ Core pages ============ -->
 
+  <!-- The home page and its Hindi twin. Every URL in a translation group
+       lists the WHOLE group including itself, in both directions, or Google
+       treats the pairing as unconfirmed. Same rule for /for-creators below. -->
   <url>
     <loc>https://mocksetu.in/</loc>
-    <lastmod>2026-05-14</lastmod>
+    <lastmod>2026-08-19</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
     <xhtml:link rel="alternate" hreflang="en" href="https://mocksetu.in/" />
     <xhtml:link rel="alternate" hreflang="en-in" href="https://mocksetu.in/" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://mocksetu.in/hindi" />
+    <xhtml:link rel="alternate" hreflang="hi-in" href="https://mocksetu.in/hindi" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://mocksetu.in/" />
     <image:image>
-      <image:loc>https://mocksetu.in/mocksetu-logo.png</image:loc>
+      <image:loc>https://mocksetu.in/og-image.png</image:loc>
       <image:title>MockSetu (Mockset) — Free Mock Test &amp; Exam Simulator</image:title>
       <image:caption>The bridge to your best score — also searched as Mockset</image:caption>
+    </image:image>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/hindi</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mocksetu.in/" />
+    <xhtml:link rel="alternate" hreflang="en-in" href="https://mocksetu.in/" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://mocksetu.in/hindi" />
+    <xhtml:link rel="alternate" hreflang="hi-in" href="https://mocksetu.in/hindi" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mocksetu.in/" />
+    <image:image>
+      <image:loc>https://mocksetu.in/og-image.png</image:loc>
+      <image:title>MockSetu — फ्री मॉक टेस्ट और पिछले वर्षों के पेपर</image:title>
+      <image:caption>असली परीक्षा जैसा अभ्यास — उत्तर कुंजी के साथ</image:caption>
     </image:image>
   </url>
 
@@ -30,16 +52,33 @@
 
   <url>
     <loc>https://mocksetu.in/for-creators</loc>
-    <lastmod>2026-05-14</lastmod>
+    <lastmod>2026-08-19</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mocksetu.in/for-creators" />
+    <xhtml:link rel="alternate" hreflang="en-in" href="https://mocksetu.in/for-creators" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://mocksetu.in/hindi/for-creators" />
+    <xhtml:link rel="alternate" hreflang="hi-in" href="https://mocksetu.in/hindi/for-creators" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mocksetu.in/for-creators" />
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/hindi/for-creators</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mocksetu.in/for-creators" />
+    <xhtml:link rel="alternate" hreflang="en-in" href="https://mocksetu.in/for-creators" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://mocksetu.in/hindi/for-creators" />
+    <xhtml:link rel="alternate" hreflang="hi-in" href="https://mocksetu.in/hindi/for-creators" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mocksetu.in/for-creators" />
   </url>
 
   <!-- ============ Exam-specific landing pages ============ -->
 
   <url>
     <loc>https://mocksetu.in/mock-test/jee-main</loc>
-    <lastmod>2026-05-14</lastmod>
+    <lastmod>2026-08-19</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
@@ -111,14 +150,18 @@
     <priority>0.7</priority>
   </url>
 
-  <!-- ============ Sign-up / supporting ============ -->
+  <!-- ============ Supporting ============ -->
 
-  <url>
-    <loc>https://mocksetu.in/student-auth</loc>
-    <lastmod>2026-05-14</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
+  <!--
+    /student-auth is deliberately NOT listed.
+
+    robots.txt disallows it in three places, as one of the private /
+    authenticated areas. Listing a disallowed URL here is a contradiction: the
+    sitemap asks Google to index a page robots forbids it to crawl, which earns
+    a "indexed, though blocked by robots.txt" warning in Search Console and
+    indexes nothing useful — a sign-up form has no search intent to serve.
+    If the page is ever meant to rank, remove the Disallow lines first.
+  -->
 
   <url>
     <loc>https://mocksetu.in/privacy-policy</loc>
@@ -201,6 +244,188 @@
 
   <url>
     <loc>https://mocksetu.in/blog/ssc-mts-2025-question-paper-analysis</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/ncert-for-jee-main</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-time-management-in-exam</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-syllabus-2027</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-session-1-vs-session-2</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-previous-year-question-papers</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-preparation-from-class-11</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-physics-chapter-wise-weightage</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-paper-2-barch-bplanning</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-numerical-value-questions</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-normalisation-and-nta-score</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-mock-test-strategy</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-maths-chapter-wise-weightage</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-marks-vs-percentile</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-josaa-counselling-guide</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-in-hindi-and-regional-languages</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-exam-pattern-and-marking-scheme</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-eligibility-criteria</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-cutoff-for-nits-and-iiits</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-common-mistakes</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-chemistry-chapter-wise-weightage</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-answer-key-and-response-sheet</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-admit-card-and-exam-day-guide</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-90-day-study-plan</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-2027-registration-and-application-form</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/jee-main-2027-exam-date-and-notification</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://mocksetu.in/blog/how-to-score-250-plus-in-jee-main</loc>
     <lastmod>2026-08-19</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
@@ -1285,6 +1510,9 @@
   </url>
 
   <!-- ============ /Blog articles (auto-generated) ============ -->
+
+
+
 
 
 </urlset>

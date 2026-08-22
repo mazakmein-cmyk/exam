@@ -26,6 +26,7 @@ import {
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
+import { STATIC_PAGE_SEO } from "@/data/staticPageSeo";
 import { supabase } from "@/integrations/supabase/client";
 import { PAPER_TYPE_COLUMN, PAPER_TYPE_PYQ } from "@/lib/paperType.js";
 import { hasPaperTypeColumn } from "@/lib/paperTypeSettings";
@@ -1037,19 +1038,10 @@ const SscMtsLanding = () => {
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        /* Title leads with the exact target phrase and stays under ~60 chars so
-           it is not truncated in the SERP (53 chars). "2024" is in the title
-           because "2024 ssc mts paper" is a target query in its own right, and
-           the year is the CTR trigger — it reads as "the actual paper", not a
-           practice set. "PYQ" stays because that is what aspirants actually
-           type — it outranks "last year paper" in real Indian search volume. */
-        title="SSC MTS Previous Year Paper 2024 — Free PYQ Mock Test"
-        /* 150 chars — under the ~160 Google renders before truncating. "last
-           year paper" carries that query cluster; "free" + "real shifts" +
-           "actual exam screen" are the click triggers. */
-        description="Attempt every SSC MTS last year paper free — real 2024 & 2023 shifts on the actual exam screen, timed, with correct negative marking. Hindi & English."
-        path="/ssc-mts"
-        keywords="SSC MTS previous year question paper, SSC MTS previous year paper, SSC MTS PYQ, SSC MTS last year paper, last year paper for SSC MTS, last year paper for SSC, 2024 SSC MTS paper, SSC MTS paper 2024, SSC MTS question paper, SSC MTS previous year paper in hindi, SSC MTS previous year paper pdf, SSC MTS 2024 question paper, SSC MTS 2023 question paper, SSC MTS mock test, SSC MTS mock test free, SSC MTS online test series, SSC MTS practice set, SSC MTS Havaldar previous year paper, SSC MTS exam pattern, SSC MTS syllabus, SSC MTS 2026, SSC MTS notification 2026, SSC MTS exam date 2026, SSC MTS vacancy 2026, SSC MTS apply online, SSC MTS full form, Multi Tasking Staff, SSC MTS salary, SSC MTS cut off, SSC MTS admit card, SSC MTS answer key, SSC MTS free online test"
+        /* Title, description and keyword set live in data/staticPageSeo.ts —
+           the prerenderer needs them at build time, and one copy cannot drift.
+           The reasoning behind the exact wording is documented there. */
+        {...STATIC_PAGE_SEO.sscMts}
         jsonLd={jsonLd}
       />
       <Navbar />

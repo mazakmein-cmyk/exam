@@ -26,6 +26,9 @@ import VerifiedBadge, { VerifiedSeal } from "@/components/VerifiedBadge";
 import { getVerificationTier } from "@/lib/verification";
 import { useNavigate } from "react-router-dom";
 import SEO from "@/components/SEO";
+// Compares SHA-256 digests, so no operator address ships in the bundle. The
+// check is cosmetic — every RPC re-authorises server-side. See lib/adminRoute.ts.
+import { isAdminEmail } from "@/lib/adminRoute";
 
 const AdminDashboard = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -102,7 +105,7 @@ const AdminDashboard = () => {
     const checkSession = async () => {
         try {
             const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user?.email === "abarnwal3008@mocksetu.in" || session?.user?.email === "admin@mocksetu.in") {
+            if (await isAdminEmail(session?.user?.email)) {
                 setIsAuthenticated(true);
                 fetchStats();
                 fetchExams();
@@ -470,7 +473,7 @@ const AdminDashboard = () => {
 
             if (error) throw error;
 
-            if (data.user?.email === "abarnwal3008@mocksetu.in" || data.user?.email === "admin@mocksetu.in") {
+            if (await isAdminEmail(data.user?.email)) {
                 setIsAuthenticated(true);
                 fetchStats();
                 fetchExams();
@@ -642,7 +645,15 @@ const AdminDashboard = () => {
     return (
         <div className="min-h-screen bg-gray-50 p-8">
             <SonnerToaster />
-            <SEO title="Admin | MockSetu" description="Internal admin console." path="/barnwal3008-admin" noindex />
+            {/* `path` is deliberately a placeholder, NOT the real route.
+                Anything passed here becomes a string literal in the client
+                bundle, and this page's whole point is that its URL is not
+                discoverable there — see src/lib/adminRoute.ts. Because `noindex`
+                suppresses the canonical and the OpenGraph card entirely, the
+                value is never rendered, so a placeholder costs nothing.
+                (It previously read "/barnwal3008-admin": a hyphen-for-slash typo
+                that also made the old robots.txt rule match nothing.) */}
+            <SEO title="Admin | MockSetu" description="Internal admin console." path="/admin" noindex />
             <div className="max-w-5xl mx-auto space-y-8">
                 <div className="flex items-center justify-between">
                     <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>

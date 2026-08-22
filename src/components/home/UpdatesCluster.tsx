@@ -5,6 +5,8 @@ import SectionHeader from "@/components/home/SectionHeader";
 import Reveal from "@/components/home/Reveal";
 import { BLOG_META } from "@/data/blog";
 import { slugifyCategory } from "@/lib/homeExamContext";
+import { type UpdatesCopy } from "@/i18n/homeCopy";
+import { HOME_COPY_EN } from "@/i18n/homeCopy.en";
 
 /**
  * Cluster D — three guides for the chosen exam, straight from the blog
@@ -13,7 +15,13 @@ import { slugifyCategory } from "@/lib/homeExamContext";
  * pillar does: tag-matched posts → article → /ssc-mts → the library.
  */
 
-const UpdatesCluster = ({ selectedCategory }: { selectedCategory: string | null }) => {
+const UpdatesCluster = ({
+    selectedCategory,
+    copy = HOME_COPY_EN.updates,
+}: {
+    selectedCategory: string | null;
+    copy?: UpdatesCopy;
+}) => {
     const posts = useMemo(() => {
         // No context → the newest guides across every exam; a chosen exam →
         // its tagged guides, padded with the newest overall when it has
@@ -41,8 +49,8 @@ const UpdatesCluster = ({ selectedCategory }: { selectedCategory: string | null 
                 <Reveal>
                     <SectionHeader
                         icon={BookOpen}
-                        eyebrow="Latest updates"
-                        title={selectedCategory ? `${selectedCategory} guides & strategy` : "Exam guides & strategy"}
+                        eyebrow={copy.eyebrow}
+                        title={selectedCategory ? copy.titleCategory(selectedCategory) : copy.titleGeneric}
                         accent="#3B82F6"
                     />
                 </Reveal>
@@ -64,7 +72,7 @@ const UpdatesCluster = ({ selectedCategory }: { selectedCategory: string | null 
                                 {post.excerpt}
                             </span>
                             <span className="mt-auto text-[12px] font-semibold text-muted-foreground">
-                                {post.readingMinutes} min read
+                                {copy.minRead(post.readingMinutes)}
                             </span>
                         </Link>
                         </Reveal>
@@ -77,14 +85,14 @@ const UpdatesCluster = ({ selectedCategory }: { selectedCategory: string | null 
                             to="/ssc-mts"
                             className="inline-flex items-center gap-2 text-[13.5px] font-bold text-[#6C3EF4] hover:text-[#5B2FE3] transition-colors"
                         >
-                            The complete SSC MTS 2026 guide <ArrowRight className="h-4 w-4" />
+                            {copy.pillarLink} <ArrowRight className="h-4 w-4" />
                         </Link>
                     )}
                     <Link
                         to="/blog"
                         className="inline-flex items-center gap-2 text-[13.5px] font-bold text-muted-foreground hover:text-foreground transition-colors"
                     >
-                        All guides <ArrowRight className="h-4 w-4" />
+                        {copy.allGuides} <ArrowRight className="h-4 w-4" />
                     </Link>
                 </div>
             </div>

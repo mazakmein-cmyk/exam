@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, ArrowLeftRight, Save, Trash2, Upload, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass, Ungroup } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Save, Trash2, Upload, Download, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass, Ungroup } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
@@ -118,6 +118,7 @@ import {
   resolveTimingGroupIds,
   timingUnits,
 } from "@/lib/timingGroups.js";
+import { pdfDownloadFileName, pdfDownloadUrl } from "@/lib/pdfDownload.js";
 import GroupPoolField from "@/components/exam/GroupPoolField";
 
 const AVAILABLE_LANGUAGES = [
@@ -3281,6 +3282,19 @@ export default function ExamDetail() {
     }
   };
 
+  /**
+   * The uploaded PDF, downloadable under a name that says what it is. Uses the
+   * title currently in the form so a renamed-but-unsaved exam still reads right.
+   */
+  const sectionPdfFileName = useMemo(
+    () => pdfDownloadFileName(examTitle || exam?.name, section?.name),
+    [examTitle, exam?.name, section?.name],
+  );
+  const sectionPdfDownloadUrl = useMemo(
+    () => pdfDownloadUrl(section?.pdf_url, sectionPdfFileName),
+    [section?.pdf_url, sectionPdfFileName],
+  );
+
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0 || !section) return;
     const file = e.target.files[0];
@@ -4953,6 +4967,26 @@ export default function ExamDetail() {
                           onChange={handlePdfUpload}
                         />
                       </Button>
+                      {/* Get the uploaded file back — the stored object is named after a
+                          timestamp, so the readable name travels in the URL. */}
+                      {sectionPdfDownloadUrl && (
+                        <Button
+                          asChild
+                          variant="outline"
+                          className="h-14 shrink-0 rounded-xl px-4 font-semibold text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/[0.03]"
+                        >
+                          <a
+                            href={sectionPdfDownloadUrl}
+                            download={sectionPdfFileName}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Download ${sectionPdfFileName}`}
+                          >
+                            <Download className="h-4 w-4 sm:mr-2" />
+                            <span className="hidden sm:inline">Download</span>
+                          </a>
+                        </Button>
+                      )}
                     </div>
                   </div>
 

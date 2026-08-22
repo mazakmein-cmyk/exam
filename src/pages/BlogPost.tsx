@@ -5,11 +5,10 @@ import { ArrowLeft, ArrowRight, ChevronDown, Clock } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
-import type { BlogPost as BlogPostType } from "@/data/blogPosts";
 import { loadPost, relatedPosts } from "@/data/blog";
-
-/** Strip inline [text](/path) links down to their anchor text (for word counts / plain-text uses). */
-const stripLinks = (text: string) => text.replace(/\[([^\]]+)\]\(\/[^)\s]*\)/g, "$1");
+// Shared with scripts/prerender.mjs, which writes this same JSON-LD into the
+// static HTML at build time.
+import { buildBlogPostJsonLd } from "@/lib/seo/structuredData";
 
 /** Render inline [text](/path) internal links inside body text as router links. */
 const renderInline = (text: string): ReactNode[] => {
@@ -35,55 +34,6 @@ const renderInline = (text: string): ReactNode[] => {
   return nodes;
 };
 
-const buildJsonLd = (p: BlogPostType) => {
-  const url = `https://mocksetu.in/blog/${p.slug}`;
-  return [
-    {
-      "@context": "https://schema.org",
-      "@type": "BlogPosting",
-      headline: p.title,
-      description: p.excerpt,
-      url,
-      mainEntityOfPage: { "@type": "WebPage", "@id": url },
-      datePublished: p.publishedAt,
-      dateModified: p.updatedAt,
-      author: { "@type": "Organization", name: "MockSetu", url: "https://mocksetu.in/" },
-      publisher: {
-        "@type": "Organization",
-        name: "MockSetu",
-        logo: { "@type": "ImageObject", url: "https://mocksetu.in/mocksetu-logo.png" },
-      },
-      keywords: p.keywords,
-      articleSection: p.category,
-      wordCount: p.content.reduce((acc, b) => {
-        if (b.type === "p" || b.type === "h2" || b.type === "quote")
-          return acc + stripLinks(b.text).split(/\s+/).length;
-        if (b.type === "ul") return acc + stripLinks(b.items.join(" ")).split(/\s+/).length;
-        return acc;
-      }, 0),
-      inLanguage: "en-IN",
-    },
-    {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      mainEntity: p.faqs.map((f) => ({
-        "@type": "Question",
-        name: f.question,
-        acceptedAnswer: { "@type": "Answer", text: f.answer },
-      })),
-    },
-    {
-      "@context": "https://schema.org",
-      "@type": "BreadcrumbList",
-      itemListElement: [
-        { "@type": "ListItem", position: 1, name: "Home", item: "https://mocksetu.in/" },
-        { "@type": "ListItem", position: 2, name: "Blog", item: "https://mocksetu.in/blog" },
-        { "@type": "ListItem", position: 3, name: p.title, item: url },
-      ],
-    },
-  ];
-};
-
 const FaqItem = ({ q, a, idx }: { q: string; a: string; idx: number }) => {
   const [open, setOpen] = useState(idx === 0);
   return (
@@ -105,6 +55,34 @@ const FaqItem = ({ q, a, idx }: { q: string; a: string; idx: number }) => {
     </div>
   );
 };
+
+/**
+ * Cluster CTAs, resolved by tag.
+ *
+ * A cluster exists to lift one URL, so every post in it ends on that URL rather
+ * than on the generic library — routing a JEE reader to /marketplace spends the
+ * article's intent on a page that has to ask them what exam they're sitting.
+ * Tag-driven so a new post joins its funnel by being tagged, with no edit here.
+ * Order matters only if a post carries two cluster tags, which no post does.
+ */
+const CLUSTER_CTAS = [
+  {
+    tag: "SSC MTS",
+    to: "/ssc-mts",
+    blurb:
+      "Reading diagnoses; attempting improves. Sit a real SSC MTS previous year paper — free, timed, on the actual exam screen.",
+    label: "SSC MTS Previous Year Papers — Free",
+  },
+  {
+    tag: "JEE Main",
+    to: "/mock-test/jee-main",
+    blurb:
+      "Reading diagnoses; attempting improves. Sit a full-length JEE Main paper — free, 3 hours, 300 marks, on the real NTA-style exam screen.",
+    label: "Free JEE Main Mock Test — Start Now",
+  },
+] as const;
+
+const resolveCta = (tags: string[]) => CLUSTER_CTAS.find((c) => tags.includes(c.tag));
 
 const PostFallback = () => (
   <div className="min-h-screen bg-background">
@@ -131,6 +109,7 @@ const BlogPost = () => {
   if (!post) return <Navigate to="/blog" replace />;
 
   const related = relatedPosts(post.slug, post.category, 3);
+  const cta = resolveCta(post.tags);
 
   return (
     <div className="min-h-screen bg-background">
@@ -139,7 +118,10 @@ const BlogPost = () => {
         description={post.metaDescription}
         path={`/blog/${post.slug}`}
         keywords={post.keywords}
-        jsonLd={buildJsonLd(post)}
+        ogType="article"
+        publishedTime={post.publishedAt}
+        modifiedTime={post.updatedAt}
+        jsonLd={buildBlogPostJsonLd(post)}
       />
       <Navbar />
 
@@ -254,23 +236,18 @@ const BlogPost = () => {
             ))}
           </div>
 
-          {/* CTA. SSC MTS posts funnel to the /ssc-mts pillar page — the URL
-              every post in that cluster exists to lift — instead of the
-              generic library. Tag-driven so a new MTS post joins the funnel by
-              being tagged, with no edit here. Other clusters keep the library
-              CTA: routing a CGL reader to an MTS page helps neither them nor
-              the rankings. */}
-          {post.tags.includes("SSC MTS") ? (
+          {/* CTA. Cluster posts funnel to the pillar URL their cluster exists to
+              lift; everything else keeps the library CTA, because routing a CGL
+              reader to an MTS page helps neither them nor the rankings. See
+              CLUSTER_CTAS above. */}
+          {cta ? (
             <div className="mt-12 rounded-2xl bg-gradient-to-br from-amber-500/10 via-[#6C3EF4]/5 to-transparent border border-amber-500/25 p-6 sm:p-8 text-center">
-              <p className="text-[15px] sm:text-[16px] text-foreground/80 mb-4">
-                Reading diagnoses; attempting improves. Sit a real SSC MTS previous year paper —
-                free, timed, on the actual exam screen.
-              </p>
+              <p className="text-[15px] sm:text-[16px] text-foreground/80 mb-4">{cta.blurb}</p>
               <Link
-                to="/ssc-mts"
+                to={cta.to}
                 className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-[14px] font-semibold text-white bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-md transition-all"
               >
-                SSC MTS Previous Year Papers — Free <ArrowRight className="h-4 w-4" />
+                {cta.label} <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
           ) : (

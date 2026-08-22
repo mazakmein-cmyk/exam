@@ -16,6 +16,20 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
 import CreatorJourney from "@/components/creators/CreatorJourney";
+import { type CreatorPageCopy } from "@/i18n/creatorCopy";
+import { CREATOR_COPY_EN } from "@/i18n/creatorCopy.en";
+
+/**
+ * The creator landing page, once, for both languages.
+ *
+ * ENGLISH (/for-creators) and HINDI (/hindi/for-creators) are two indexable
+ * URLs over ONE component: only the copy table and the SEO block differ. There
+ * is deliberately no language switcher — the Hindi page exists to win Hindi
+ * queries from Hindi-medium coaching owners, and the bidirectional hreflang
+ * alternates below let Google serve the right one.
+ */
+
+import { CREATOR_ALTERNATES, CREATOR_PATHS, CREATOR_SEO_BY_LANG, type CreatorLang } from "@/i18n/pageSeo";
 
 /* ═══════════════════════════════════════════════
    SECTION: Animated observe-on-scroll wrapper
@@ -53,46 +67,38 @@ const Reveal = ({
 };
 
 /* ═══════════════════════════════════════════════
-   DATA
+   DATA — icons and colours only; the words come
+   from the language table (i18n/creatorCopy.ts).
    ═══════════════════════════════════════════════ */
 
-const PAIN_POINTS = [
-  {
-    icon: Clock,
-    title: "Manual exam distribution is slow",
-    desc: "You create great papers but end up sharing them as PDFs on WhatsApp groups. Students open them in random readers, lose track of time, and never get a real exam feel.",
-  },
-  {
-    icon: BarChart3,
-    title: "Zero visibility into student performance",
-    desc: "Once a paper leaves your hands, you have no idea which questions students struggled with, how long they took, or where they need more coaching.",
-  },
-  {
-    icon: Target,
-    title: "No real exam simulation",
-    desc: "A PDF is not an exam. There's no timer, no section navigation, no auto-submit — students practice casually instead of under real pressure.",
-  },
-];
+const PAIN_ICONS = [Clock, BarChart3, Target];
+const TRUST_ICONS = [Lock, Users, Zap];
+const TRUST_COLORS = ["#6C3EF4", "#10B981", "#F59E0B"];
 
-const COMPARISON = [
-  { feature: "Timed exam simulation", pdf: false, mock: true },
-  { feature: "Section-wise navigation", pdf: false, mock: true },
-  { feature: "Auto-submit on timeout", pdf: false, mock: true },
-  { feature: "Instant answer key scoring", pdf: false, mock: true },
-  { feature: "Student performance analytics", pdf: false, mock: true },
-  { feature: "Question-level time tracking", pdf: false, mock: true },
-  { feature: "Mark-for-review / Question palette", pdf: false, mock: true },
-  { feature: "Shareable via link", pdf: true, mock: true },
-  { feature: "Works on any device", pdf: true, mock: true },
-];
+/** Which comparison rows a PDF can also do — indexes into copy.comparisonRows. */
+const PDF_CAPABLE_ROWS = new Set([7, 8]);
 
 /* ═══════════════════════════════════════════════
    PAGE
    ═══════════════════════════════════════════════ */
 
-const ForCreators = () => {
+/**
+ * `copy` defaults to English and is injected by the Hindi wrapper, so the
+ * Hindi strings live in that route's own chunk rather than in this one.
+ */
+const ForCreators = ({
+  lang = "en",
+  copy = CREATOR_COPY_EN,
+}: {
+  lang?: CreatorLang;
+  copy?: CreatorPageCopy;
+}) => {
   const navigate = useNavigate();
   const [mounted, setMounted] = useState(false);
+  const seo = CREATOR_SEO_BY_LANG[lang];
+  // Cross-language links stay inside their own language where a translated
+  // page exists: the Hindi page's "student experience" goes to /hindi.
+  const studentHome = lang === "hi" ? "/hindi" : "/";
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -103,17 +109,21 @@ const ForCreators = () => {
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        title="For Educators & Creators — Publish Mock Tests Free | MockSetu (Mockset)"
-        description="Turn any exam PDF into a full timed online mock test in minutes. MockSetu (Mockset) lets coaching institutes, educators, and creators publish JEE, NEET, CAT, GATE, and UPSC mocks free, with built-in analytics and instant scoring on the leading online assessment platform."
-        path="/for-creators"
-        keywords="mockset for creators, MockSetu creator, publish mock test on mockset, online test creator, exam authoring platform, mock test for coaching, online assessment platform, test maker, MCQ test creator, exam PDF to online test, coding assessment authoring, AI mock interview platform"
+        title={seo.title}
+        description={seo.description}
+        path={CREATOR_PATHS[lang]}
+        keywords={seo.keywords}
+        lang={seo.lang}
+        alternates={CREATOR_ALTERNATES}
         jsonLd={[
           {
             "@context": "https://schema.org",
             "@type": "WebPage",
-            "name": "MockSetu (Mockset) for Educators & Creators",
-            "url": "https://mocksetu.in/for-creators",
-            "description": "Free authoring platform for educators to publish timed mock tests from any exam PDF with built-in analytics — powered by MockSetu (Mockset).",
+            "@id": `https://mocksetu.in${CREATOR_PATHS[lang]}#webpage`,
+            "name": seo.title,
+            "url": `https://mocksetu.in${CREATOR_PATHS[lang]}`,
+            "description": seo.description,
+            "inLanguage": seo.lang,
             "audience": { "@type": "EducationalAudience", "audienceType": "Educator" },
             "isPartOf": { "@id": "https://mocksetu.in/#website" },
             "about": { "@id": "https://mocksetu.in/#organization" }
@@ -122,13 +132,13 @@ const ForCreators = () => {
             "@context": "https://schema.org",
             "@type": "BreadcrumbList",
             "itemListElement": [
-              { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://mocksetu.in/" },
-              { "@type": "ListItem", "position": 2, "name": "For Educators & Creators", "item": "https://mocksetu.in/for-creators" }
+              { "@type": "ListItem", "position": 1, "name": seo.breadcrumbHome, "item": `https://mocksetu.in${studentHome}` },
+              { "@type": "ListItem", "position": 2, "name": seo.breadcrumbSelf, "item": `https://mocksetu.in${CREATOR_PATHS[lang]}` }
             ]
           }
         ]}
       />
-      <Navbar navButtonLabel="Student Home" navButtonLink="/" />
+      <Navbar navButtonLabel={copy.navLabel} navButtonLink={studentHome} />
 
       {/* ════════════════════════════════════════
           HERO
@@ -160,7 +170,7 @@ const ForCreators = () => {
             className={`inline-flex items-center gap-2 text-[12px] font-bold tracking-widest uppercase mb-8 px-4 py-2 rounded-full border border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-400 transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"}`}
             style={{ transitionDelay: "100ms" }}
           >
-            <Sparkles className="h-3.5 w-3.5" /> For Educators &amp; Coaching Institutes
+            <Sparkles className="h-3.5 w-3.5" /> {copy.heroBadge}
           </div>
 
           {/* Headline */}
@@ -169,7 +179,7 @@ const ForCreators = () => {
             style={{ transitionDelay: "200ms" }}
           >
             <span className="block text-[32px] sm:text-[44px] md:text-[60px] lg:text-[76px] font-black text-white leading-[1.05] tracking-[-0.04em]">
-              Stop sharing PDFs.
+              {copy.heroTitleA}
             </span>
             <span className="block text-[32px] sm:text-[44px] md:text-[60px] lg:text-[76px] font-black leading-[1.05] tracking-[-0.04em] mt-1">
               <span
@@ -180,7 +190,7 @@ const ForCreators = () => {
                   backgroundClip: "text",
                 }}
               >
-                Start giving exams.
+                {copy.heroTitleB}
               </span>
             </span>
           </h1>
@@ -190,9 +200,9 @@ const ForCreators = () => {
             className={`mt-7 text-[17px] sm:text-[19px] text-white/45 max-w-2xl mx-auto leading-[1.65] transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}
             style={{ transitionDelay: "350ms" }}
           >
-            Turn any question paper PDF into a{" "}
-            <span className="text-white/75 font-medium">timed, full-length exam simulator</span>{" "}
-            that your students can take right in their browser. Get performance analytics you never had before.
+            {copy.heroSub}
+            <span className="text-white/75 font-medium">{copy.heroSubStrong}</span>
+            {copy.heroSubTail}
           </p>
 
           {/* CTAs */}
@@ -205,7 +215,7 @@ const ForCreators = () => {
               className="group relative inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-[15px] font-semibold text-white overflow-hidden bg-emerald-600 hover:bg-emerald-700 shadow-[0_0_0_1px_rgba(16,185,129,0.5),0_8px_32px_rgba(16,185,129,0.35)] hover:shadow-[0_0_0_1px_rgba(16,185,129,0.6),0_12px_40px_rgba(16,185,129,0.45)] transition-all duration-200 hover:-translate-y-0.5"
             >
               <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" />
-              <span className="relative">Start Creating Exams</span>
+              <span className="relative">{copy.ctaPrimary}</span>
               <ArrowRight className="relative h-4 w-4 group-hover:translate-x-0.5 transition-transform duration-200" />
             </button>
 
@@ -216,7 +226,7 @@ const ForCreators = () => {
               }}
               className="inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-[15px] font-semibold text-white/60 hover:text-white border border-white/10 hover:border-white/20 bg-white/[0.04] hover:bg-white/[0.08] backdrop-blur-sm transition-all duration-200"
             >
-              See How It Works
+              {copy.ctaSecondary}
             </button>
           </div>
 
@@ -225,11 +235,7 @@ const ForCreators = () => {
             className={`mt-14 grid grid-cols-3 gap-8 sm:gap-16 transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}
             style={{ transitionDelay: "600ms" }}
           >
-            {[
-              { value: "2 min", label: "Avg. Upload to Publish" },
-              { value: "500+", label: "Exams Created" },
-              { value: "10K+", label: "Student Attempts" },
-            ].map(({ value, label }) => (
+            {copy.stats.map(({ value, label }) => (
               <div key={label} className="text-center">
                 <div className="text-2xl sm:text-3xl font-black text-white tracking-tight">{value}</div>
                 <div className="mt-1 text-[12px] text-white/30 font-medium tracking-wide">{label}</div>
@@ -248,21 +254,19 @@ const ForCreators = () => {
             <div className="text-center mb-16">
               <div className="section-label justify-center mb-4">
                 <span className="w-6 h-px bg-red-400/40" />
-                <span className="text-red-500/80">The Problem</span>
+                <span className="text-red-500/80">{copy.problemLabel}</span>
                 <span className="w-6 h-px bg-red-400/40" />
               </div>
               <h2 className="text-[28px] sm:text-[36px] md:text-[44px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
-                Sound familiar?
+                {copy.problemTitle}
               </h2>
-              <p className="mt-4 text-[16px] text-muted-foreground max-w-lg mx-auto">
-                You spend hours crafting the perfect paper. But the delivery kills the experience.
-              </p>
+              <p className="mt-4 text-[16px] text-muted-foreground max-w-lg mx-auto">{copy.problemSub}</p>
             </div>
           </Reveal>
 
           <div className="grid md:grid-cols-3 gap-5">
-            {PAIN_POINTS.map((p, i) => {
-              const Icon = p.icon;
+            {copy.painPoints.map((p, i) => {
+              const Icon = PAIN_ICONS[i];
               return (
                 <Reveal key={i} delay={i * 100}>
                   <div className="rounded-2xl border border-red-500/10 bg-red-500/[0.02] p-6 h-full">
@@ -288,11 +292,11 @@ const ForCreators = () => {
             <div className="text-center mb-14">
               <div className="section-label justify-center mb-4">
                 <span className="w-6 h-px bg-primary/40" />
-                PDF vs MockSetu
+                {copy.comparisonLabel}
                 <span className="w-6 h-px bg-primary/40" />
               </div>
               <h2 className="text-[28px] sm:text-[36px] md:text-[44px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
-                The{" "}
+                {copy.comparisonTitleA}
                 <span
                   style={{
                     background: "linear-gradient(135deg, #10B981, #34D399)",
@@ -301,9 +305,9 @@ const ForCreators = () => {
                     backgroundClip: "text",
                   }}
                 >
-                  upgrade
-                </span>{" "}
-                your students deserve.
+                  {copy.comparisonTitleAccent}
+                </span>
+                {copy.comparisonTitleB}
               </h2>
             </div>
           </Reveal>
@@ -312,20 +316,20 @@ const ForCreators = () => {
             <div className="rounded-2xl border border-border/60 overflow-hidden">
               {/* Header */}
               <div className="grid grid-cols-[1fr_80px_80px] sm:grid-cols-[1fr_140px_140px] bg-secondary/60 border-b border-border/40">
-                <div className="px-5 py-3.5 text-[12px] font-bold tracking-widest text-muted-foreground/50 uppercase">Feature</div>
-                <div className="px-4 py-3.5 text-[12px] font-bold tracking-widest text-muted-foreground/50 uppercase text-center">PDF</div>
+                <div className="px-5 py-3.5 text-[12px] font-bold tracking-widest text-muted-foreground/50 uppercase">{copy.comparisonFeature}</div>
+                <div className="px-4 py-3.5 text-[12px] font-bold tracking-widest text-muted-foreground/50 uppercase text-center">{copy.comparisonPdf}</div>
                 <div className="px-4 py-3.5 text-[12px] font-bold tracking-widest uppercase text-center" style={{ color: "#10B981" }}>MockSetu</div>
               </div>
 
               {/* Rows */}
-              {COMPARISON.map((row, i) => (
+              {copy.comparisonRows.map((feature, i) => (
                 <div
                   key={i}
-                  className={`grid grid-cols-[1fr_80px_80px] sm:grid-cols-[1fr_140px_140px] ${i < COMPARISON.length - 1 ? "border-b border-border/30" : ""} hover:bg-secondary/30 transition-colors`}
+                  className={`grid grid-cols-[1fr_80px_80px] sm:grid-cols-[1fr_140px_140px] ${i < copy.comparisonRows.length - 1 ? "border-b border-border/30" : ""} hover:bg-secondary/30 transition-colors`}
                 >
-                  <div className="px-3 sm:px-5 py-3 sm:py-3.5 text-[12px] sm:text-[13.5px] text-foreground/80">{row.feature}</div>
+                  <div className="px-3 sm:px-5 py-3 sm:py-3.5 text-[12px] sm:text-[13.5px] text-foreground/80">{feature}</div>
                   <div className="px-4 py-3.5 flex items-center justify-center">
-                    {row.pdf ? (
+                    {PDF_CAPABLE_ROWS.has(i) ? (
                       <CheckCircle className="h-4 w-4 text-muted-foreground/40" />
                     ) : (
                       <span className="w-4 h-0.5 rounded bg-muted-foreground/20" />
@@ -342,11 +346,11 @@ const ForCreators = () => {
       </section>
 
       {/* ════════════════════════════════════════
-          THE JOURNEY — five acts, one paper
+          THE JOURNEY — six acts, one paper
           (replaces the old features bento + steps list)
       ════════════════════════════════════════ */}
       <div id="how-it-works" className="scroll-mt-16 bg-secondary/40">
-        <CreatorJourney />
+        <CreatorJourney copy={copy.journey} />
       </div>
 
 
@@ -357,41 +361,26 @@ const ForCreators = () => {
         <div className="container mx-auto max-w-4xl">
           <Reveal>
             <div className="grid sm:grid-cols-3 gap-6">
-              {[
-                {
-                  icon: Lock,
-                  title: "Student Privacy Protected",
-                  desc: "Creators see anonymised aggregates only — never individual student emails, names, or identifies.",
-                  color: "#6C3EF4",
-                },
-                {
-                  icon: Users,
-                  title: "Built for Indian Exams",
-                  desc: "CAT, JEE, NEET, GATE, UPSC — purpose-built interfaces that match the real exam format.",
-                  color: "#10B981",
-                },
-                {
-                  icon: Zap,
-                  title: "No Lock-In",
-                  desc: "Your content is yours. Download or delete it anytime. No surprise fees, no walled gardens.",
-                  color: "#F59E0B",
-                },
-              ].map(({ icon: Icon, title, desc, color }, i) => (
-                <Reveal key={i} delay={i * 100}>
-                  <div className="flex gap-4 items-start">
-                    <div
-                      className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
-                      style={{ background: `${color}12`, border: `1px solid ${color}20` }}
-                    >
-                      <Icon className="h-5 w-5" style={{ color }} />
+              {copy.trust.map(({ title, desc }, i) => {
+                const Icon = TRUST_ICONS[i];
+                const color = TRUST_COLORS[i];
+                return (
+                  <Reveal key={i} delay={i * 100}>
+                    <div className="flex gap-4 items-start">
+                      <div
+                        className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
+                        style={{ background: `${color}12`, border: `1px solid ${color}20` }}
+                      >
+                        <Icon className="h-5 w-5" style={{ color }} />
+                      </div>
+                      <div>
+                        <h3 className="text-[14px] font-bold text-foreground mb-1">{title}</h3>
+                        <p className="text-[13px] text-muted-foreground leading-[1.65]">{desc}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-[14px] font-bold text-foreground mb-1">{title}</h3>
-                      <p className="text-[13px] text-muted-foreground leading-[1.65]">{desc}</p>
-                    </div>
-                  </div>
-                </Reveal>
-              ))}
+                  </Reveal>
+                );
+              })}
             </div>
           </Reveal>
         </div>
@@ -422,7 +411,7 @@ const ForCreators = () => {
 
               <div className="relative z-10 flex flex-col items-center text-center px-5 sm:px-8 py-14 sm:py-20">
                 <h2 className="text-[28px] sm:text-[36px] md:text-[52px] lg:text-[60px] font-black tracking-[-0.04em] leading-[1.05] mb-5">
-                  Your students deserve{" "}
+                  {copy.finalTitleA}
                   <span
                     style={{
                       background: "linear-gradient(135deg, #34D399, #10B981, #059669)",
@@ -431,12 +420,10 @@ const ForCreators = () => {
                       backgroundClip: "text",
                     }}
                   >
-                    better practice.
+                    {copy.finalTitleAccent}
                   </span>
                 </h2>
-                <p className="text-[16px] text-white/45 max-w-md leading-relaxed mb-10">
-                  Join the educators who've already upgraded from PDF sharing to real exam simulations. Your first exam takes less than 5 minutes.
-                </p>
+                <p className="text-[16px] text-white/45 max-w-md leading-relaxed mb-10">{copy.finalSub}</p>
 
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button
@@ -444,22 +431,20 @@ const ForCreators = () => {
                     className="group relative inline-flex items-center gap-2.5 px-8 py-4 rounded-xl text-[15px] font-semibold text-white overflow-hidden bg-emerald-600 hover:bg-emerald-700 shadow-[0_0_0_1px_rgba(16,185,129,0.5),0_8px_40px_rgba(16,185,129,0.35)] hover:shadow-[0_0_0_1px_rgba(16,185,129,0.6),0_16px_48px_rgba(16,185,129,0.5)] transition-all duration-200 hover:-translate-y-0.5"
                   >
                     <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                    <span className="relative">Create Your First Exam</span>
+                    <span className="relative">{copy.finalCta}</span>
                     <ArrowRight className="relative h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
                   </button>
 
                   <Link
-                    to="/"
+                    to={studentHome}
                     className="inline-flex items-center gap-2.5 px-8 py-4 rounded-xl text-[15px] font-semibold text-white/60 hover:text-white border border-white/10 hover:border-white/25 bg-white/[0.04] hover:bg-white/[0.08] transition-all duration-200"
                   >
                     <BookOpen className="h-4 w-4" />
-                    Student Experience
+                    {copy.finalSecondary}
                   </Link>
                 </div>
 
-                <p className="mt-6 text-[12px] text-white/20 font-medium">
-                  No credit card · No downloads · Ready in 2 minutes
-                </p>
+                <p className="mt-6 text-[12px] text-white/20 font-medium">{copy.finalFinePrint}</p>
               </div>
             </div>
           </Reveal>

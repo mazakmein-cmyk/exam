@@ -6,6 +6,8 @@ import Reveal from "@/components/home/Reveal";
 import { readExamYear, type PublishedExam } from "@/lib/publishedExams";
 import { rememberLastExam } from "@/lib/lastExamMemo";
 import { PAPER_TYPE_PYQ, readPaperType } from "@/lib/paperType.js";
+import { type PapersCopy } from "@/i18n/homeCopy";
+import { HOME_COPY_EN } from "@/i18n/homeCopy.en";
 
 /**
  * Cluster B — the previous-year-paper rail for the chosen exam.
@@ -22,9 +24,11 @@ import { PAPER_TYPE_PYQ, readPaperType } from "@/lib/paperType.js";
 const PapersCluster = ({
     exams,
     selectedCategory,
+    copy = HOME_COPY_EN.papers,
 }: {
     exams: PublishedExam[];
     selectedCategory: string | null;
+    copy?: PapersCopy;
 }) => {
     const navigate = useNavigate();
 
@@ -51,7 +55,7 @@ const PapersCluster = ({
 
     if (papers.length === 0) return null;
 
-    const scopeLabel = selectedCategory ?? "every exam";
+    const scopeLabel = selectedCategory ?? copy.scopeAll;
 
     return (
         <section aria-label="Previous year papers" className="bg-secondary/40 border-y border-border/40">
@@ -59,18 +63,14 @@ const PapersCluster = ({
                 <Reveal>
                 <SectionHeader
                     icon={FileText}
-                    eyebrow={showingPyq ? "With answer keys" : "Fresh papers"}
-                    title={
-                        showingPyq
-                            ? `Previous year papers — ${scopeLabel}`
-                            : `Latest mock tests — ${scopeLabel}`
-                    }
+                    eyebrow={showingPyq ? copy.eyebrowPyq : copy.eyebrowFresh}
+                    title={showingPyq ? copy.titlePyq(scopeLabel) : copy.titleMock(scopeLabel)}
                     subtitle={
                         showingPyq
-                            ? "Real papers from past cycles, run under the real clock. Attempt first, then review against the key."
+                            ? copy.subtitlePyq
                             : selectedCategory
-                              ? `No previous-year papers are tagged for ${selectedCategory} yet — these are its newest mocks.`
-                              : "The newest papers in the library, ready to attempt."
+                              ? copy.subtitleFallback(selectedCategory)
+                              : copy.subtitleAll
                     }
                     accent="#F59E0B"
                 />
@@ -102,7 +102,7 @@ const PapersCluster = ({
                                     <span className="text-[11.5px] text-muted-foreground">{exam.exam_category}</span>
                                 )}
                                 <span className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-bold text-[#6C3EF4] group-hover:gap-2.5 transition-all duration-200">
-                                    <Play className="h-3.5 w-3.5 fill-current" /> Practice as mock
+                                    <Play className="h-3.5 w-3.5 fill-current" /> {copy.practiceAsMock}
                                 </span>
                             </button>
                             </Reveal>
@@ -115,7 +115,7 @@ const PapersCluster = ({
                         to={libraryHref}
                         className="inline-flex items-center gap-2 text-[13.5px] font-bold text-[#6C3EF4] hover:text-[#5B2FE3] transition-colors"
                     >
-                        View all {selectedCategory ? `${selectedCategory} ` : ""}papers in the library <ArrowRight className="h-4 w-4" />
+                        {copy.viewAll(selectedCategory)} <ArrowRight className="h-4 w-4" />
                     </Link>
                 </div>
             </div>

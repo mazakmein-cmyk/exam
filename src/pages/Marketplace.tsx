@@ -11,6 +11,7 @@ import VerifiedBadge from "@/components/VerifiedBadge";
 import { getVerificationTier } from "@/lib/verification";
 import Navbar from "@/components/Navbar";
 import SEO from "@/components/SEO";
+import { STATIC_PAGE_SEO } from "@/data/staticPageSeo";
 import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
 import { orderExamCategories } from "@/hooks/use-exam-categories";
 import {
@@ -471,10 +472,7 @@ const Marketplace = () => {
     return (
         <div className="min-h-screen bg-background">
             <SEO
-                title="Free Mock Test Library — JEE, NEET, CAT, GATE, UPSC | MockSetu (Mockset)"
-                description="Browse the MockSetu (Mockset) free mock test library. Timed JEE, NEET, CAT, GATE & UPSC mocks with answer keys, instant scoring, and deep analytics. Practice unlimited online mock tests on the leading online assessment platform."
-                path="/marketplace"
-                keywords="mockset, MockSetu marketplace, mockset library, mock test library, free mock tests, online test series, JEE mock test, NEET mock test, CAT mock test, GATE mock test, UPSC mock test, exam practice papers, MCQ practice, online assessment platform, coding assessment library, aptitude preparation"
+                {...STATIC_PAGE_SEO.marketplace}
                 jsonLd={MARKETPLACE_JSON_LD}
             />
             <Navbar navButtonLabel="Analytics" navButtonLink="/analytics?from=marketplace" />

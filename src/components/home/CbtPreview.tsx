@@ -5,6 +5,8 @@ import SectionHeader from "@/components/home/SectionHeader";
 import Reveal from "@/components/home/Reveal";
 import type { PublishedExam } from "@/lib/publishedExams";
 import { rememberLastExam } from "@/lib/lastExamMemo";
+import { type CbtCopy } from "@/i18n/homeCopy";
+import { HOME_COPY_EN } from "@/i18n/homeCopy.en";
 
 /**
  * Cluster C — a live, touchable miniature of the exam simulator, right on the
@@ -21,27 +23,6 @@ import { rememberLastExam } from "@/lib/lastExamMemo";
  * trades on).
  */
 
-type DemoQuestion = {
-    text: string;
-    options: string[];
-};
-
-/** SSC-MTS-flavoured samples — recognisable, solvable in seconds. */
-const DEMO_QUESTIONS: DemoQuestion[] = [
-    {
-        text: "If A : B = 3 : 4 and B : C = 8 : 9, then A : C is —",
-        options: ["1 : 2", "2 : 3", "3 : 4", "27 : 32"],
-    },
-    {
-        text: "Select the word most opposite in meaning to SCARCE.",
-        options: ["Rare", "Abundant", "Sparse", "Scanty"],
-    },
-    {
-        text: "Which number replaces the question mark: 3, 7, 15, 31, ?",
-        options: ["47", "63", "56", "62"],
-    },
-];
-
 /** Decorative palette cells beyond the three live ones — a believable mid-exam spread. */
 const DECOR_STATUSES = ["answered", "answered", "visited", "marked", "answered", "none", "visited", "answered", "none", "none", "none", "none"] as const;
 
@@ -55,7 +36,14 @@ const paletteColor = (status: string, isCurrent: boolean) => {
     return `bg-background border border-border text-foreground/70${ring}`;
 };
 
-const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
+const CbtPreview = ({
+    primaryExam,
+    copy = HOME_COPY_EN.cbt,
+}: {
+    primaryExam: PublishedExam | null;
+    copy?: CbtCopy;
+}) => {
+    const DEMO_QUESTIONS = copy.questions;
     const navigate = useNavigate();
     const [current, setCurrent] = useState(0);
     const [answers, setAnswers] = useState<(number | null)[]>([null, null, null]);
@@ -110,9 +98,9 @@ const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
             <Reveal>
                 <SectionHeader
                     icon={Monitor}
-                    eyebrow="Try it right here"
-                    title="This is exactly what your exam screen looks like"
-                    subtitle="Not a screenshot — a working demo of the same computer-based-test interface every paper here runs in. Tap an option."
+                    eyebrow={copy.eyebrow}
+                    title={copy.title}
+                    subtitle={copy.subtitle}
                     accent="#10B981"
                 />
             </Reveal>
@@ -122,7 +110,7 @@ const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
                 {/* Exam-shell header bar */}
                 <div className="flex items-center justify-between px-4 sm:px-5 py-3 bg-secondary/60 border-b border-border/50">
                     <span className="text-[12.5px] font-bold text-foreground truncate">
-                        SSC MTS — Practice Demo
+                        {copy.demoTitle}
                     </span>
                     <span className="inline-flex items-center gap-2 text-[13px] font-bold tabular-nums px-3 py-1 rounded-lg bg-background border border-border/60" aria-hidden="true">
                         ⏱ {clock}
@@ -133,11 +121,11 @@ const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
                     {/* Question area */}
                     <div className="p-5 sm:p-6 lg:border-r border-border/50">
                         <div className="text-[12px] font-bold text-muted-foreground mb-2">
-                            Question {current + 1} of {DEMO_QUESTIONS.length}
+                            {copy.questionOf(current + 1, DEMO_QUESTIONS.length)}
                         </div>
                         <p className="text-[15.5px] font-semibold text-foreground leading-[1.55] mb-5">{question.text}</p>
 
-                        <div className="space-y-2.5" role="radiogroup" aria-label="Answer options">
+                        <div className="space-y-2.5" role="radiogroup" aria-label={copy.optionsAria}>
                             {question.options.map((option, idx) => {
                                 const chosen = answers[current] === idx;
                                 return (
@@ -177,26 +165,26 @@ const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
                                         : "border-border text-foreground hover:bg-secondary"
                                 }`}
                             >
-                                {marked[current] ? "Marked" : "Mark for Review"}
+                                {marked[current] ? copy.marked : copy.markForReview}
                             </button>
                             <button
                                 onClick={saveAndNext}
                                 className="px-5 py-2.5 rounded-lg bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white text-[13px] font-bold shadow-md shadow-[#6C3EF4]/20 transition-all duration-200"
                             >
-                                Save &amp; Next
+                                {copy.saveNext}
                             </button>
                         </div>
                     </div>
 
                     {/* Question palette — the piece first-timers have never seen. */}
                     <div className="p-5 sm:p-6 bg-secondary/30 border-t lg:border-t-0 border-border/50">
-                        <div className="text-[12px] font-bold text-muted-foreground mb-3">Question Palette</div>
+                        <div className="text-[12px] font-bold text-muted-foreground mb-3">{copy.palette}</div>
                         <div className="grid grid-cols-6 lg:grid-cols-5 gap-2 mb-5">
                             {DEMO_QUESTIONS.map((_, i) => (
                                 <button
                                     key={`live-${i}`}
                                     onClick={() => goTo(i)}
-                                    aria-label={`Go to question ${i + 1}`}
+                                    aria-label={copy.goToQuestion(i + 1)}
                                     className={`h-9 rounded-lg text-[12.5px] font-bold transition-all ${paletteColor(liveStatus(i), i === current)}`}
                                 >
                                     {i + 1}
@@ -215,10 +203,10 @@ const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
 
                         <div className="space-y-2 text-[11.5px] text-muted-foreground">
                             {[
-                                ["bg-green-500", "Answered"],
-                                ["bg-red-500", "Marked for Review"],
-                                ["bg-purple-500", "Visited, not answered"],
-                                ["bg-background border border-border", "Not visited"],
+                                ["bg-green-500", copy.legendAnswered],
+                                ["bg-red-500", copy.legendMarked],
+                                ["bg-purple-500", copy.legendVisited],
+                                ["bg-background border border-border", copy.legendNotVisited],
                             ].map(([swatch, label]) => (
                                 <div key={label} className="flex items-center gap-2">
                                     <span className={`w-3.5 h-3.5 rounded ${swatch}`} aria-hidden="true" />
@@ -228,7 +216,10 @@ const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
                         </div>
 
                         <div className="mt-5 pt-4 border-t border-border/50 text-[12px] text-muted-foreground">
-                            <strong className="text-foreground tabular-nums">{answeredCount} of {DEMO_QUESTIONS.length}</strong> answered in this demo
+                            <strong className="text-foreground tabular-nums">
+                                {answeredCount}/{DEMO_QUESTIONS.length}
+                            </strong>{" "}
+                            {copy.answeredSuffix}
                         </div>
                     </div>
                 </div>
@@ -242,7 +233,7 @@ const CbtPreview = ({ primaryExam }: { primaryExam: PublishedExam | null }) => {
                         onClick={startFullMock}
                         className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[14.5px] font-bold shadow-md shadow-emerald-600/20 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-px transition-all duration-200"
                     >
-                        Take the full free mock — same screen, real paper <ArrowRight className="h-4 w-4" />
+                        {copy.cta} <ArrowRight className="h-4 w-4" />
                     </button>
                 </div>
             </Reveal>

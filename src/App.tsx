@@ -1,10 +1,11 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider, Outlet, useLocation } from "react-router-dom";
 import AuthStateListener from "./components/AuthStateListener";
 import GoogleAnalytics from "./components/GoogleAnalytics";
+import { isAdminPath } from "./lib/adminRoute";
 
 // Eager: tiny + likely first hit
 import Index from "./pages/Index";
@@ -28,6 +29,10 @@ const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("./pages/TermsOfService"));
 const ForCreators = lazy(() => import("./pages/ForCreators"));
+// Hindi twins of the two landing pages. Separate indexable URLs for Hindi
+// search demand, no language switcher — see HomeLanding.tsx for the reasoning.
+const IndexHindi = lazy(() => import("./pages/IndexHindi"));
+const ForCreatorsHindi = lazy(() => import("./pages/ForCreatorsHindi"));
 const JsonUploadGuide = lazy(() => import("./pages/JsonUploadGuide"));
 const ExamLandingPage = lazy(() => import("./pages/ExamLandingPage"));
 const SscMtsLanding = lazy(() => import("./pages/SscMtsLanding"));
@@ -104,6 +109,40 @@ const PrefetchLikelyRoutes = () => {
   return null;
 };
 
+/**
+ * Terminal route: a 404, or the admin console.
+ *
+ * The console is reached by hashing the current pathname and comparing it to a
+ * committed digest, rather than by declaring its path in the route table above.
+ * That is the whole point — a declared path is a plaintext string in the bundle,
+ * so the URL was discoverable by anything that could read `/assets/index-*.js`,
+ * Googlebot included. Matching on a digest means the bundle contains no URL to
+ * find, while robots.txt, the first-byte noindex and the X-Robots-Tag header
+ * keep working as the outer layers.
+ *
+ * The check is async (crypto.subtle), so the first frame is the shared route
+ * spinner rather than a 404 — otherwise a legitimate admin visit would flash
+ * "page not found" before resolving.
+ */
+const UnmatchedRoute = () => {
+  const { pathname } = useLocation();
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setIsAdmin(null);
+    isAdminPath(pathname).then((match) => {
+      if (active) setIsAdmin(match);
+    });
+    return () => {
+      active = false;
+    };
+  }, [pathname]);
+
+  if (isAdmin === null) return <RouteFallback />;
+  return isAdmin ? <AdminDashboard /> : <NotFound />;
+};
+
 const Layout = () => (
   <>
     <AuthStateListener />
@@ -161,10 +200,16 @@ const router = createBrowserRouter([
       { path: "/exam/:examId/section/:sectionId/simulator", element: <ExamSimulator /> },
       { path: "/exam/review/:attemptId", element: <ExamReview /> },
       { path: "/analytics", element: <Analytics /> },
-      { path: "/barnwal3008/admin", element: <AdminDashboard /> },
+      /* The admin console is deliberately NOT declared here — a path in this
+         table is a plaintext string in the shipped bundle, which is how the URL
+         used to be public despite robots.txt and noindex. It resolves through
+         UnmatchedRoute below, which matches on a SHA-256 digest instead. See
+         src/lib/adminRoute.ts. */
       { path: "/privacy-policy", element: <PrivacyPolicy /> },
       { path: "/terms-of-service", element: <TermsOfService /> },
       { path: "/for-creators", element: <ForCreators /> },
+      { path: "/hindi", element: <IndexHindi /> },
+      { path: "/hindi/for-creators", element: <ForCreatorsHindi /> },
       { path: "/json-upload-guide", element: <JsonUploadGuide /> },
       { path: "/mock-test/:examSlug", element: <ExamLandingPage /> },
       // Standalone campaign landing page, shared directly with SSC MTS aspirants.
@@ -181,7 +226,7 @@ const router = createBrowserRouter([
       // one: a report is read on a laptop, and a copy-confirmation toast is
       // welcome there in a way it never is on a projector.
       { path: "/live-report/:token", element: <LiveExamReport /> },
-      { path: "*", element: <NotFound /> },
+      { path: "*", element: <UnmatchedRoute /> },
     ],
   },
   {

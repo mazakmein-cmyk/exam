@@ -5,13 +5,14 @@ import { renderMathInHtml, renderMathInText, renderMathInRichText } from "@/lib/
 import { isRichTextEmpty, countFilledOptions } from "@/lib/richText";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { tableHasColumn } from "@/lib/dbFeatures";
+import { pdfDownloadFileName, pdfDownloadUrl } from "@/lib/pdfDownload.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import SortableQuestionRow from "@/components/live/SortableQuestionRow";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { ArrowLeft, Play, Save, Trash2, Edit, Plus, Clock, MoreVertical, Share2, Globe, Radio, Check, ChevronDown, ChevronUp, Eye, FileText, Sparkles, Copy, Layers, Lock, FileJson, ListChecks, HelpCircle, AlertCircle, Image as ImageIcon, Upload, X, BarChart } from "lucide-react";
+import { ArrowLeft, Play, Save, Trash2, Edit, Plus, Clock, MoreVertical, Share2, Globe, Radio, Check, ChevronDown, ChevronUp, Eye, FileText, Sparkles, Copy, Layers, Lock, FileJson, ListChecks, HelpCircle, AlertCircle, Image as ImageIcon, Upload, Download, X, BarChart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { TransliterateTextarea } from "@/components/TransliterateTextarea";
@@ -169,6 +170,19 @@ export default function LiveExamDetail() {
   // useCallback, and that effect always sets state — a fresh literal each
   // render would loop it.
   const liveLanguages = useMemo(() => exam?.supported_languages ?? ["en"], [exam?.supported_languages]);
+
+  /**
+   * The uploaded PDF, downloadable under a name that says what it is. Uses the
+   * title currently in the form so a renamed-but-unsaved exam still reads right.
+   */
+  const sectionPdfFileName = useMemo(
+    () => pdfDownloadFileName(examTitle || exam?.name, activeSection?.name),
+    [examTitle, exam?.name, activeSection?.name],
+  );
+  const sectionPdfDownloadUrl = useMemo(
+    () => pdfDownloadUrl(activeSection?.pdf_url, sectionPdfFileName),
+    [activeSection?.pdf_url, sectionPdfFileName],
+  );
 
   // ─── Load exam data ────────────────────────────────────────
 
@@ -2395,6 +2409,26 @@ export default function LiveExamDetail() {
                           onChange={handlePdfUpload}
                         />
                       </Button>
+                      {/* Get the uploaded file back — the stored object is named after a
+                          timestamp, so the readable name travels in the URL. */}
+                      {sectionPdfDownloadUrl && (
+                        <Button
+                          asChild
+                          variant="outline"
+                          className="h-14 shrink-0 rounded-xl px-4 font-semibold text-muted-foreground hover:text-emerald-700 hover:border-emerald-500/40 hover:bg-emerald-500/[0.04]"
+                        >
+                          <a
+                            href={sectionPdfDownloadUrl}
+                            download={sectionPdfFileName}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Download ${sectionPdfFileName}`}
+                          >
+                            <Download className="h-4 w-4 sm:mr-2" />
+                            <span className="hidden sm:inline">Download</span>
+                          </a>
+                        </Button>
+                      )}
                     </div>
                   </div>
 

@@ -5,6 +5,8 @@ import SectionHeader from "@/components/home/SectionHeader";
 import Reveal from "@/components/home/Reveal";
 import { readLastExam, type LastExamMemo } from "@/lib/lastExamMemo";
 import { slugifyCategory } from "@/lib/homeExamContext";
+import { type CycleCopy } from "@/i18n/homeCopy";
+import { HOME_COPY_EN } from "@/i18n/homeCopy.en";
 
 /**
  * Cluster A — the Zeigarnik engine: two open loops, side by side.
@@ -28,7 +30,7 @@ const WINDOW_CLOSES = new Date("2026-11-30T23:59:59+05:30").getTime();
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-const CountdownDigits = ({ target }: { target: number }) => {
+const CountdownDigits = ({ target, copy }: { target: number; copy: CycleCopy }) => {
     const [now, setNow] = useState(() => Date.now());
 
     useEffect(() => {
@@ -43,10 +45,10 @@ const CountdownDigits = ({ target }: { target: number }) => {
     const secs = Math.floor((left % 60_000) / 1000);
 
     const cells = [
-        { value: String(days), label: "days" },
-        { value: pad(hours), label: "hrs" },
-        { value: pad(mins), label: "min" },
-        { value: pad(secs), label: "sec" },
+        { value: String(days), label: copy.countdown.days },
+        { value: pad(hours), label: copy.countdown.hrs },
+        { value: pad(mins), label: copy.countdown.min },
+        { value: pad(secs), label: copy.countdown.sec },
     ];
 
     return (
@@ -66,7 +68,7 @@ const CountdownDigits = ({ target }: { target: number }) => {
 };
 
 /** The SSC MTS 2026 cycle card, in whichever phase the calendar is in. */
-const MtsCycleCard = () => {
+const MtsCycleCard = ({ copy }: { copy: CycleCopy }) => {
     const now = Date.now();
     const beforeWindow = now < WINDOW_OPENS;
     const inWindow = now >= WINDOW_OPENS && now <= WINDOW_CLOSES;
@@ -83,43 +85,43 @@ const MtsCycleCard = () => {
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
                     </span>
                     <span className="text-[11px] font-bold tracking-widest uppercase text-red-400">
-                        SSC MTS September 2026
+                        {copy.mtsBadge}
                     </span>
                 </div>
                 {beforeWindow ? (
                     <>
                         <h3 className="text-[19px] font-extrabold text-white tracking-tight leading-snug mb-1">
-                            The Sept–Nov exam window opens in
+                            {copy.opensIn}
                         </h3>
-                        <p className="text-[12.5px] text-white/45 mb-5">
-                            Per the official SSC calendar. Exact shift dates arrive with the admit card.
-                        </p>
-                        <CountdownDigits target={WINDOW_OPENS} />
+                        <p className="text-[12.5px] text-white/45 mb-5">{copy.calendarNote}</p>
+                        <CountdownDigits target={WINDOW_OPENS} copy={copy} />
                     </>
                 ) : inWindow ? (
                     <>
                         <h3 className="text-[20px] font-extrabold text-white tracking-tight leading-snug mb-1">
-                            The 2026 exam window is <span className="text-red-400">open now</span>.
+                            {copy.openNowTitleA}
+                            <span className="text-red-400">{copy.openNowTitleB}</span>.
                         </h3>
-                        <p className="text-[13px] text-white/45">
-                            Shifts are running Sept–Nov. Every practice session from here on is rehearsal.
-                        </p>
+                        <p className="text-[13px] text-white/45">{copy.openNowNote}</p>
                     </>
                 ) : (
                     <>
                         <h3 className="text-[20px] font-extrabold text-white tracking-tight leading-snug mb-1">
-                            The 2026 window has closed.
+                            {copy.closedTitle}
                         </h3>
-                        <p className="text-[13px] text-white/45">The next cycle's head start begins today.</p>
+                        <p className="text-[13px] text-white/45">{copy.closedNote}</p>
                     </>
                 )}
             </div>
+            {/* The pillar page is English-only for now, so both languages point
+                at it — a Hindi reader following it lands somewhere real rather
+                than a 404. */}
             <Link
                 to="/ssc-mts"
                 className="relative mt-6 inline-flex items-center gap-2 self-start px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.1] text-[13px] font-bold text-white transition-all duration-200"
             >
                 <CalendarClock className="h-4 w-4 text-[#A78BFA]" />
-                Everything about the 2026 cycle
+                {copy.cycleLink}
                 <ArrowRight className="h-3.5 w-3.5" />
             </Link>
         </div>
@@ -127,7 +129,7 @@ const MtsCycleCard = () => {
 };
 
 /** For non-MTS contexts: the same slot holds that exam's shelf instead. */
-const ShelfCard = ({ category }: { category: string }) => {
+const ShelfCard = ({ category, copy }: { category: string; copy: CycleCopy }) => {
     const navigate = useNavigate();
     return (
         <div className="relative overflow-hidden rounded-2xl bg-[#0A0D1E] border border-white/[0.08] p-6 flex flex-col justify-between min-h-[240px]">
@@ -135,25 +137,23 @@ const ShelfCard = ({ category }: { category: string }) => {
                 <div className="absolute top-[-40%] right-[-20%] w-[300px] h-[240px] rounded-full bg-[#6C3EF4] opacity-[0.16] blur-[80px]" />
             </div>
             <div className="relative">
-                <span className="text-[11px] font-bold tracking-widest uppercase text-[#A78BFA]">Your exam shelf</span>
+                <span className="text-[11px] font-bold tracking-widest uppercase text-[#A78BFA]">{copy.shelfEyebrow}</span>
                 <h3 className="mt-3 text-[20px] font-extrabold text-white tracking-tight leading-snug">
-                    Every {category} paper, one shelf.
+                    {copy.shelfTitle(category)}
                 </h3>
-                <p className="mt-1.5 text-[13px] text-white/45">
-                    Mocks and previous year papers, filtered to exactly what you're preparing for.
-                </p>
+                <p className="mt-1.5 text-[13px] text-white/45">{copy.shelfNote}</p>
             </div>
             <button
                 onClick={() => navigate(`/marketplace?category=${encodeURIComponent(category)}`)}
                 className="relative mt-6 inline-flex items-center gap-2 self-start px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.1] text-[13px] font-bold text-white transition-all duration-200"
             >
-                Open the {category} shelf <ArrowRight className="h-3.5 w-3.5" />
+                {copy.shelfButton(category)} <ArrowRight className="h-3.5 w-3.5" />
             </button>
         </div>
     );
 };
 
-const ResumeCard = ({ memo }: { memo: LastExamMemo }) => {
+const ResumeCard = ({ memo, copy }: { memo: LastExamMemo; copy: CycleCopy }) => {
     const navigate = useNavigate();
     return (
         <div className="rounded-2xl border border-[#6C3EF4]/25 bg-[#6C3EF4]/[0.04] p-6 flex flex-col justify-between min-h-[240px]">
@@ -161,53 +161,53 @@ const ResumeCard = ({ memo }: { memo: LastExamMemo }) => {
                 <div className="flex items-center gap-2 mb-3">
                     <History className="h-4 w-4 text-[#6C3EF4]" aria-hidden="true" />
                     <span className="text-[11px] font-bold tracking-widest uppercase text-[#6C3EF4]">
-                        Pick up where you left off
+                        {copy.resumeEyebrow}
                     </span>
                 </div>
                 <h3 className="text-[19px] font-extrabold text-foreground tracking-tight leading-snug">{memo.name}</h3>
-                <p className="mt-1.5 text-[13px] text-muted-foreground">
-                    You opened this paper{memo.category ? ` (${memo.category})` : ""} — finish it under the clock and
-                    see your score against the answer key.
-                </p>
+                <p className="mt-1.5 text-[13px] text-muted-foreground">{copy.resumeNote(memo.category)}</p>
             </div>
             <button
                 onClick={() => navigate(`/exam/${memo.id}/intro?from=home`)}
                 className="mt-6 inline-flex items-center justify-center gap-2 self-start px-5 py-3 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white text-[14px] font-bold shadow-md shadow-[#6C3EF4]/25 hover:shadow-lg hover:shadow-[#6C3EF4]/30 hover:-translate-y-px transition-all duration-200"
             >
-                <MonitorPlay className="h-4 w-4" /> Resume
+                <MonitorPlay className="h-4 w-4" /> {copy.resumeButton}
             </button>
         </div>
     );
 };
 
 /** No breadcrumb yet → invite the one-scroll-away CBT demo instead. */
-const FirstVisitCard = () => (
+const FirstVisitCard = ({ copy }: { copy: CycleCopy }) => (
     <div className="rounded-2xl border border-border/60 bg-card p-6 flex flex-col justify-between min-h-[240px]">
         <div>
             <div className="flex items-center gap-2 mb-3">
                 <MonitorPlay className="h-4 w-4 text-emerald-600" aria-hidden="true" />
                 <span className="text-[11px] font-bold tracking-widest uppercase text-emerald-600">
-                    New here?
+                    {copy.firstEyebrow}
                 </span>
             </div>
             <h3 className="text-[19px] font-extrabold text-foreground tracking-tight leading-snug">
-                See the real exam screen before exam day.
+                {copy.firstTitle}
             </h3>
-            <p className="mt-1.5 text-[13.5px] text-muted-foreground leading-[1.6]">
-                Every paper here runs in the same computer-based-test interface you'll face in the hall — question
-                palette, mark-for-review, the works. Try it right on this page.
-            </p>
+            <p className="mt-1.5 text-[13.5px] text-muted-foreground leading-[1.6]">{copy.firstNote}</p>
         </div>
         <a
             href="#cbt-preview"
             className="mt-6 inline-flex items-center gap-2 self-start px-4 py-2.5 rounded-xl bg-secondary hover:bg-secondary/70 border border-border/60 text-[13px] font-bold text-foreground transition-all duration-200"
         >
-            Try the live demo below <ArrowRight className="h-3.5 w-3.5" />
+            {copy.firstLink} <ArrowRight className="h-3.5 w-3.5" />
         </a>
     </div>
 );
 
-const CycleCluster = ({ selectedCategory }: { selectedCategory: string | null }) => {
+const CycleCluster = ({
+    selectedCategory,
+    copy = HOME_COPY_EN.cycle,
+}: {
+    selectedCategory: string | null;
+    copy?: CycleCopy;
+}) => {
     // Read once per mount — the memo only changes by navigating away and back.
     const [memo] = useState(() => readLastExam());
 
@@ -217,21 +217,27 @@ const CycleCluster = ({ selectedCategory }: { selectedCategory: string | null })
     // any other exam → that exam's shelf.
     const isMts = selectedCategory !== null && slugifyCategory(selectedCategory) === "ssc-mts";
     const title = isMts
-        ? "SSC MTS September 2026 — live mock test series"
+        ? copy.titleMts
         : selectedCategory
-          ? `${selectedCategory} — your prep, on schedule`
-          : "This exam season, at a glance";
+          ? copy.titleCategory(selectedCategory)
+          : copy.titleGeneric;
 
     return (
-        <section aria-label="This exam cycle" className="container mx-auto max-w-6xl px-5 py-14 sm:py-16">
+        <section aria-label={copy.eyebrow} className="container mx-auto max-w-6xl px-5 py-14 sm:py-16">
             <Reveal>
-                <SectionHeader icon={Timer} eyebrow="Live cycle" title={title} accent="#EF4444" />
+                <SectionHeader icon={Timer} eyebrow={copy.eyebrow} title={title} accent="#EF4444" />
             </Reveal>
             <div className="grid md:grid-cols-2 gap-5">
                 <Reveal delay={80}>
-                    {selectedCategory && !isMts ? <ShelfCard category={selectedCategory} /> : <MtsCycleCard />}
+                    {selectedCategory && !isMts ? (
+                        <ShelfCard category={selectedCategory} copy={copy} />
+                    ) : (
+                        <MtsCycleCard copy={copy} />
+                    )}
                 </Reveal>
-                <Reveal delay={180}>{memo ? <ResumeCard memo={memo} /> : <FirstVisitCard />}</Reveal>
+                <Reveal delay={180}>
+                    {memo ? <ResumeCard memo={memo} copy={copy} /> : <FirstVisitCard copy={copy} />}
+                </Reveal>
             </div>
         </section>
     );

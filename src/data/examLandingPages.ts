@@ -6,10 +6,20 @@ export type ExamSection = {
   bullets?: string[];
 };
 
+/** A blog article this landing page hubs into. See `guides` below. */
+export type ExamGuide = { slug: string; label: string; blurb: string };
+
 export type ExamLanding = {
   slug: string;
   examName: string;
   examShort: string;
+  /**
+   * Exam cycle this page is written for, e.g. "2027". Used in headings so the
+   * year lives in data rather than in JSX — a hardcoded year silently goes
+   * stale on every page at once and is the sort of thing nobody notices until
+   * a candidate does.
+   */
+  cycle?: string;
   tagline: string;
   metaTitle: string;
   metaDescription: string;
@@ -28,6 +38,12 @@ export type ExamLanding = {
   syllabus: { subject: string; topics: string[] }[];
   whyMockSetu: { title: string; desc: string }[];
   faqs: ExamFaq[];
+  /**
+   * Articles in this exam's topic cluster. The landing page is the URL the
+   * cluster exists to lift, so it links back out to the cluster deliberately —
+   * a hub with no outbound links to its spokes is a hub in name only.
+   */
+  guides?: ExamGuide[];
   related: { slug: string; label: string }[];
 };
 
@@ -36,17 +52,18 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
     slug: "jee-main",
     examName: "JEE Main",
     examShort: "JEE Main",
-    tagline: "Free JEE Main Mock Test 2026 — Practice in Real NTA Conditions",
-    metaTitle: "Free JEE Main Mock Test 2026 — Online Exam Simulator | MockSetu",
+    cycle: "2027",
+    tagline: "Free JEE Main Mock Test 2027 — Practice in Real NTA Conditions",
+    metaTitle: "Free JEE Main Mock Test 2027 — Online Exam Simulator | MockSetu",
     metaDescription:
-      "Take free JEE Main mock tests with real NTA exam-day conditions. Timed, full-length online JEE simulator with question palette, mark-for-review, instant scoring & deep analytics.",
+      "Free JEE Main 2027 mock tests in real NTA exam-day conditions. Timed full-length online simulator with question palette, mark-for-review, Section B and instant analytics.",
     keywords:
-      "JEE Main mock test, free JEE Main mock test, JEE Main online mock test, JEE Main 2026 mock test, JEE Main exam simulator, NTA mock test, JEE mock test free, JEE Main practice paper",
+      "JEE Main mock test, free JEE Main mock test, JEE Main online mock test, JEE Main 2027 mock test, JEE Main mock test 2027, JEE Main exam simulator, NTA mock test, JEE mock test free, JEE Main practice paper, JEE Main previous year question papers, JEE Main test series free",
     hero: {
-      badge: "JEE Main 2026 · 300 Marks · 3 Hours",
+      badge: "JEE Main 2027 · 300 Marks · 3 Hours",
       h1: "Free JEE Main Mock Test — Practice in NTA Exam-Day Conditions",
       intro:
-        "Crack JEE Main with confidence by practising under the exact same conditions as the real National Testing Agency (NTA) exam. MockSetu's free JEE Main mock test simulator gives you a 3-hour, 300-mark, full-length paper with subject-wise timers, a CAT-style question palette, mark-for-review, and instant analytics that show you where you actually lose marks. No payment, no limits — just disciplined practice.",
+        "Practise JEE Main 2027 under the exact conditions of the real National Testing Agency (NTA) exam. MockSetu's free JEE Main mock test simulator gives you a 3-hour, 300-mark, full-length paper with the real question palette, mark-for-review states, a Section B numerical keypad enforcing 'attempt any 5 of 10', and analytics that show where you actually lose marks. No payment, no limits — just disciplined practice.",
       stats: [
         { value: "90", label: "Questions" },
         { value: "3 hrs", label: "Duration" },
@@ -54,18 +71,20 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       ],
     },
     pattern: {
-      heading: "JEE Main 2026 Exam Pattern",
+      heading: "JEE Main 2027 Exam Pattern",
       rows: [
         { label: "Conducting body", value: "National Testing Agency (NTA)" },
-        { label: "Mode", value: "Computer-Based Test (CBT)" },
+        { label: "Mode", value: "Computer-Based Test (CBT), multiple days and two daily shifts" },
         { label: "Sections", value: "Physics, Chemistry, Mathematics" },
         { label: "Total questions", value: "90 (75 attempted: 25 per subject)" },
-        { label: "Section A (MCQ)", value: "20 per subject × 4 marks" },
-        { label: "Section B (Numerical)", value: "10 questions per subject, attempt any 5" },
-        { label: "Marking scheme", value: "+4 correct, −1 incorrect (Section A), 0 for unattempted in Section B" },
-        { label: "Total marks", value: "300" },
-        { label: "Duration", value: "3 hours (4 hours for PwD candidates)" },
+        { label: "Section A (MCQ)", value: "20 per subject, all compulsory, 4 marks each" },
+        { label: "Section B (Numerical)", value: "10 per subject, attempt any 5, 4 marks each" },
+        { label: "Marking scheme", value: "+4 correct, −1 incorrect — in recent cycles the penalty applies to Section B too" },
+        { label: "Total marks", value: "300 (100 per subject)" },
+        { label: "Duration", value: "3 hours (4 hours for eligible PwD candidates)" },
+        { label: "Scoring", value: "Shift-wise percentile (normalisation); better of your two sessions counts" },
         { label: "Languages", value: "13 languages including English, Hindi, Tamil, Telugu, Marathi" },
+        { label: "Sessions", value: "Two — expected January 2027 and April 2027 (confirm in the NTA bulletin)" },
       ],
     },
     sections: [
@@ -77,13 +96,14 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       {
         heading: "How to use MockSetu for JEE Main preparation",
         body:
-          "Start with one full-length mock per week from September onwards. From January, increase to two per week. From March (one month before the exam), take a full mock every alternate day under strict 9 AM or 3 PM exam-shift conditions. After each attempt, spend 90 minutes reviewing — not just wrong answers, but also the questions you got right but solved slowly. MockSetu's analytics flag both. The students who improve the most are the ones who treat every mock like a real exam, not a practice session.",
+          "Work backwards from your session. Start at one full-length paper a fortnight from around six months out, accepting that parts will be unattempted — an early mock measures navigation, pacing and three-hour stamina, none of which need a finished syllabus. Move to weekly about three months out, then twice weekly at eight weeks. In the final fortnight, drop back to one and spend the freed hours on your error log: that taper is deliberate, because the last two weeks build no new capability and a punishing schedule there simply arrives at the exam exhausted. Budget an hour and a half of review for every hour attempted, or you are taking too many mocks rather than too few.",
         bullets: [
-          "Take mocks in the same shift slot as your actual exam shift (9 AM or 3 PM)",
-          "Use the question palette to mark-for-review and revisit — exactly like NTA's interface",
-          "Review every mock within 24 hours while the mistakes are still fresh",
-          "Track your subject-wise score trend across attempts to spot weakening areas early",
-          "Never skip a mock to study more theory — mocks ARE the study",
+          "Take mocks in the same shift slot as your expected exam shift (9 AM or 3 PM)",
+          "Read all ten Section B questions before solving any — you only need five",
+          "Always enter an answer before marking a question for review; marked-and-empty is not counted",
+          "Sort every lost mark into concept gap, application gap, execution error or selection error",
+          "Also review correct answers that took over four minutes — they cost you two other questions",
+          "Track accuracy and marks lost to negatives per subject, not just the total score",
         ],
       },
     ],
@@ -96,8 +116,9 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
           "Electrostatics & Current Electricity",
           "Magnetism & Electromagnetic Induction",
           "Optics (Ray + Wave)",
-          "Modern Physics (Atoms, Nuclei, Semiconductors)",
+          "Modern Physics (Dual Nature, Atoms, Nuclei, Semiconductors)",
           "Oscillations & Waves",
+          "Experimental Skills (vernier, screw gauge, metre bridge, potentiometer, focal length)",
         ],
       },
       {
@@ -106,7 +127,8 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
           "Physical: Mole concept, Thermodynamics, Equilibrium, Electrochemistry, Chemical Kinetics",
           "Organic: GOC, Hydrocarbons, Alcohols/Phenols/Ethers, Aldehydes/Ketones, Amines, Biomolecules",
           "Inorganic: Periodic table, Chemical bonding, Coordination compounds, d & f block elements",
-          "Surface chemistry & Solutions",
+          "Solutions & colligative properties",
+          "Purification & Characterisation of Organic Compounds",
         ],
       },
       {
@@ -128,8 +150,12 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
         desc: "Question palette, colour-coded status, mark-for-review, section switcher — pixel-matched to the real CBT portal.",
       },
       {
-        title: "Subject-wise timers",
-        desc: "Practice managing Physics, Chemistry, and Maths within strict 60-minute mental budgets instead of just one overall clock.",
+        title: "One clock, three subjects — like the real paper",
+        desc: "JEE Main has no per-section timer, so the simulator gives you one 3-hour clock and lets you rehearse your own per-subject budget instead of enforcing a fake one.",
+      },
+      {
+        title: "Section B enforced properly",
+        desc: "Numerical answers on an on-screen keypad, 'attempt any 5 of 10' per subject, and the rounding and unit traps that only show up on a real interface.",
       },
       {
         title: "Deep analytics",
@@ -170,6 +196,93 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
         question: "Does MockSetu support Section B (numerical answer type) questions?",
         answer:
           "Yes. Both Section A (MCQ) and Section B (numerical answer) are fully supported, with the official NTA scheme of 'attempt any 5 of 10' enforced per subject.",
+      },
+      {
+        question: "When is JEE Main 2027?",
+        answer:
+          "NTA has not released the official 2027 calendar. Based on recent cycles, Session 1 is expected in the second half of January 2027 with registration opening around late October or early November 2026, and Session 2 in April 2027. Treat every date circulating before the information bulletin — including these — as a planning assumption rather than an announcement.",
+      },
+      {
+        question: "Is there negative marking in JEE Main Section B?",
+        answer:
+          "In recent cycles, yes — one mark is deducted for an incorrect numerical answer, unlike earlier years when Section B was penalty-free. Because there is no option list to eliminate from, a blind guess at a numerical value is close to pure loss. Confirm the rule in the bulletin for your cycle.",
+      },
+      {
+        question: "How many marks are needed for 99 percentile in JEE Main?",
+        answer:
+          "Historically around the mid-hundreds out of 300, but the figure moves every cycle with candidate numbers and paper difficulty. Percentile is your position among candidates in your own shift, not a percentage of marks, so treat any specific number as an indicative band and train against a raw-marks target with a fifteen-to-twenty-mark buffer.",
+      },
+      {
+        question: "Does a harder JEE Main shift lower my score?",
+        answer:
+          "No. Percentiles are computed within your own shift, so a harder paper means fewer candidates in that shift scored well and the percentile attached to any given raw mark rises. The top scorer in every shift receives a percentile of 100 regardless of that shift's difficulty, which is why shift-hunting is wasted effort.",
+      },
+      {
+        question: "Has the 75 percent criteria been removed for JEE Main?",
+        answer:
+          "No. Admission to NITs, IIITs and other centrally funded institutes through JoSAA requires at least 75 percent aggregate in Class 12 or a place in the top twenty percentile of your board — 65 percent for SC and ST candidates. It was waived in some pandemic-affected cycles, which is why claims of permanent removal still circulate.",
+      },
+    ],
+    guides: [
+      {
+        slug: "jee-main-2027-exam-date-and-notification",
+        label: "JEE Main 2027 Exam Date & Notification",
+        blurb: "The realistic timeline for the bulletin, both sessions, admit cards and results.",
+      },
+      {
+        slug: "jee-main-syllabus-2027",
+        label: "JEE Main Syllabus 2027",
+        blurb: "Full PCM topic list, what the 2024 reduction removed, and which chapters carry marks.",
+      },
+      {
+        slug: "jee-main-exam-pattern-and-marking-scheme",
+        label: "Exam Pattern & Marking Scheme",
+        blurb: "90 questions, 75 attempted, and what each rule implies for how you attempt the paper.",
+      },
+      {
+        slug: "jee-main-previous-year-question-papers",
+        label: "Previous Year Question Papers",
+        blurb: "How many years to solve, chapter-wise versus year-wise, and the review that pays.",
+      },
+      {
+        slug: "jee-main-normalisation-and-nta-score",
+        label: "Normalisation & NTA Score",
+        blurb: "How shift-wise percentile is computed, and why your marks are not your score.",
+      },
+      {
+        slug: "jee-main-marks-vs-percentile",
+        label: "Marks vs Percentile",
+        blurb: "The shape of the curve, and where your next twenty marks should come from.",
+      },
+      {
+        slug: "jee-main-chapter-wise-weightage",
+        label: "Chapter-Wise Weightage",
+        blurb: "Where the marks concentrate across all three subjects, and how to sequence them.",
+      },
+      {
+        slug: "jee-main-mock-test-strategy",
+        label: "Mock Test Strategy",
+        blurb: "How many, how often, and the four-bucket review that actually raises scores.",
+      },
+      {
+        slug: "jee-main-numerical-value-questions",
+        label: "Section B Numerical Questions",
+        blurb: "Using 'attempt any 5 of 10' properly, and avoiding rounding and entry errors.",
+      },
+      {
+        slug: "jee-main-time-management-in-exam",
+        label: "Time Management in the Exam",
+        blurb: "Subject order, per-subject budgets, and the abandonment rule that saves marks.",
+      },
+      {
+        slug: "jee-main-session-1-vs-session-2",
+        label: "Session 1 vs Session 2",
+        blurb: "Why best-of-two makes January near free, and how to use the ten-week gap.",
+      },
+      {
+        slug: "jee-main-eligibility-criteria",
+        label: "Eligibility Criteria",
+        blurb: "Age, attempts, subject requirements and the 75 percent rule, stated precisely.",
       },
     ],
     related: [

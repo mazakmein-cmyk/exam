@@ -6,6 +6,8 @@ import { readExamYear } from "@/lib/publishedExams";
 import { searchExams } from "@/lib/homeSearch";
 import { rememberLastExam } from "@/lib/lastExamMemo";
 import { PAPER_TYPE_PYQ, readPaperType } from "@/lib/paperType.js";
+import { type HeroCopy } from "@/i18n/homeCopy";
+import { HOME_COPY_EN } from "@/i18n/homeCopy.en";
 
 /**
  * The student hero. Its whole job is the 15-second contract:
@@ -26,6 +28,8 @@ type StudentHeroProps = {
     onSelectCategory: (category: string) => void;
     /** The exam the big button starts. Null while loading / empty library. */
     primaryExam: PublishedExam | null;
+    /** Language table — English by default, Hindi on /hindi. */
+    copy?: HeroCopy;
 };
 
 /** How many chips before choices hide behind "More" (Hick's law). */
@@ -40,7 +44,15 @@ const startExamPath = (exam: PublishedExam) => `/exam/${exam.id}/intro?from=home
    Predictive search: type "mts 2024" → live rows
    with the start action embedded in the row.
    ───────────────────────────────────────────── */
-const HeroSearch = ({ exams, onPick }: { exams: PublishedExam[]; onPick: (exam: PublishedExam) => void }) => {
+const HeroSearch = ({
+    exams,
+    onPick,
+    copy,
+}: {
+    exams: PublishedExam[];
+    onPick: (exam: PublishedExam) => void;
+    copy: HeroCopy;
+}) => {
     const navigate = useNavigate();
     const [value, setValue] = useState("");
     const [query, setQuery] = useState("");
@@ -84,8 +96,8 @@ const HeroSearch = ({ exams, onPick }: { exams: PublishedExam[]; onPick: (exam: 
                         if (e.key === "Escape") setOpen(false);
                         if (e.key === "Enter" && hits[0]) onPick(hits[0].exam);
                     }}
-                    placeholder='Try "MTS 2024" or "previous year paper"…'
-                    aria-label="Search mock tests and previous year papers"
+                    placeholder={copy.searchPlaceholder}
+                    aria-label={copy.searchAria}
                     className="w-full h-[52px] pl-11 pr-4 rounded-2xl bg-white/[0.06] border border-white/[0.12] text-[15px] text-white placeholder:text-white/35 outline-none focus:border-[#6C3EF4]/60 focus:bg-white/[0.08] focus:shadow-[0_0_0_4px_rgba(108,62,244,0.15)] transition-all duration-200 backdrop-blur-sm"
                 />
             </div>
@@ -127,13 +139,13 @@ const HeroSearch = ({ exams, onPick }: { exams: PublishedExam[]; onPick: (exam: 
                                                 )}
                                                 {isPyq && (
                                                     <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-amber-400/15 text-amber-300">
-                                                        Previous Year · Answer key
+                                                        {copy.pyqBadge}
                                                     </span>
                                                 )}
                                             </div>
                                         </div>
                                         <span className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#6C3EF4] text-white text-[12px] font-bold">
-                                            <Play className="h-3 w-3 fill-current" /> Start
+                                            <Play className="h-3 w-3 fill-current" /> {copy.start}
                                         </span>
                                     </button>
                                 );
@@ -142,23 +154,22 @@ const HeroSearch = ({ exams, onPick }: { exams: PublishedExam[]; onPick: (exam: 
                                 onClick={() => navigate("/marketplace")}
                                 className="w-full px-4 py-2.5 text-[12px] font-semibold text-[#A78BFA] hover:bg-white/[0.05] transition-colors text-center"
                             >
-                                Browse the full library →
+                                {copy.browseFull}
                             </button>
                         </>
                     ) : (
                         <div className="px-4 py-4 text-[13px] text-white/50">
-                            Nothing matches yet — try an exam name like{" "}
+                            {copy.noMatchLead}{" "}
                             <button
                                 className="font-semibold text-[#A78BFA]"
                                 onClick={() => setValue("SSC MTS")}
                             >
                                 SSC MTS
                             </button>
-                            , or{" "}
+                            {" · "}
                             <button className="font-semibold text-[#A78BFA]" onClick={() => navigate("/marketplace")}>
-                                browse everything
+                                {copy.noMatchBrowse}
                             </button>
-                            .
                         </div>
                     )}
                 </div>
@@ -174,6 +185,7 @@ const StudentHero = ({
     selectedCategory,
     onSelectCategory,
     primaryExam,
+    copy = HOME_COPY_EN.hero,
 }: StudentHeroProps) => {
     const navigate = useNavigate();
     const [mounted, setMounted] = useState(false);
@@ -266,7 +278,7 @@ const StudentHero = ({
                     first thing on the page says so. */}
                 <div className={`flex justify-center mb-8 ${reveal}`} style={{ transitionDelay: "50ms" }}>
                     <div className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] backdrop-blur-sm px-4 py-2">
-                        <span className="text-[11px] font-semibold text-white/40 tracking-widest uppercase mr-3">For</span>
+                        <span className="text-[11px] font-semibold text-white/40 tracking-widest uppercase mr-3">{copy.forLabel}</span>
                         {TRUSTED_BY.map((exam, i) => (
                             <span key={exam} className="text-[12px] font-bold text-white/60">
                                 {exam}
@@ -279,7 +291,7 @@ const StudentHero = ({
                 {/* H1 — mirrors the query cluster this page exists to win. */}
                 <h1 className={reveal} style={{ transitionDelay: "100ms" }}>
                     <span className="block text-[34px] sm:text-[52px] md:text-[64px] font-black text-white leading-[1.05] tracking-[-0.04em]">
-                        Free Mock Tests &amp;
+                        {copy.h1a}
                     </span>
                     <span
                         className="block text-[34px] sm:text-[52px] md:text-[64px] font-black leading-[1.05] tracking-[-0.04em] mt-1"
@@ -290,15 +302,15 @@ const StudentHero = ({
                             backgroundClip: "text",
                         }}
                     >
-                        Previous Year Papers
+                        {copy.h1b}
                     </span>
                 </h1>
                 <p
                     className={`mt-5 text-[15.5px] sm:text-[17px] text-white/50 max-w-lg mx-auto leading-[1.6] ${reveal}`}
                     style={{ transitionDelay: "200ms" }}
                 >
-                    Practice under the real exam clock, with answer keys and instant scoring.{" "}
-                    <span className="text-white/80 font-medium">100% free, no downloads.</span>
+                    {copy.subA}
+                    <span className="text-white/80 font-medium">{copy.subB}</span>
                 </p>
 
                 {/* Predictive search — looks like the search box they came from.
@@ -306,12 +318,12 @@ const StudentHero = ({
                     stacking contexts, and without this the chips and CTA paint
                     over the open results panel. */}
                 <div className={`mt-8 relative z-20 ${reveal}`} style={{ transitionDelay: "300ms" }}>
-                    <HeroSearch exams={exams} onPick={startExam} />
+                    <HeroSearch exams={exams} onPick={startExam} copy={copy} />
                 </div>
 
                 {/* Exam context chips — a page-level switch, not a link. */}
                 <div className={`mt-8 ${reveal}`} style={{ transitionDelay: "400ms" }}>
-                    <p className="text-[13px] font-semibold text-white/45 mb-3">Which exam are you preparing for?</p>
+                    <p className="text-[13px] font-semibold text-white/45 mb-3">{copy.chipsQuestion}</p>
                     <div className="flex flex-wrap items-center justify-center gap-2 max-w-xl mx-auto">
                         {loading && categories.length === 0 ? (
                             [0, 1, 2].map((i) => (
@@ -341,7 +353,7 @@ const StudentHero = ({
                                         onClick={() => setChipsExpanded(true)}
                                         className="h-10 px-4 rounded-xl text-[13.5px] font-bold bg-white/[0.05] border border-white/[0.12] text-white/50 hover:bg-white/[0.1] hover:text-white transition-all duration-200 inline-flex items-center gap-1"
                                     >
-                                        More <ChevronDown className="h-3.5 w-3.5" />
+                                        {copy.more} <ChevronDown className="h-3.5 w-3.5" />
                                     </button>
                                 )}
                             </>
@@ -361,19 +373,19 @@ const StudentHero = ({
                         <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" aria-hidden="true" />
                         <span className="relative inline-flex items-center gap-2.5 text-[17px] font-extrabold tracking-tight">
                             <Play className="h-[18px] w-[18px] fill-current" />
-                            Start Free Mock Test
+                            {copy.ctaTitle}
                         </span>
                         <span className="relative mt-0.5 text-[12px] font-medium text-white/70 truncate max-w-[300px]">
                             {primaryExam
                                 ? primaryExam.name
                                 : selectedCategory
-                                  ? `Browse ${selectedCategory} papers`
-                                  : "Browse the free library"}
+                                  ? copy.browseCategory(selectedCategory)
+                                  : copy.browseLibrary}
                         </span>
                     </button>
                     <div className="mt-4 flex items-center justify-center gap-2 text-[12px] text-white/35 font-medium">
                         <Sparkles className="h-3 w-3" aria-hidden="true" />
-                        No sign-up needed to start · Real CBT interface · Instant answer key
+                        {copy.trustLine}
                     </div>
                 </div>
             </div>

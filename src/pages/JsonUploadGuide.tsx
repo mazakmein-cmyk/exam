@@ -3,6 +3,7 @@ import { FileJson, ChevronRight, ArrowUp, Copy, Check, AlertTriangle } from "luc
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
+import { STATIC_PAGE_SEO } from "@/data/staticPageSeo";
 import { useToast } from "@/hooks/use-toast";
 
 const tocSections = [
@@ -1483,9 +1484,7 @@ const JsonUploadGuide = () => {
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        title="JSON Upload Guide | MockSetu"
-        description="Step-by-step guide for creators: convert your exam PDF into JSON using your own AI, then upload to MockSetu in a few minutes."
-        path="/json-upload-guide"
+        {...STATIC_PAGE_SEO.jsonUploadGuide}
       />
       <Navbar />
 

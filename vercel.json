@@ -1,8 +1,9 @@
 {
-    "buildCommand": "vite build",
+    "buildCommand": "vite build && node scripts/prerender.mjs",
     "outputDirectory": "dist",
     "rewrites": [
         {
+            "//": "SPA fallback for genuinely dynamic routes (/exam/:id, /live/:code, /dashboard). Vercel checks the filesystem BEFORE applying rewrites, so the per-route files written by scripts/prerender.mjs — dist/blog/<slug>/index.html and friends — are served directly and never reach this rule. Do not narrow it: any route without a prerendered file still needs it.",
             "source": "/(.*)",
             "destination": "/index.html"
         }
@@ -35,6 +36,20 @@
             "source": "/index.html",
             "headers": [
                 { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+            ]
+        },
+        {
+            "//": "The prerendered documents (dist/blog/<slug>/index.html etc.) are requested at extensionless paths, so the /index.html rule above never matches them. Without this they could be edge-cached with a stale head and a content update would not surface. The negative lookaheads keep this off /assets and off anything with a file extension, so the immutable asset rules above stay in force.",
+            "source": "/((?!assets/)(?!.*\\.[a-zA-Z0-9]+$).*)",
+            "headers": [
+                { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+            ]
+        },
+        {
+            "//": "Private routes, hardened at the transport layer. X-Robots-Tag is obeyed by crawlers that never fetch robots.txt and by those that ignore it, and unlike a meta tag it does not depend on the HTML being parsed. This is the third of three layers: server-side RPC authorisation is what actually stops an attacker, the first-byte noindex meta covers HTML consumers, and this covers everything else. Listed by path here rather than in robots.txt because vercel.json is build config and is never served to visitors.",
+            "source": "/(barnwal3008/admin|dashboard|analytics|auth|student-auth)(/.*)?",
+            "headers": [
+                { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive, nosnippet" }
             ]
         }
     ]

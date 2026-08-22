@@ -46,17 +46,23 @@
     <meta name="application-name" content="MockSetu" />
     <meta name="apple-mobile-web-app-title" content="MockSetu" />
 
-    <!-- Canonical & alternates -->
+    <!-- Canonical & alternates.
+         These describe the HOME page only — the SEO component replaces the
+         whole hreflang set per route (see setAlternateLinks in SEO.tsx), so a
+         stale homepage-scoped alternate can never linger on another URL and
+         create a conflicting language cluster. -->
     <link rel="canonical" href="https://mocksetu.in/" />
     <link rel="alternate" hreflang="en" href="https://mocksetu.in/" />
-    <link rel="alternate" hreflang="en-in" href="https://mocksetu.in/" />
+    <link rel="alternate" hreflang="en-IN" href="https://mocksetu.in/" />
+    <link rel="alternate" hreflang="hi" href="https://mocksetu.in/hindi" />
+    <link rel="alternate" hreflang="hi-IN" href="https://mocksetu.in/hindi" />
     <link rel="alternate" hreflang="x-default" href="https://mocksetu.in/" />
     <link rel="alternate" type="application/rss+xml" title="MockSetu Blog RSS" href="https://mocksetu.in/feed.xml" />
 
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="apple-touch-icon" href="/mocksetu-logo.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="shortcut icon" href="/favicon.svg" />
 
     <!-- OpenGraph -->
@@ -66,10 +72,21 @@
     <meta property="og:url" content="https://mocksetu.in/" />
     <meta property="og:title" content="MockSetu (Mockset) — Free Mock Test &amp; Exam Simulator for JEE, NEET, CAT, GATE, UPSC" />
     <meta property="og:description" content="MockSetu (also known as Mockset) turns any exam PDF into a timed mock test. Practice JEE, NEET, CAT, GATE &amp; UPSC in real exam conditions, track weak spots, and score higher — completely free." />
-    <meta property="og:image" content="https://mocksetu.in/mocksetu-logo.png" />
+    <meta property="og:image" content="https://mocksetu.in/og-image.png" />
     <meta property="og:image:alt" content="MockSetu — The Bridge to Your Best Score" />
+    <!--
+      These MUST match /og-image.png exactly. They claimed 1200x630 while the
+      image was a 1024x1024 square, and a platform resolves that disagreement by
+      cropping badly or dropping the image — which would have silently undone
+      every per-page share card. Now both the file and these numbers are 1200x630.
+
+      Keep them in step with OG_IMAGE_WIDTH / OG_IMAGE_HEIGHT in
+      src/lib/seo/structuredData.ts; a test asserts all three agree with the
+      actual PNG header.
+    -->
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -77,7 +94,7 @@
     <meta name="twitter:creator" content="@mocksetu" />
     <meta name="twitter:title" content="MockSetu (Mockset) — Free Mock Test &amp; Exam Simulator for JEE, NEET, CAT, GATE, UPSC" />
     <meta name="twitter:description" content="MockSetu — also searched as Mockset — gives serious aspirants free timed mock tests with analytics for JEE, NEET, CAT, GATE & UPSC. Practice exam-day conditions, find weak spots, score higher." />
-    <meta name="twitter:image" content="https://mocksetu.in/mocksetu-logo.png" />
+    <meta name="twitter:image" content="https://mocksetu.in/og-image.png" />
     <meta name="twitter:image:alt" content="MockSetu — The Bridge to Your Best Score" />
 
     <!-- Performance: preconnect & preload critical resources -->
@@ -118,21 +135,32 @@
       not a byte saving; it is written this way so intermediate weights the CSS
       actually uses (there is a `font-weight: 650`) resolve on the axis instead
       of being snapped to a listed instance.
+
+      Noto Sans Devanagari carries the Hindi pages (/hindi, /hindi/for-creators)
+      and every Devanagari string elsewhere — live-exam display language,
+      transliteration suggestions. It costs an English visitor nothing but a few
+      hundred bytes of @font-face CSS: Google scopes each face with a
+      `unicode-range`, so the Devanagari woff2 is only fetched by a page that
+      actually paints Devanagari glyphs. It is requested at 400..700 rather than
+      400..900 deliberately — Devanagari display type turns into a solid slab
+      above ~700 because the shirorekha thickens with the stems, and clamping to
+      the axis maximum is what stops the browser from faking a heavier weight
+      (see the [lang="hi-IN"] block in index.css).
     -->
     <link
       rel="preload"
       as="style"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&family=Noto+Sans+Devanagari:wght@400..700&display=swap"
     />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&family=Noto+Sans+Devanagari:wght@400..700&display=swap"
       rel="stylesheet"
       media="print"
       onload="this.media='all';this.onload=null"
     />
     <noscript>
       <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300..900&family=Plus+Jakarta+Sans:wght@400..800&family=Noto+Sans+Devanagari:wght@400..700&display=swap"
         rel="stylesheet"
       />
     </noscript>
@@ -155,9 +183,9 @@
         "url": "https://mocksetu.in/",
         "logo": {
           "@type": "ImageObject",
-          "url": "https://mocksetu.in/mocksetu-logo.png",
-          "width": 512,
-          "height": 512
+          "url": "https://mocksetu.in/mocksetu-logo-square.png",
+          "width": 1024,
+          "height": 1024
         },
         "description": "MockSetu (also commonly searched as Mockset) is a free online mock test platform and exam simulator helping students practice JEE, NEET, CAT, GATE, and UPSC under real exam-day conditions with deep performance analytics.",
         "email": "hey@mocksetu.in",
@@ -169,7 +197,7 @@
           "name": "MockSetu",
           "alternateName": ["Mockset", "Mock Setu"],
           "url": "https://mocksetu.in/",
-          "logo": "https://mocksetu.in/mocksetu-logo.png",
+          "logo": "https://mocksetu.in/mocksetu-logo-square.png",
           "description": "MockSetu — the bridge to your best score. Also known as Mockset, MockSetu is a free exam simulator and timed mock test platform for JEE, NEET, CAT, GATE, and UPSC aspirants."
         },
         "knowsAbout": [
@@ -214,10 +242,10 @@
         "@id": "https://mocksetu.in/#website",
         "url": "https://mocksetu.in/",
         "name": "MockSetu",
-        "alternateName": ["Mockset", "Mock Setu"],
+        "alternateName": ["Mockset", "Mock Setu", "मॉकसेतु"],
         "description": "MockSetu (Mockset) — free online mock test platform and exam simulator for JEE, NEET, CAT, GATE, UPSC.",
         "publisher": { "@id": "https://mocksetu.in/#organization" },
-        "inLanguage": "en-IN",
+        "inLanguage": ["en-IN", "hi-IN"],
         "potentialAction": {
           "@type": "SearchAction",
           "target": {

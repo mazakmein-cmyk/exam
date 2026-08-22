@@ -14,7 +14,7 @@ const post: BlogPost = {
   updatedAt: "2026-06-07",
   readingMinutes: 10,
   category: "Career Guidance",
-  tags: ["JEE Drop Year", "JEE Repeater", "Dropper Strategy", "Career Guidance", "JEE Preparation", "Exam Anxiety"],
+  tags: ["JEE Main", "JEE Drop Year", "JEE Repeater", "Dropper Strategy", "Career Guidance", "Exam Anxiety"],
   hero: {
     eyebrow: "Career Guidance",
     h1: "Should I Take a Drop Year for JEE? An Honest Decision Framework",

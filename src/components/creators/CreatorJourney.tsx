@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
+import { type CreatorAct, type CreatorJourneyCopy } from "@/i18n/creatorCopy";
+import { CREATOR_COPY_EN } from "@/i18n/creatorCopy.en";
 
 /**
  * CreatorJourney — the /for-creators feature story as ONE continuous 3D-styled
@@ -38,51 +40,13 @@ const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
 
 /* ─────────────────────── the six acts ─────────────────────── */
 
-type Act = {
-    eyebrow: string;
-    title: string;
-    copy: string;
-    cta: { label: string; to: string };
-};
+/**
+ * The acts' WORDS live in i18n/creatorCopy.ts (English and Hindi); this module
+ * owns their CHOREOGRAPHY. Both language pages therefore play the exact same
+ * six-beat story — only the rail copy differs.
+ */
+type Act = CreatorAct;
 
-const ACTS: Act[] = [
-    {
-        eyebrow: "Act 1 · Import",
-        title: "Any PDF becomes a question bank.",
-        copy: "Drop the paper you already wrote. The MockSetu core reads it — questions, options, images — and hands back a clean, structured, fully editable database. Minutes, not evenings.",
-        cta: { label: "Start with your first PDF", to: "/auth" },
-    },
-    {
-        eyebrow: "Act 2 · Build",
-        title: "Sections, timers, negative marking — switched on, not coded.",
-        copy: "Slot questions into sections. Flip a switch for per-section timers, another for negative marking. Every rule of the real exam, one toggle away.",
-        cta: { label: "See the exam builder", to: "/auth" },
-    },
-    {
-        eyebrow: "Act 3 · Go Live",
-        title: "Or run it live — the whole class, one room.",
-        copy: "Put the question on the projector; students join from their phones with one code. Answers stream onto your screen the second they're locked, and the leaderboard reshuffles in real time. A test becomes an event.",
-        cta: { label: "Host a live exam", to: "/auth" },
-    },
-    {
-        eyebrow: "Act 4 · Understand",
-        title: "Watch the class think.",
-        copy: "When the room closes, the data stays. Every attempt feeds your dashboard: section-wise accuracy, time per question, where the whole class stumbled. Slide a filter and the picture redraws itself.",
-        cta: { label: "Explore the analytics", to: "/auth" },
-    },
-    {
-        eyebrow: "Act 5 · Brand",
-        title: "Your name on every exam.",
-        copy: "Papers carry your byline and verified badge, on a full-screen exam experience students open from one link. Your brand does the teaching — MockSetu just holds the clock.",
-        cta: { label: "Publish under your name", to: "/auth" },
-    },
-    {
-        eyebrow: "Act 6 · Grow",
-        title: "Students find you.",
-        copy: "MockSetu's exam pages already rank for the searches your students make — \"ssc mts previous year paper\", \"free mock test\". Publish to the library and that traffic flows to your papers. No ad budget.",
-        cta: { label: "Start creating — it's free", to: "/auth" },
-    },
-];
 
 /* ─────────────────── shared scene furniture ─────────────────── */
 
@@ -854,7 +818,8 @@ const useMediaQuery = (query: string) => {
 
 /* ───────────────── the scrubbed theatre (desktop) ───────────────── */
 
-const ScrubJourney = () => {
+const ScrubJourney = ({ copy }: { copy: CreatorJourneyCopy }) => {
+    const ACTS = copy.acts;
     const navigate = useNavigate();
     const wrapRef = useRef<HTMLDivElement>(null);
     const [progress, setProgress] = useState(0);
@@ -947,7 +912,7 @@ const ScrubJourney = () => {
                                 <button
                                     key={i}
                                     onClick={() => scrollToAct(i)}
-                                    aria-label={`Go to ${a.eyebrow}`}
+                                    aria-label={copy.goToAct(a.eyebrow)}
                                     className="h-2.5 flex items-center rounded-full transition-all duration-300"
                                 >
                                     <span
@@ -1005,11 +970,11 @@ const ScrubJourney = () => {
 
 /* ───────────── the posed fallback (mobile / reduced motion) ───────────── */
 
-const StaticJourney = () => {
+const StaticJourney = ({ copy }: { copy: CreatorJourneyCopy }) => {
     const navigate = useNavigate();
     return (
         <div className="container mx-auto max-w-6xl px-5 space-y-14">
-            {ACTS.map((act, i) => {
+            {copy.acts.map((act, i) => {
                 const Scene = SCENES[i];
                 return (
                     <div key={act.eyebrow} className="grid lg:grid-cols-[380px_1fr] gap-6 lg:gap-10 items-center">
@@ -1043,23 +1008,23 @@ const StaticJourney = () => {
 
 /* ─────────────────────────── the export ─────────────────────────── */
 
-const CreatorJourney = () => {
+const CreatorJourney = ({ copy = CREATOR_COPY_EN.journey }: { copy?: CreatorJourneyCopy }) => {
     const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
     const desktop = useMediaQuery("(min-width: 1024px)");
     // A sticky 600vh theatre is a desktop luxury; phones and motion-sensitive
-    // visitors get the same five scenes as composed stills.
+    // visitors get the same six scenes as composed stills.
     const scrub = desktop && !reducedMotion;
 
     return (
-        <section aria-label="How MockSetu works for creators" className="py-16 sm:py-24">
+        <section aria-label={copy.sectionAria} className="py-16 sm:py-24">
             <div className="container mx-auto max-w-6xl px-5 text-center mb-4 lg:mb-0">
                 <div className="section-label justify-center mb-4">
                     <span className="w-6 h-px bg-emerald-500/40" />
-                    One paper's journey
+                    {copy.sectionLabel}
                     <span className="w-6 h-px bg-emerald-500/40" />
                 </div>
                 <h2 className="text-[28px] sm:text-[36px] md:text-[44px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
-                    Follow your paper from{" "}
+                    {copy.headingA}
                     <span
                         style={{
                             background: "linear-gradient(135deg, #10B981, #34D399)",
@@ -1068,12 +1033,12 @@ const CreatorJourney = () => {
                             backgroundClip: "text",
                         }}
                     >
-                        PDF to phenomenon
+                        {copy.headingAccent}
                     </span>
                     .
                 </h2>
             </div>
-            {scrub ? <ScrubJourney /> : <StaticJourney />}
+            {scrub ? <ScrubJourney copy={copy} /> : <StaticJourney copy={copy} />}
         </section>
     );
 };

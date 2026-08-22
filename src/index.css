@@ -145,13 +145,20 @@
     scroll-behavior: smooth;
   }
 
+  /*
+    'Noto Sans Devanagari' sits AFTER the Latin faces on purpose. Font
+    fallback is per-GLYPH, not per-element: Inter and Plus Jakarta Sans carry
+    no Devanagari, so Hindi text falls through to Noto while "SSC MTS", "PDF"
+    and "MockSetu" on the very same line stay in the brand face. Putting Noto
+    first would quietly restyle every Latin word on the Hindi pages.
+  */
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Inter', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, sans-serif;
   }
 
   h1, h2, h3 {
-    font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Noto Sans Devanagari', 'Inter', sans-serif;
     font-feature-settings: "ss01";
     letter-spacing: -0.02em;
   }
@@ -218,6 +225,63 @@
 @keyframes count-up {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
+   DEVANAGARI TYPOGRAPHY (the /hindi pages)
+   ============================================
+
+   Everything display-sized on this site is tuned for Latin: weight 900, tight
+   negative tracking (-0.04em), 1.05 line-height. All three are wrong for
+   Devanagari, and the weight is the one that actually looks broken:
+
+   · WEIGHT. Devanagari hangs from a continuous top bar (the shirorekha). Push
+     the stems to 900 and that bar thickens with them until the whole line
+     reads as one black slab with the counters closing up. Noto Sans Devanagari
+     is requested at 400..700 (see index.html), so a `font-black` (900) request
+     clamps to the 700 axis maximum instead of being SYNTHESISED — a browser's
+     faked bold smears the glyph outlines sideways, which is what made the hero
+     look muddy rather than merely heavy. `font-synthesis: none` makes that
+     guarantee explicit for any face that slips through the stack.
+   · TRACKING. Negative tracking collapses conjuncts (क्ष, प्र) into their
+     neighbours; a touch of word-spacing separates words the tighter Latin
+     setting had crowded ("वर्षों के पेपर").
+   · LEADING. A sub-1.2 line-height clips the matras above the shirorekha
+     (ी, ो, ैं) and below the baseline (ृ, ्र).
+
+   Scoped to [lang="hi-IN"], which SEO.tsx stamps on <html> for the Hindi
+   routes and resets on the way out, so the English pages keep their tighter
+   Latin setting untouched and no component needs a language branch. The
+   selector outranks the Tailwind utilities it corrects (0,2,1 vs 0,1,0). */
+:root[lang="hi-IN"] {
+  font-synthesis: none;
+}
+
+/* The descendant `*` is load-bearing: the display headings put their size,
+   weight, tracking and leading utilities on INNER spans (so one line can carry
+   a gradient), so a rule on the heading element alone corrects nothing. */
+:root[lang="hi-IN"] :is(h1, h2, h3),
+:root[lang="hi-IN"] :is(h1, h2, h3) * {
+  font-weight: 700;
+  letter-spacing: normal;
+  /* 1.24 is the floor that still clears Noto Sans Devanagari's matras at
+     display sizes; looser than this and a two-line hero stops reading as one
+     sentence. */
+  line-height: 1.24;
+  word-spacing: 0.04em;
+}
+
+/* Buttons and eyebrows ask for 800 in places; same slab problem, same cap. */
+:root[lang="hi-IN"] .font-extrabold,
+:root[lang="hi-IN"] .font-black {
+  font-weight: 700;
+}
+
+/* Gradient headings clip to the glyph box, so a tall matra on the first line
+   can be shaved off. A little breathing room inside the clip fixes it. */
+:root[lang="hi-IN"] h1 > span,
+:root[lang="hi-IN"] h2 > span {
+  padding-block: 0.06em;
 }
 
 /* The /for-creators scroll theatre: each act's rail copy arrives with a small

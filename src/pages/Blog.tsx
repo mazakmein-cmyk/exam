@@ -4,6 +4,7 @@ import { ArrowRight, BookOpen, Clock } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
+import { STATIC_PAGE_SEO } from "@/data/staticPageSeo";
 import { BLOG_META, BLOG_CATEGORIES } from "@/data/blog";
 
 const Blog = () => {
@@ -13,10 +14,7 @@ const Blog = () => {
   return (
     <div className="min-h-screen bg-background">
       <SEO
-        title="MockSetu (Mockset) Blog — Mock Test Strategy, Exam Guides & Study Plans"
-        description="In-depth MockSetu (Mockset) guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, and UPSC aspirants. Written for serious students who want to actually rank."
-        path="/blog"
-        keywords="mockset blog, MockSetu blog, exam preparation blog, mock test strategy blog, JEE preparation, NEET preparation, CAT preparation, GATE preparation, UPSC preparation, study plan, mockset study plan, SSC CGL preparation, bank PO preparation, CUET preparation, CLAT preparation, study techniques, placement preparation blog"
+        {...STATIC_PAGE_SEO.blog}
         jsonLd={[
           {
             "@context": "https://schema.org",

@@ -4,61 +4,10 @@ import { ArrowRight, BookOpen, CheckCircle, ChevronDown, Sparkles } from "lucide
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
-import { EXAM_LANDING_PAGES, ExamLanding } from "@/data/examLandingPages";
-
-const buildJsonLd = (exam: ExamLanding) => {
-  const url = `https://mocksetu.in/mock-test/${exam.slug}`;
-  return [
-    {
-      "@context": "https://schema.org",
-      "@type": "Course",
-      name: `${exam.examName} Mock Test Series — MockSetu (Mockset)`,
-      alternateName: `${exam.examShort} Mockset Mock Test Series`,
-      description: exam.metaDescription,
-      provider: {
-        "@type": "Organization",
-        name: "MockSetu",
-        alternateName: ["Mockset", "Mock Setu"],
-        "@id": "https://mocksetu.in/#organization",
-        sameAs: "https://mocksetu.in/",
-      },
-      url,
-      educationalLevel: "Higher Education",
-      inLanguage: "en-IN",
-      isPartOf: { "@id": "https://mocksetu.in/#website" },
-      hasCourseInstance: {
-        "@type": "CourseInstance",
-        courseMode: "Online",
-        courseWorkload: "PT3H",
-      },
-      offers: {
-        "@type": "Offer",
-        price: "0",
-        priceCurrency: "INR",
-        availability: "https://schema.org/InStock",
-        category: "Free",
-      },
-    },
-    {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      mainEntity: exam.faqs.map((f) => ({
-        "@type": "Question",
-        name: f.question,
-        acceptedAnswer: { "@type": "Answer", text: f.answer },
-      })),
-    },
-    {
-      "@context": "https://schema.org",
-      "@type": "BreadcrumbList",
-      itemListElement: [
-        { "@type": "ListItem", position: 1, name: "Home", item: "https://mocksetu.in/" },
-        { "@type": "ListItem", position: 2, name: "Mock Tests", item: "https://mocksetu.in/marketplace" },
-        { "@type": "ListItem", position: 3, name: `${exam.examName} Mock Test`, item: url },
-      ],
-    },
-  ];
-};
+import { EXAM_LANDING_PAGES } from "@/data/examLandingPages";
+// Shared with scripts/prerender.mjs, which writes this same JSON-LD into the
+// static HTML at build time.
+import { buildExamLandingJsonLd } from "@/lib/seo/structuredData";
 
 const FaqItem = ({ q, a, idx }: { q: string; a: string; idx: number }) => {
   const [open, setOpen] = useState(idx === 0);
@@ -104,7 +53,7 @@ const ExamLandingPage = () => {
         description={exam.metaDescription}
         path={`/mock-test/${exam.slug}`}
         keywords={exam.keywords}
-        jsonLd={buildJsonLd(exam)}
+        jsonLd={buildExamLandingJsonLd(exam)}
       />
       <Navbar />
 
@@ -234,7 +183,7 @@ const ExamLandingPage = () => {
       <section className="py-16 sm:py-20 px-5">
         <div className="container mx-auto max-w-4xl">
           <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.025em] mb-3 text-center">
-            {exam.examName} Syllabus 2026
+            {exam.examName} Syllabus {exam.cycle ?? "2026"}
           </h2>
           <p className="text-center text-[15px] text-muted-foreground mb-10 max-w-xl mx-auto">
             Every MockSetu {exam.examShort} mock test maps to the latest official syllabus below.
@@ -296,6 +245,41 @@ const ExamLandingPage = () => {
           </div>
         </div>
       </section>
+
+      {/* ── Cluster hub. This page is the URL the exam's topic cluster exists to
+              lift, so it links back out to every guide in that cluster. Without
+              this, the articles point here and nothing points back, which is a
+              hub in name only. ── */}
+      {exam.guides && exam.guides.length > 0 && (
+        <section className="pt-16 sm:pt-20 pb-4 px-5 bg-secondary/20">
+          <div className="container mx-auto max-w-5xl">
+            <h2 className="text-[26px] sm:text-[34px] font-black text-foreground tracking-[-0.025em] mb-3 text-center">
+              {exam.examShort} {exam.cycle ?? ""} Complete Guides
+            </h2>
+            <p className="text-center text-[15px] text-muted-foreground mb-10 max-w-xl mx-auto">
+              Everything from the exam pattern to normalisation, written properly and updated for the
+              current cycle.
+            </p>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {exam.guides.map((g) => (
+                <Link
+                  key={g.slug}
+                  to={`/blog/${g.slug}`}
+                  className="group rounded-2xl border border-border/60 bg-card p-5 hover:border-primary/40 hover:shadow-sm transition-all"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-[14.5px] font-bold text-foreground tracking-tight group-hover:text-primary transition-colors">
+                      {g.label}
+                    </span>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5 group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                  </div>
+                  <p className="mt-2 text-[13px] text-muted-foreground leading-[1.65]">{g.blurb}</p>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── Related exams cross-link ── */}
       <section className="py-16 px-5 bg-secondary/20">
