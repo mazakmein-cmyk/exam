@@ -356,8 +356,11 @@ const ExamIntro = () => {
                 let allQuestionRows: { id: string; section_id: string }[] = [];
                 const questionCounts = new Map<string, number>();
                 if (primarySecIds.length > 0) {
+                    // Student view: ids and section only, and it must not
+                    // depend on the base-table policy or this screen silently
+                    // renders zero questions and zero marks.
                     const { data: qsData } = await supabase
-                        .from("parsed_questions")
+                        .from("parsed_questions_student" as any)
                         .select("id, section_id")
                         .in("section_id", primarySecIds);
                     allQuestionRows = ((qsData || []) as any[]).map((q) => ({

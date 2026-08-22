@@ -82,6 +82,7 @@ type QuestionState = {
 };
 
 import { saveExamAttempt } from "@/services/examService";
+import { createProgressQueue, progressRow } from "@/services/examProgress";
 
 const ExamSimulator = () => {
   const { examId, sectionId } = useParams();
@@ -441,8 +442,11 @@ const ExamSimulator = () => {
           .order("sort_order", { ascending: true })
           .order("created_at", { ascending: true }),
         supabase.from("sections").select("*").eq("id", sectionId).single(),
+        // The student view, not the table: it has no correct_answer and no
+        // answer_hint. select("*") on the table delivered the whole answer key
+        // into the candidate's browser at exam start.
         supabase
-          .from("parsed_questions")
+          .from("parsed_questions_student" as any)
           .select("*")
           .eq("section_id", sectionId)
           .eq("is_excluded", false)
@@ -518,7 +522,8 @@ const ExamSimulator = () => {
         const fetchQuestionsFor = async (ids: string[]) => {
           if (ids.length === 0) return;
           const { data: restData, error: restError } = await supabase
-            .from("parsed_questions")
+            // Student view — see the note on the section fetch above.
+            .from("parsed_questions_student" as any)
             .select("*")
             .in("section_id", ids)
             .eq("is_excluded", false)
@@ -656,8 +661,11 @@ const ExamSimulator = () => {
                 .filter(Boolean) as string[];
               if (groupIds.length === 0) continue;
 
+              // Primary-language rows of a section the student is not sitting,
+              // so per-question marks config resolves. Ids only, and through
+              // the student view so it works without the base-table policy.
               const { data: primaryQuestions } = await supabase
-                .from("parsed_questions")
+                .from("parsed_questions_student" as any)
                 .select("id, question_group_id")
                 .eq("section_id", primarySection.id)
                 .in("question_group_id", groupIds);
@@ -855,6 +863,93 @@ const ExamSimulator = () => {
     }));
   };
 
+  // ── Saving answers while the exam runs ──────────────────────────────────
+  // Nothing was written until submit, so a closed tab or a dropped connection
+  // lost the whole sitting in silence. Rather than instrument every handler
+  // that touches questionStates — easy to miss one, and easy for the next one
+  // to forget — this watches the state and enqueues whatever changed. Every
+  // mutation path is covered by construction.
+  const progressQueueRef = useRef<ReturnType<typeof createProgressQueue> | null>(null);
+  const syncedStatesRef = useRef<Record<string, QuestionState>>({});
+  const attemptIdBySectionRef = useRef(attemptIdBySection);
+  const sectionByQuestionRef = useRef<Record<string, string>>({});
+
+  attemptIdBySectionRef.current = attemptIdBySection;
+  useEffect(() => {
+    const map: Record<string, string> = {};
+    Object.entries(questionsBySection).forEach(([sid, qs]) => {
+      (qs || []).forEach(q => { map[q.id] = sid; });
+    });
+    sectionByQuestionRef.current = map;
+  }, [questionsBySection]);
+
+  useEffect(() => {
+    // A creator preview has no attempt row, so there is nothing to save into.
+    if (isPreview) return;
+    const queue = createProgressQueue({
+      buildRow: (questionId) => {
+        const sectionId = sectionByQuestionRef.current[questionId];
+        const forAttempt = sectionId ? attemptIdBySectionRef.current[sectionId] : undefined;
+        if (!forAttempt) return null;
+        return progressRow(forAttempt, questionId, syncedStatesRef.current[questionId]);
+      },
+    });
+    progressQueueRef.current = queue;
+    return () => {
+      queue.stop();
+      progressQueueRef.current = null;
+    };
+  }, [isPreview]);
+
+  useEffect(() => {
+    const queue = progressQueueRef.current;
+    // Written before the diff so buildRow, which runs later and asynchronously,
+    // always reads the newest value rather than the one that triggered it.
+    const previous = syncedStatesRef.current;
+    syncedStatesRef.current = questionStates;
+    if (!queue) return;
+
+    // The initial seed marks every question untouched. Writing those rows would
+    // mean a row per question on every exam start, for no information — a
+    // question only becomes worth saving once the student has done something.
+    const pristine = (s: QuestionState) =>
+      s.status === "untouched" &&
+      (s.selectedAnswer === null || s.selectedAnswer === undefined) &&
+      !s.isMarkedForReview &&
+      !s.timeSpentSeconds;
+
+    Object.entries(questionStates).forEach(([id, state]) => {
+      const before = previous[id];
+      if (!before) {
+        if (!pristine(state)) queue.touch(id);
+        return;
+      }
+      if (
+        before.selectedAnswer !== state.selectedAnswer ||
+        before.isMarkedForReview !== state.isMarkedForReview ||
+        before.status !== state.status ||
+        before.timeSpentSeconds !== state.timeSpentSeconds
+      ) {
+        queue.touch(id);
+      }
+    });
+  }, [questionStates]);
+
+  // The last chance to write before the tab goes away. Neither event is
+  // guaranteed to run — a dead battery fires nothing — which is exactly why the
+  // debounced writes above carry the weight rather than this.
+  useEffect(() => {
+    const flush = () => { progressQueueRef.current?.flushNow(); };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, []);
+
   /** Mark the question being left as seen, so the palette stops calling it untouched. */
   const markCurrentViewed = () => {
     const currentQuestion = questions[currentQuestionIndex];
@@ -1026,6 +1121,14 @@ const ExamSimulator = () => {
       setShowSectionCompleteDialog(true);
       return;
     }
+
+    // Drain the in-exam writer before grading. Both write the same
+    // (attempt, question) rows, and the graded ones must land last. Draining is
+    // enough — submitExam works on a local copy of questionStates and never
+    // calls setQuestionStates, so nothing can enqueue while it runs. The queue
+    // is deliberately NOT stopped: a failed submit returns the student to the
+    // exam, and that is the last moment to switch the safety net off.
+    await progressQueueRef.current?.flushNow();
 
     // Calculate time for current question synchronously (state updates are async)
     const currentQuestion = questions[currentQuestionIndex];

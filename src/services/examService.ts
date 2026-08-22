@@ -29,12 +29,17 @@ export const saveExamAttempt = async ({
 
     // 1. Fetch correct answers to grade the exam
     const questionIds = questions.map((q) => q.id);
-    const { data: questionData, error: qError } = await supabase
+    // Tolerated, not required. Once the answer key is withheld from students
+    // (20260832000000) this comes back empty for them, and the server grader
+    // supplies the key instead — see step 4b. It is still attempted so that a
+    // database without that migration keeps grading exactly as it used to,
+    // which makes the two deploys safe in either order.
+    const { data: legacyKeyData } = await supabase
         .from("parsed_questions")
         .select("id, correct_answer, answer_type")
         .in("id", questionIds);
-
-    if (qError) throw qError;
+    let questionData: any[] | null = legacyKeyData as any[] | null;
+    const hasLocalKey = (questionData?.length ?? 0) > 0;
 
     // 2. Grade the responses
     let correctCount = 0;
@@ -91,6 +96,10 @@ export const saveExamAttempt = async ({
             is_correct: isCorrect,
             is_marked_for_review: state?.isMarkedForReview || false,
             time_spent_seconds: timeSpent,
+            // Carried through so a submitted row keeps the palette state the
+            // in-exam writer recorded. Without it, this upsert would blank the
+            // status the student's own progress had already saved.
+            status: state?.status ?? "untouched",
         };
     });
 
@@ -99,7 +108,14 @@ export const saveExamAttempt = async ({
     const avgTimePerQuestion = totalQuestions > 0 ? totalTimeOnQuestions / totalQuestions : 0;
     const score = correctCount; // Assuming 1 point per question for now
 
-    // 4. Create or Update Attempt
+    // 4. Make sure the attempt row exists — but do NOT stamp submitted_at here.
+    //
+    // The server grader below refuses to grade an attempt that is already
+    // submitted (that guard is what stops it being an answer oracle a student
+    // can probe one answer at a time). Stamping it first would therefore make
+    // every submission take the "already submitted" branch and never be graded.
+    // The scores are written once, by whichever path actually grades.
+    const attemptCreated = !finalAttemptId;
     if (!finalAttemptId) {
         const { data, error } = await supabase
             .from("attempts")
@@ -107,20 +123,91 @@ export const saveExamAttempt = async ({
                 user_id: userId,
                 section_id: sectionId,
                 started_at: new Date().toISOString(),
-                submitted_at: new Date().toISOString(),
                 time_spent_seconds: timeSpentSeconds,
-                score: score,
-                total_questions: totalQuestions,
-                accuracy_percentage: accuracyPercentage,
-                avg_time_per_question: avgTimePerQuestion,
             })
             .select()
             .single();
 
         if (error) throw error;
         finalAttemptId = data.id;
-    } else {
-        const { error } = await supabase
+    }
+
+    // 4b. Let the server grade and stamp the attempt.
+    //
+    // The browser has always graded, which is only possible because it holds
+    // the answer key — and the key is delivered to it at exam start. Moving the
+    // grading here is the step that lets the key stop being sent at all.
+    //
+    // It also makes `score` the server's to decide. The attempts UPDATE policy
+    // is USING (auth.uid() = user_id) with no restriction on WHICH columns, so
+    // while the client computes the score, a student can simply PATCH their own
+    // to full marks.
+    //
+    // All-or-nothing on purpose: if the function is not there yet, the whole
+    // original path below runs unchanged. No half-graded submissions.
+    let serverGraded = false;
+    try {
+        const { data: graded, error: gradeError } = await (supabase.rpc as any)(
+            "submit_exam_attempt",
+            {
+                p_attempt_id: finalAttemptId,
+                p_answers: responses.map(r => ({
+                    question_id: r.question_id,
+                    selected_answer: r.selected_answer,
+                    is_marked_for_review: r.is_marked_for_review,
+                    time_spent_seconds: r.time_spent_seconds,
+                    status: r.status,
+                })),
+                p_time_spent_seconds: timeSpentSeconds,
+            }
+        );
+        if (gradeError) {
+            // Not applied yet is the one case worth continuing past quietly.
+            if (!/does not exist|schema cache/i.test(gradeError.message || "")) throw gradeError;
+            console.warn(
+                "submit_exam_attempt missing — grading in the browser. " +
+                "Apply 20260831000000_submit_exam_attempt.sql.",
+                gradeError
+            );
+        } else if (graded) {
+            serverGraded = true;
+            // The server counted from the section, not from this payload, so
+            // trust its numbers over the ones computed above.
+            correctCount = Number((graded as any).score ?? correctCount);
+            totalQuestions = Number((graded as any).total_questions ?? totalQuestions);
+            // It also hands back the key it graded against, which is what lets
+            // the marks module keep doing partial credit without the browser
+            // ever holding the key before the paper is handed in.
+            const returned = ((graded as any).results ?? []) as any[];
+            if (returned.length > 0) {
+                questionData = returned.map(r => ({
+                    id: r.question_id,
+                    correct_answer: r.correct_answer,
+                    answer_type: r.answer_type,
+                }));
+            }
+        }
+    } finally {
+        // Nothing to clean up — the try exists only so a missing function can be
+        // told apart from a real failure, which is handled above. A genuine
+        // error propagates, deliberately: falling through to a second,
+        // differently-graded write is how one attempt ends up with two scores.
+    }
+
+    if (!serverGraded && !hasLocalKey) {
+        // Neither path can score this paper: the key is withheld from students
+        // (as it should be) and the server grader is not installed. Failing
+        // loudly beats writing a silent zero for a student who answered well.
+        throw new Error(
+            "Cannot grade this submission: apply migration " +
+            "20260831000000_submit_exam_attempt.sql."
+        );
+    }
+
+    // 4c. Only when the server did not grade: write what it would have written.
+    // Same values as before this change, from the same client-side grading.
+    if (!serverGraded) {
+        const { error: stampError } = await supabase
             .from("attempts")
             .update({
                 submitted_at: new Date().toISOString(),
@@ -131,33 +218,35 @@ export const saveExamAttempt = async ({
                 avg_time_per_question: avgTimePerQuestion,
             })
             .eq("id", finalAttemptId);
-
-        if (error) throw error;
+        if (stampError) throw stampError;
     }
 
-    // 5. Save responses (with correct attempt_id)
+    // 5. Save responses (with correct attempt_id).
+    // Skipped when the server graded: it already wrote every row, WITH the
+    // authoritative is_correct. Re-writing them here would overwrite the
+    // server's verdicts with the browser's.
     const responsesWithId = responses.map(r => ({ ...r, attempt_id: finalAttemptId }));
-
-    // First delete existing responses if any (retry logic) to avoid duplicates or use upsert?
-    // Simple insert might fail if unique violation? responses usually don't have unique constraint on (attempt_id, question_id) unless specified.
-    // Ideally we should upsert or delete-then-insert. Let's try upsert if unique constraint exists, or just insert if simple log.
-    // Checking previous code: it just used insert. Assuming new attempt or unique response tracking.
-    // Given we might be updating an attempt (re-submission?), we should probably delete old responses for this attempt first strictly speaking, but previous code didn't.
-    // Let's stick to simple insert. Wait, if `finalAttemptId` existed (else block), we are updating. We should probably clear old responses to be safe, or use upsert.
-    // Safest for now: upsert on (attempt_id, question_id) if constraint exists.
-    // I'll stick to insert for now as per original code pattern, but keep in mind duplicates.
-
-    // Actually, usually fetching for analytics joins distinct responses. 
-    // Let's rely on standard insert.
 
     // No space after the comma: PostgREST splits on_conflict on commas without
     // trimming, so 'attempt_id, question_id' names a column called " question_id"
     // and the upsert can never match the intended constraint.
-    const { error: matchError } = await supabase.from("responses").upsert(responsesWithId, { onConflict: 'attempt_id,question_id' }); // Adding optimistic conflict handling if constrained
-    // If no constraint, upsert works as insert if no conflict.
+    const { error: matchError } = serverGraded
+        ? { error: null }
+        : await supabase.from("responses").upsert(responsesWithId, { onConflict: 'attempt_id,question_id' });
 
     if (matchError) {
-        // Fallback to simple insert if upsert fails due to missing constraint index
+        // The upsert needs a unique index on responses(attempt_id, question_id).
+        // Until 20260829000000 is applied, Postgres rejects the ON CONFLICT
+        // target (42P10) and this fallback APPENDS — so a re-submitted section
+        // writes a second full set of answers and every row-counting reader
+        // (get_exam_analytics, ExamReview) double-counts it. Kept so an
+        // un-migrated database can still submit, but no longer silent: this is
+        // data corruption in slow motion, and it should be visible.
+        console.warn(
+            "responses upsert fell back to insert — duplicates will accumulate. " +
+            "Apply migration 20260829000000_responses_one_row_per_question.sql.",
+            matchError
+        );
         const { error: insertError } = await supabase.from("responses").insert(responsesWithId);
         if (insertError) throw insertError;
     }

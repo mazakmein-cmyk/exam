@@ -75,6 +75,24 @@ const readObjectAnswer = (o: any) =>
 /** True when a stored correct answer is actually present (0 and "" count). */
 const hasAnswerValue = (v: any) => v !== null && v !== undefined && v !== "";
 
+/**
+ * Which of two attempts on the same section is the one that counts.
+ *
+ * created_at, then id — the same key get_my_exam_ranks and ExamReview
+ * de-duplicate on, so all three surfaces pick the same survivor. Picking by
+ * submitted_at instead would diverge: the attempt row for every section is
+ * created when the sitting opens, but submitted_at is written per section by
+ * the browser as each one is handed in, so the two orders genuinely disagree
+ * (and submitted_at is on the student's clock, not the server's).
+ *
+ * Compared as raw ISO text rather than through Date. PostgREST returns a fixed
+ * canonical form with a constant offset, so string order is chronological order
+ * at full microsecond precision, while `new Date()` truncates to milliseconds
+ * and would turn a real gap into an arbitrary id tie-break.
+ */
+const laterAttempt = (a: any, b: any) =>
+  a.created_at > b.created_at || (a.created_at === b.created_at && a.id > b.id);
+
 export default function Analytics() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -158,18 +176,41 @@ export default function Analytics() {
         return;
       }
 
-      let query = supabase
-        .from("attempts")
-        .select(`
-          *,
-          section:sections(
-            name,
-            exam_id,
-            exam:exams(name)
-          )
-        `)
-        .not("submitted_at", "is", null)
-        .order("submitted_at", { ascending: false });
+      // PostgREST caps a single response at 1000 rows and does not say it
+      // truncated, so every read that can outgrow that is paged. Both branches
+      // use this. The sort always ends in id: paging over a non-total order
+      // silently duplicates some rows and skips others.
+      const PAGE = 1000;
+      const fetchAllPages = async (
+        run: (from: number, to: number) => any
+      ): Promise<any[]> => {
+        const rows: any[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await run(from, from + PAGE - 1);
+          if (error) throw error;
+          rows.push(...(data ?? []));
+          if (!data || data.length < PAGE) return rows;
+        }
+      };
+
+      // Built per page rather than once: a shared builder accumulates params
+      // across calls, so reusing one instance would stack range() headers.
+      const myAttemptsPage = (from: number, to: number) =>
+        supabase
+          .from("attempts")
+          .select(`
+            *,
+            section:sections(
+              name,
+              exam_id,
+              exam:exams(name)
+            )
+          `)
+          .not("submitted_at", "is", null)
+          .eq("user_id", user.id)
+          .order("submitted_at", { ascending: false })
+          .order("id")
+          .range(from, to);
 
       if (examId) {
         // Creator View: Get all attempts for this exam (by joining sections)
@@ -186,9 +227,10 @@ export default function Analytics() {
         const [
           { data: examData, error: examError },
           { data: allSections, error: sectionsError },
-          { data: sectionAttempts, error: attemptsError },
-          { data: questionsData, error: questionsError },
+          sectionAttempts,
+          questionsData,
           timingGroupRows,
+          { data: summaryRaw, error: summaryError },
         ] = await Promise.all([
           supabase.from("exams").select("name, user_id, primary_language").eq("id", examId).single(),
           supabase
@@ -199,42 +241,76 @@ export default function Analytics() {
             .eq("exam_id", examId)
             .order("sort_order", { ascending: true })
             .order("created_at", { ascending: true }),
-          supabase
-            .from("attempts")
-            .select(`
-              *,
-              section:sections!inner(
-                name,
-                time_minutes,
-                sort_order,
-                created_at,
-                exam:exams(name)
-              )
-            `)
-            .eq("section.exam_id", examId)
-            // nullsFirst: false is load-bearing, not cosmetic. Postgres sorts
-            // DESC as NULLS FIRST, and an attempt row is created at section
-            // start with submitted_at NULL — so every abandoned attempt sorts
-            // ahead of every completed one and, once the exam outgrows the
-            // 1000-row cap, progressively evicts the real data this whole
-            // dashboard is computed from.
-            .order("submitted_at", { ascending: false, nullsFirst: false }),
-          supabase
-            .from("parsed_questions")
-            .select(`
-              *,
-              section:sections!inner(id, name, exam_id, sort_order)
-            `)
-            // Match what ExamSimulator actually serves (it filters identically):
-            // counting excluded questions here inflates every attempt's
-            // denominator and silently deflates everyone's accuracy.
-            .eq("is_excluded", false)
-            .eq("section.exam_id", examId),
+          fetchAllPages((from, to) =>
+            supabase
+              .from("attempts")
+              .select(`
+                *,
+                section:sections!inner(
+                  name,
+                  time_minutes,
+                  sort_order,
+                  created_at,
+                  exam:exams(name)
+                )
+              `)
+              .eq("section.exam_id", examId)
+              // nullsFirst: false is load-bearing, not cosmetic. Postgres sorts
+              // DESC as NULLS FIRST, and an attempt row is created at section
+              // start with submitted_at NULL — so every abandoned attempt sorts
+              // ahead of every completed one.
+              .order("submitted_at", { ascending: false, nullsFirst: false })
+              .order("id")
+              .range(from, to)
+          ),
+          fetchAllPages((from, to) =>
+            supabase
+              .from("parsed_questions")
+              .select(`
+                *,
+                section:sections!inner(id, name, exam_id, sort_order)
+              `)
+              // Match what ExamSimulator actually serves (it filters identically):
+              // counting excluded questions here inflates every attempt's
+              // denominator and silently deflates everyone's accuracy.
+              .eq("is_excluded", false)
+              .eq("section.exam_id", examId)
+              // q_no first, then id as the tiebreaker paging needs. Ordering by
+              // id alone would be deterministic but random with respect to the
+              // paper, and the Section Snippet dialog numbers questions by their
+              // position in this array.
+              .order("q_no")
+              .order("id")
+              .range(from, to)
+          ),
           // Timing groups. [] on a database without the migration.
           fetchTimingGroups(examId),
+          // Scoring and per-question counts, aggregated in the database. The
+          // browser used to download every answer of every student to do this
+          // and silently lost everything past the 1000-row cap, which rendered
+          // real students at 0%. Payload is now a few numbers per attempt and
+          // per question regardless of how many students sat the paper.
+          (supabase.rpc as any)("get_exam_analytics", { p_exam_id: examId }),
         ]);
 
         if (examError) throw examError;
+        // Migrations here are applied by hand, so the client can be live before
+        // the function exists. Say which file to paste rather than throwing —
+        // throwing blanks the whole dashboard, which reads exactly like an exam
+        // nobody has attempted. Every other hand-migrated feature in this
+        // codebase degrades the same way.
+        if (summaryError) {
+          if (/does not exist|schema cache/i.test(summaryError.message || "")) {
+            toast({
+              title: "Database update needed",
+              description: "Run migration 20260828000000_exam_analytics_summary.sql, then reload.",
+              variant: "destructive",
+            });
+          } else {
+            throw summaryError;
+          }
+        }
+        const summary = (summaryRaw as any) || { attempts: [], questions: [] };
         if (isStale()) return;
         setExamName(examData.name);
         const examCreatorId = examData.user_id; // Store creator ID to filter out their attempts
@@ -291,102 +367,25 @@ export default function Analytics() {
           setLastSectionIds(localLastIds);
         }
 
-        if (attemptsError) throw attemptsError;
-        if (questionsError) throw questionsError;
-
-        // Filter out the creator's own attempts from analytics
+        // Filter out the creator's own attempts from analytics. The summary
+        // excludes them too, so an unmatched id here simply scores zero.
         const filteredAttempts = (sectionAttempts || []).filter(
           (attempt: any) => attempt.user_id !== examCreatorId
         );
-        // NOTE: We do NOT setAttempts here yet. We need to correct them first.
-
-        // 2. Fetch responses for all attempts. Chunked to stay within Supabase URL limits,
-        // and fired in parallel — chunks are independent.
         const attemptIds = filteredAttempts.map((a: any) => a.id);
-        let responsesData: any[] = [];
 
-        if (attemptIds.length > 0) {
-          const CHUNK_SIZE = 200;
-          const chunks: string[][] = [];
-          for (let i = 0; i < attemptIds.length; i += CHUNK_SIZE) {
-            chunks.push(attemptIds.slice(i, i + CHUNK_SIZE));
-          }
-          const chunkResults = await Promise.all(
-            chunks.map(chunk =>
-              supabase
-                .from("responses")
-                .select("question_id, is_correct, time_spent_seconds, selected_answer, attempt_id, is_marked_for_review")
-                .in("attempt_id", chunk)
-            )
-          );
-          for (const { data: respData, error: responsesError } of chunkResults) {
-            if (responsesError) throw responsesError;
-            if (respData) responsesData.push(...respData);
-          }
-        }
+        // Scores come from get_exam_analytics: correct counts, time on task and
+        // the section's served-question count, all counted where the rows live.
+        const scoreByAttempt = new Map<string, any>();
+        (summary.attempts || []).forEach((a: any) => scoreByAttempt.set(a.attempt_id, a));
 
-        // Helper for normalization
-        const normalize = (val: any) => String(val).trim().toLowerCase();
-
-        // Pre-build Maps for O(1) lookups (eliminates O(N²) .find()/.filter() inside loops)
-        const responsesByAttempt = new Map<string, typeof responsesData>();
-        responsesData.forEach(r => {
-          if (!responsesByAttempt.has(r.attempt_id)) responsesByAttempt.set(r.attempt_id, []);
-          responsesByAttempt.get(r.attempt_id)!.push(r);
-        });
-
-        const questionsById = new Map<string, any>();
-        questionsData?.forEach((q: any) => questionsById.set(q.id, q));
-
-        // Pre-compute question count per section (avoids .filter() inside every attempt loop)
-        const questionCountBySection = new Map<string, number>();
-        questionsData?.forEach((q: any) => {
-          questionCountBySection.set(q.section.id, (questionCountBySection.get(q.section.id) || 0) + 1);
-        });
-
-        // 5. Compute attempt scores from DB-stored is_correct (set by examService on submit)
-        // Fallback to re-grading only for legacy responses where is_correct is null
         const correctedAttempts = filteredAttempts.map((attempt: any) => {
-          const attemptResponses = responsesByAttempt.get(attempt.id) || [];
-          let correctCount = 0;
-          let totalTime = 0;
-
-          attemptResponses.forEach(r => {
-            totalTime += (r.time_spent_seconds || 0);
-
-            if (r.is_correct !== null && r.is_correct !== undefined) {
-              // Trust the DB value (set by examService.ts on submit)
-              if (r.is_correct) correctCount++;
-            } else {
-              // Fallback: re-grade only for legacy responses with null is_correct
-              const question = questionsById.get(r.question_id);
-              if (question && hasAnswerValue(question.correct_answer)) {
-                const selected = r.selected_answer;
-                const correct = question.correct_answer;
-                let isCorrect = false;
-
-                if (selected !== null && selected !== undefined) {
-                  if (Array.isArray(correct)) {
-                    const selectedArray = Array.isArray(selected) ? selected : [selected];
-                    if (selectedArray.length === correct.length) {
-                      const sortedSelected = [...selectedArray].map(normalize).sort();
-                      const sortedCorrect = [...correct].map(normalize).sort();
-                      isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
-                    }
-                  } else if (typeof correct === 'object' && correct !== null) {
-                    const val = readObjectAnswer(correct);
-                    isCorrect = hasAnswerValue(val) && normalize(val) === normalize(selected);
-                  } else {
-                    isCorrect = normalize(selected) === normalize(correct);
-                  }
-                }
-
-                if (isCorrect) correctCount++;
-              }
-            }
-          });
-
-          const totalQuestions = questionCountBySection.get(attempt.section_id) || attempt.total_questions || 1;
+          const agg = scoreByAttempt.get(attempt.id);
+          const correctCount = agg?.correct_count ?? 0;
+          const totalTime = agg?.total_time_seconds ?? 0;
+          // Same fallback chain as before: served-question count, then the
+          // count frozen on the attempt, then 1 so nothing divides by zero.
+          const totalQuestions = (agg?.section_question_count || 0) || attempt.total_questions || 1;
           const accuracy = totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
 
           return {
@@ -398,10 +397,6 @@ export default function Analytics() {
             total_time_spent: totalTime
           };
         });
-
-        // Build attempt lookup Map for O(1) access in question stats aggregation
-        const correctedAttemptsById = new Map<string, any>();
-        correctedAttempts.forEach((a: any) => correctedAttemptsById.set(a.id, a));
 
         if (isStale()) return;
         setAttempts(correctedAttempts);
@@ -438,41 +433,57 @@ export default function Analytics() {
               return { hasMarks, value: hasMarks ? Number(a.marks_score) : 0 };
             };
 
+            // Latest attempt per section wins, same rule as the student History
+            // and get_my_exam_ranks. Summing repeats let a student who re-sat one
+            // section stack scores past the paper maximum and top this board over
+            // someone who did a clean run.
+            //
+            // Submitted beats abandoned, always, and that ordering comes first.
+            // Unlike the student query this one deliberately keeps unsubmitted
+            // rows, and get_exam_analytics scores them 0 out of the full section
+            // — so letting a later abandoned row supersede a finished one would
+            // delete a section the student actually completed. Merely having the
+            // exam open in another tab would demote their own earlier run.
+            const lbBeats = (a: any, b: any) => {
+              const aDone = !!a.submitted_at;
+              const bDone = !!b.submitted_at;
+              if (aDone !== bDone) return aDone;
+              return laterAttempt(a, b);
+            };
+            const closeLbSitting = (uid: string, atts: any[]): LbSession => {
+              const latestBySection = new Map<string, any>();
+              atts.forEach(a => {
+                const prev = latestBySection.get(a.section_id);
+                if (!prev || lbBeats(a, prev)) latestBySection.set(a.section_id, a);
+              });
+              const counted = Array.from(latestBySection.values());
+              return {
+                userId: uid,
+                totalScore: counted.reduce((s, a) => s + (a.score || 0), 0),
+                totalQuestions: counted.reduce((s, a) => s + (a.total_questions || 0), 0),
+                totalMarks: counted.reduce((s, a) => s + marksOf(a).value, 0),
+                sessionHasMarks: counted.every(a => marksOf(a).hasMarks),
+              };
+            };
+
             Object.entries(byUser).forEach(([uid, userAtts]) => {
-              let cur: LbSession | null = null;
+              let cur: any[] | null = null;
               const orphans: any[] = [];
 
               userAtts.forEach(att => {
-                const m = marksOf(att);
                 if (localFirstIds.has(att.section_id)) {
-                  if (cur) sessions.push(cur);
-                  cur = {
-                    userId: uid,
-                    totalScore: att.score || 0,
-                    totalQuestions: att.total_questions || 0,
-                    totalMarks: m.value,
-                    sessionHasMarks: m.hasMarks,
-                  };
+                  if (cur) sessions.push(closeLbSitting(uid, cur));
+                  cur = [att];
                 } else if (cur) {
-                  cur.totalScore += att.score || 0;
-                  cur.totalQuestions += att.total_questions || 0;
-                  cur.totalMarks += m.value;
-                  if (!m.hasMarks) cur.sessionHasMarks = false;
+                  cur.push(att);
                 } else {
                   orphans.push(att);
                 }
               });
-              if (cur) sessions.push(cur);
+              if (cur) sessions.push(closeLbSitting(uid, cur));
 
               if (orphans.length > 0) {
-                const orphanMarks = orphans.map(marksOf);
-                sessions.push({
-                  userId: uid,
-                  totalScore: orphans.reduce((s, a) => s + (a.score || 0), 0),
-                  totalQuestions: orphans.reduce((s, a) => s + (a.total_questions || 0), 0),
-                  totalMarks: orphanMarks.reduce((s, m) => s + m.value, 0),
-                  sessionHasMarks: orphanMarks.every(m => m.hasMarks),
-                });
+                sessions.push(closeLbSitting(uid, orphans));
               }
             });
 
@@ -540,25 +551,32 @@ export default function Analytics() {
         // --- End Leaderboard ---
 
         if (attemptIds.length > 0) {
-          // ... Question stats calculation ...
+          // Per-question counts also come from get_exam_analytics, which counts
+          // only responses on SUBMITTED attempts — an abandoned attempt must not
+          // tell a creator a question was skipped. The question row supplies the
+          // content (text, options, images) the detail dialogs render; the
+          // summary supplies the numbers.
+          const statByQuestion = new Map<string, any>();
+          (summary.questions || []).forEach((q: any) => statByQuestion.set(q.question_id, q));
 
-          // 5. Calculate per-question stats
-          const statsMap = new Map<string, QuestionStats>();
+          const finalStats: QuestionStats[] = (questionsData || []).map((q: any) => {
+            const agg = statByQuestion.get(q.id);
+            const totalAttempts = agg?.total_attempts ?? 0;
+            const correctCount = agg?.correct_count ?? 0;
+            const totalTime = agg?.total_time_seconds ?? 0;
 
-          // Initialize stats for all questions
-          questionsData?.forEach((q: any) => {
-            statsMap.set(q.id, {
+            return {
               id: q.id,
               q_no: q.q_no,
               text: q.text,
               sectionName: q.section.name,
               sectionSortOrder: q.section.sort_order,
-              totalAttempts: 0,
-              correctCount: 0,
-              wrongCount: 0,
-              unansweredCount: 0,
-              accuracy: 0,
-              avgTime: 0,
+              totalAttempts,
+              correctCount,
+              wrongCount: agg?.wrong_count ?? 0,
+              unansweredCount: agg?.unanswered_count ?? 0,
+              accuracy: totalAttempts > 0 ? (correctCount / totalAttempts) * 100 : 0,
+              avgTime: totalAttempts > 0 ? totalTime / totalAttempts : 0,
               correctAnswer: q.correct_answer,
               answerType: q.answer_type,
               options: q.options,
@@ -566,80 +584,17 @@ export default function Analytics() {
               imageUrl: q.image_url,
               imageUrls: q.image_urls,
               optionImageUrls: Array.isArray(q.option_image_urls) ? q.option_image_urls : null,
-              reviewedCount: 0,
-              commonWrongAnswers: {}
-            });
+              reviewedCount: agg?.reviewed_count ?? 0,
+              // The full tally stays in the database; only the winning label is
+              // shipped, already capped at 120 chars there.
+              commonWrongAnswers: {},
+              mostCommonWrong: agg?.most_common_wrong ?? null,
+            };
           });
 
-          const normalize = (val: any) => String(val).trim().toLowerCase();
-
-          // Aggregate responses
-          responsesData?.forEach((r: any) => {
-            const stat = statsMap.get(r.question_id);
-            if (stat) {
-              // Only count stats for submitted attempts
-              const attempt = correctedAttemptsById.get(r.attempt_id);
-              if (!attempt || !attempt.submitted_at) return;
-
-              stat.totalAttempts++;
-              stat.avgTime += r.time_spent_seconds || 0;
-              if (r.is_marked_for_review) stat.reviewedCount++;
-
-              // Trust is_correct from DB (set by examService on submit)
-              // Only re-grade for legacy responses where is_correct is null
-              let isCorrect = false;
-
-              if (r.is_correct !== null && r.is_correct !== undefined) {
-                isCorrect = r.is_correct === true;
-              } else if (hasAnswerValue(stat.correctAnswer)) {
-                // Fallback: re-grade only for null is_correct (legacy data)
-                const selected = r.selected_answer;
-                const correct = stat.correctAnswer;
-
-                if (selected !== null && selected !== undefined) {
-                  if (Array.isArray(correct)) {
-                    const selectedArray = Array.isArray(selected) ? selected : [selected];
-                    if (selectedArray.length === correct.length) {
-                      const sortedSelected = [...selectedArray].map(normalize).sort();
-                      const sortedCorrect = [...correct].map(normalize).sort();
-                      isCorrect = sortedSelected.every((val, index) => val === sortedCorrect[index]);
-                    }
-                  } else if (typeof correct === 'object' && correct !== null) {
-                    const val = readObjectAnswer(correct);
-                    isCorrect = hasAnswerValue(val) && normalize(val) === normalize(selected);
-                  } else {
-                    isCorrect = normalize(selected) === normalize(correct);
-                  }
-                }
-              }
-
-              if (isCorrect) {
-                stat.correctCount++;
-              } else if (r.selected_answer === null) {
-                stat.unansweredCount++;
-              } else {
-                stat.wrongCount++;
-                // selected_answer is client-supplied JSONB and the responses
-                // INSERT policy only checks attempt ownership — it never bounds
-                // shape or size. Cap the key before it becomes an object
-                // property and gets rendered into the misconceptions panel.
-                const ansKey = (Array.isArray(r.selected_answer)
-                  ? r.selected_answer.join(",")
-                  : String(r.selected_answer)
-                ).slice(0, 120);
-                stat.commonWrongAnswers[ansKey] = (stat.commonWrongAnswers[ansKey] || 0) + 1;
-              }
-            }
-          });
-
-          // Finalize averages
-          const finalStats: QuestionStats[] = Array.from(statsMap.values()).map(stat => ({
-            ...stat,
-            accuracy: stat.totalAttempts > 0 ? (stat.correctCount / stat.totalAttempts) * 100 : 0,
-            avgTime: stat.totalAttempts > 0 ? stat.avgTime / stat.totalAttempts : 0,
-            mostCommonWrong: Object.entries(stat.commonWrongAnswers).sort((a, b) => b[1] - a[1])[0]?.[0] || null
-          }));
-
+          // The leaderboard block above swallows its own errors, so control can
+          // reach here without passing that block's staleness check.
+          if (isStale()) return;
           setQuestionStats(finalStats);
         } else {
           setQuestionStats([]);
@@ -647,8 +602,11 @@ export default function Analytics() {
 
       } else {
         // Student View: Get only MY attempts
-        const { data, error } = await query.eq("user_id", user.id);
-        if (error) throw error;
+        // Paged: one row per submitted SECTION, not per exam, so a daily user
+        // of multi-section mocks crosses 1000 within months. Truncation here is
+        // silent and sorts newest-first, so it quietly drops the oldest
+        // sittings out of History and out of the all-time stat tiles.
+        const data = await fetchAllPages(myAttemptsPage);
         setAttempts(data as any);
 
         // Compute ranks for each exam the student has attempted
@@ -666,30 +624,34 @@ export default function Analytics() {
             const rankMap: Record<string, { rank: number; total: number }> = {};
             const firstSectionsMap: Record<string, Set<string>> = {};
 
-            // Chunked: every id is serialized into the query string, and an
-            // active aspirant accumulates enough exams (and sections, doubled
-            // by bilingual papers) to blow past the URL length ceiling — at
-            // which point the request 414s and every rank badge disappears.
+            // Two separate ceilings, and both bite. Chunking the ids keeps the
+            // query string under the URL length limit (a 414 would make every
+            // rank badge vanish); paging each chunk keeps its RESPONSE under the
+            // 1000-row cap. Without the paging, 100 exams x 10 sections — an
+            // ordinary bilingual paper — silently loses rows, and losing a
+            // per-language FIRST section makes every sitting on that exam start
+            // one section late and split into duplicate History rows.
             // Ordering is redone in JS because it can't hold across chunks.
             const ID_CHUNK = 100;
             const fetchInChunks = async (
               ids: string[],
-              run: (slice: string[]) => any
+              run: (slice: string[], from: number, to: number) => any
             ): Promise<any[]> => {
               const out: any[] = [];
               for (let i = 0; i < ids.length; i += ID_CHUNK) {
-                const { data: chunkData, error: chunkError } = await run(ids.slice(i, i + ID_CHUNK));
-                if (chunkError) throw chunkError;
-                if (chunkData) out.push(...chunkData);
+                const slice = ids.slice(i, i + ID_CHUNK);
+                out.push(...(await fetchAllPages((from, to) => run(slice, from, to))));
               }
               return out;
             };
 
-            const allExamSections = (await fetchInChunks(examIds, (slice) =>
+            const allExamSections = (await fetchInChunks(examIds, (slice, from, to) =>
               supabase
                 .from("sections")
                 .select("id, exam_id, sort_order, created_at, language")
                 .in("exam_id", slice)
+                .order("id")
+                .range(from, to)
             )).sort((a, b) =>
               (a.sort_order ?? 0) - (b.sort_order ?? 0) ||
               new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
@@ -703,17 +665,17 @@ export default function Analytics() {
                 sectionsByExam[s.exam_id].push(s);
               });
 
-              // Build firstSectionsMap (multi-language aware first sections per exam)
-              const allSectionIds: string[] = [];
+              // Build firstSectionsMap (multi-language aware first sections per
+              // exam). Only the History grouping needs this now — the ranking
+              // derives its own boundaries server-side by the same rule.
               Object.entries(sectionsByExam).forEach(([eid, sections]) => {
                 const langMap = new Map<string, any[]>();
                 sections.forEach(s => {
                   const l = s.language || 'en';
                   if (!langMap.has(l)) langMap.set(l, []);
                   langMap.get(l)!.push(s);
-                  allSectionIds.push(s.id);
                 });
-                
+
                 const firstIds = new Set<string>();
                 langMap.forEach(secs => {
                   firstIds.add(secs[0].id);
@@ -721,140 +683,38 @@ export default function Analytics() {
                 firstSectionsMap[eid] = firstIds;
               });
 
-              // Batch-fetch ALL attempts for ALL sections in ONE query.
-              // Submitted attempts only: an abandoned in-progress row is created
-              // the moment a student clicks Start, and counting it would both add
-              // a phantom session to the "/total" denominator and — since it has
-              // no marks_score — drop the whole exam off marks-ranking.
-              // marks_score / marks_max are cast because the marks-module columns
-              // aren't in the generated Supabase types yet (same workaround as
-              // ExamReview's rank query).
-              const allAttemptsBatch = (await fetchInChunks(allSectionIds, (slice) =>
-                supabase
-                  .from("attempts")
-                  .select("id, user_id, section_id, score, marks_score, marks_max, created_at")
-                  .in("section_id", slice)
-                  .not("submitted_at", "is", null)
-              )).sort((a, b) =>
-                new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-              );
-
-              if (allAttemptsBatch && allAttemptsBatch.length > 0) {
-                // Build a reverse lookup: section_id -> exam_id
-                const sectionToExam: Record<string, string> = {};
-                allExamSections.forEach(s => { sectionToExam[s.id] = s.exam_id; });
-
-                // Group attempts by exam_id
-                const attemptsByExam: Record<string, typeof allAttemptsBatch> = {};
-                allAttemptsBatch.forEach(a => {
-                  const eid = sectionToExam[a.section_id];
-                  if (!eid) return;
-                  if (!attemptsByExam[eid]) attemptsByExam[eid] = [];
-                  attemptsByExam[eid].push(a);
-                });
-
-                // Process each exam's ranking (same logic as before, now without DB calls)
-                for (const eid of examIds) {
-                  const examAttempts = attemptsByExam[eid];
-                  if (!examAttempts || examAttempts.length === 0) continue;
-
-                  const firstSectionGroupIds = firstSectionsMap[eid];
-                  if (!firstSectionGroupIds || firstSectionGroupIds.size === 0) continue;
-
-                  // Group by user
-                  const byUser: Record<string, any[]> = {};
-                  examAttempts.forEach(a => {
-                    if (!byUser[a.user_id]) byUser[a.user_id] = [];
-                    byUser[a.user_id].push(a);
-                  });
-
-                  // Build sessions. Track BOTH totalScore (correct count) and
-                  // totalMarks (marks_score sum). sessionHasMarks is true only
-                  // if every attempt in the session carries a marks_score —
-                  // otherwise the marks sum is an undercount and we must fall
-                  // back to score-based ranking for this session.
-                  type RankSession = {
-                    attemptIds: string[];
-                    totalScore: number;
-                    totalMarks: number;
-                    sessionHasMarks: boolean;
-                  };
-                  const sessions: RankSession[] = [];
-
-                  Object.values(byUser).forEach(userAtts => {
-                    userAtts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-                    let cur: RankSession | null = null;
-                    const orphanAttempts: any[] = [];
-
-                    const marksOf = (a: any) => {
-                      const hasMarks = a.marks_score !== null && a.marks_score !== undefined;
-                      return { hasMarks, value: hasMarks ? Number(a.marks_score) : 0 };
-                    };
-
-                    userAtts.forEach(att => {
-                      const m = marksOf(att);
-                      if (firstSectionGroupIds.has(att.section_id)) {
-                        if (cur) sessions.push(cur);
-                        cur = {
-                          attemptIds: [att.id],
-                          totalScore: att.score || 0,
-                          totalMarks: m.value,
-                          sessionHasMarks: m.hasMarks,
-                        };
-                      } else if (cur) {
-                        cur.attemptIds.push(att.id);
-                        cur.totalScore += (att.score || 0);
-                        cur.totalMarks += m.value;
-                        if (!m.hasMarks) cur.sessionHasMarks = false;
-                      } else {
-                        orphanAttempts.push(att);
-                      }
-                    });
-                    if (cur) sessions.push(cur);
-
-                    // Group orphan attempts into their own session so they still get ranked
-                    if (orphanAttempts.length > 0) {
-                      const orphanMarks = orphanAttempts.map(marksOf);
-                      sessions.push({
-                        attemptIds: orphanAttempts.map(a => a.id),
-                        totalScore: orphanAttempts.reduce((sum, a) => sum + (a.score || 0), 0),
-                        totalMarks: orphanMarks.reduce((sum, m) => sum + m.value, 0),
-                        sessionHasMarks: orphanMarks.every(m => m.hasMarks),
-                      });
-                    }
-                  });
-
-                  // Rank by marks when every session on this exam carries marks;
-                  // otherwise fall back to raw correct-count. Matches ExamReview
-                  // so a student sees the same rank on both pages.
-                  const rankByMarks = sessions.length > 0 && sessions.every(s => s.sessionHasMarks);
-                  const rankValueOf = (s: RankSession) => rankByMarks ? s.totalMarks : s.totalScore;
-
-                  sessions.sort((a, b) => rankValueOf(b) - rankValueOf(a));
-                  sessions.forEach((session, index) => {
-                    if (index === 0) {
-                      (session as any).rank = 1;
-                    } else {
-                      (session as any).rank = rankValueOf(session) === rankValueOf(sessions[index - 1])
-                        ? (sessions[index - 1] as any).rank
-                        : index + 1;
-                    }
-                  });
-
-                  const totalSessions = sessions.length;
-
-                  // Map each attemptId to its rank
-                  sessions.forEach((s: any) => {
-                    s.attemptIds.forEach((aid: string) => {
-                      rankMap[aid] = { rank: s.rank, total: totalSessions };
-                    });
-                  });
-                }
-              }
             }
 
-            setExamRanks(rankMap);
+            // Commit the grouping before ranking is attempted. The History list
+            // needs firstSectionsMap to show one row per sitting; ranks are a
+            // badge on top. Letting a rank failure skip this setter shattered
+            // the whole list into one row per section — which is exactly what a
+            // client deployed ahead of this migration would have done to every
+            // student at once.
             setFirstSectionsByExamId(firstSectionsMap);
+
+            // Ranking runs in the database, not here. RLS only ever showed this
+            // client its OWN attempts, so ranking locally compared a student
+            // against their own retakes and printed it as a cohort placement.
+            // get_my_exam_ranks sees every student's sittings with definer
+            // rights and returns only this caller's rows — the rank and the size
+            // of the field, never anyone else's score.
+            //
+            // Not gated on the sections query above: that read is RLS-filtered
+            // to published exams, while the RPC reads with definer rights, so
+            // gating it would drop the ranks of a student whose exams have all
+            // been unpublished even though the server would still return them.
+            const { data: rankRows, error: rankRowsError } = await (supabase.rpc as any)(
+              "get_my_exam_ranks",
+              { p_exam_ids: examIds }
+            );
+            if (rankRowsError) throw rankRowsError;
+
+            (rankRows as any[] | null)?.forEach(r => {
+              rankMap[r.attempt_id] = { rank: r.rank, total: r.total };
+            });
+
+            setExamRanks(rankMap);
 
           }
         } catch (rankErr) {
@@ -916,69 +776,78 @@ export default function Analytics() {
       byExam[eid].push(att);
     });
 
+    // Latest attempt per section wins. Re-answering one section has to REPLACE
+    // that section's score, not stack on top of it — otherwise a student who
+    // redoes section 2 of a 3-section paper gets a row reading "4 sections,
+    // 62/125", a total above what the paper is out of, and a rank badge that
+    // disagrees with it because ExamReview and get_my_exam_ranks both already
+    // de-duplicate. See laterAttempt for why the key is created_at.
+    const countedAttempts = (atts: any[]) => {
+      const latestBySection = new Map<string, any>();
+      atts.forEach(a => {
+        const prev = latestBySection.get(a.section_id);
+        if (!prev || laterAttempt(a, prev)) latestBySection.set(a.section_id, a);
+      });
+      // Map iteration is first-seen order, so sections stay in sat order.
+      return Array.from(latestBySection.values());
+    };
+
+    // Row ORDER is a different question from which attempt counts: a sitting
+    // belongs where it finished, so this stays on submitted_at. Retargeting it
+    // to created_at would silently reorder every row in the list.
+    const finishTimeOf = (a: any) => new Date(a.submitted_at || a.created_at).getTime() || 0;
+
+    // The display numbers can only be derived once a sitting is closed, because
+    // until then we do not know which attempt is the latest for each section.
+    const closeSitting = (atts: any[]) => {
+      const counted = countedAttempts(atts);
+      const marksOf = (a: any) => {
+        const has = (a as any).marks_score !== null && (a as any).marks_score !== undefined;
+        return { has, value: has ? Number((a as any).marks_score) : 0 };
+      };
+      const first = atts[0];
+      return {
+        examName: first.section.exam.name || 'Unknown Exam',
+        date: new Date(first.submitted_at).toLocaleDateString(),
+        sections: counted.map(a => a.section.name || 'Unknown Section'),
+        totalScore: counted.reduce((s, a) => s + (a.score || 0), 0),
+        totalQuestions: counted.reduce((s, a) => s + (a.total_questions || 0), 0),
+        totalTime: counted.reduce(
+          (s, a) => s + Math.round((a.avg_time_per_question || 0) * (a.total_questions || 0)),
+          0
+        ),
+        firstAttemptId: first.id,
+        // ALL ids, superseded ones included, so the rank resolves from whichever
+        // attempt the server keyed it to.
+        allAttemptIds: atts.map(a => a.id),
+        totalMarks: counted.reduce((s, a) => s + marksOf(a).value, 0),
+        sessionHasMarks: counted.every(a => marksOf(a).has),
+        // A sitting sorts by when it finished, i.e. its latest section.
+        sortTs: atts.reduce((m, a) => Math.max(m, finishTimeOf(a)), 0),
+      };
+    };
+
     Object.entries(byExam).forEach(([eid, examAtts]) => {
       const firstSectionGroupIds = firstSectionsByExamId[eid];
-      let cur: any = null;
+      let cur: any[] | null = null;
       const orphans: any[] = [];
 
       examAtts.forEach(att => {
-        const hasMarks = (att as any).marks_score !== null && (att as any).marks_score !== undefined;
-        const marksValue = hasMarks ? Number((att as any).marks_score) : 0;
-
         if (firstSectionGroupIds && firstSectionGroupIds.has(att.section_id)) {
-          // Start a new session
-          if (cur) sessionsList.push(cur);
-          cur = {
-            examName: att.section.exam.name || 'Unknown Exam',
-            date: new Date(att.submitted_at).toLocaleDateString(),
-            sections: [att.section.name || 'Unknown Section'],
-            totalScore: att.score || 0,
-            totalQuestions: att.total_questions || 0,
-            totalTime: Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0)),
-            firstAttemptId: att.id,
-            allAttemptIds: [att.id],
-            totalMarks: marksValue,
-            sessionHasMarks: hasMarks,
-            sortTs: new Date(att.submitted_at || att.created_at).getTime() || 0,
-          };
+          // Start a new sitting
+          if (cur) sessionsList.push(closeSitting(cur));
+          cur = [att];
         } else if (cur) {
-          // Continue current session
-          cur.sections.push(att.section.name || 'Unknown Section');
-          cur.totalScore += att.score || 0;
-          cur.totalQuestions += att.total_questions || 0;
-          cur.totalTime += Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0));
-          cur.allAttemptIds.push(att.id);
-          cur.totalMarks += marksValue;
-          if (!hasMarks) cur.sessionHasMarks = false;
-          // A session sorts by when it finished, i.e. its latest section.
-          cur.sortTs = Math.max(
-            cur.sortTs || 0,
-            new Date(att.submitted_at || att.created_at).getTime() || 0
-          );
+          cur.push(att);
         } else {
-          // Orphan: no first section seen yet — treat as its own session
+          // Orphan: no first section seen yet — treat as its own sitting
           orphans.push(att);
         }
       });
-      if (cur) sessionsList.push(cur);
+      if (cur) sessionsList.push(closeSitting(cur));
 
-      // Each orphan attempt → individual session row
-      orphans.forEach(att => {
-        const hasMarks = (att as any).marks_score !== null && (att as any).marks_score !== undefined;
-        sessionsList.push({
-          examName: att.section.exam.name || 'Unknown Exam',
-          date: new Date(att.submitted_at).toLocaleDateString(),
-          sections: [att.section.name || 'Unknown Section'],
-          totalScore: att.score || 0,
-          totalQuestions: att.total_questions || 0,
-          totalTime: Math.round((att.avg_time_per_question || 0) * (att.total_questions || 0)),
-          firstAttemptId: att.id,
-          allAttemptIds: [att.id],
-          totalMarks: hasMarks ? Number((att as any).marks_score) : 0,
-          sessionHasMarks: hasMarks,
-          sortTs: new Date(att.submitted_at || att.created_at).getTime() || 0,
-        });
-      });
+      // Each orphan attempt → individual sitting row
+      orphans.forEach(att => sessionsList.push(closeSitting([att])));
     });
 
     // Sort most recent first, on the real timestamp — never on `date`.

@@ -138,13 +138,24 @@ export default function ExamReview() {
       if (sectionsError) throw sectionsError;
       setSections(sections);
 
-      // 3. Fetch ALL attempts for these sections by this user
+      // 3. Fetch ALL attempts for these sections by this user.
+      // Submitted only, so the sitting this page assembles is composed by the
+      // same rule get_my_exam_ranks uses. An abandoned first-section attempt
+      // otherwise starts a new sitting here but not on the server, and the rank
+      // badge ends up describing a different set of attempts than the score
+      // printed beside it.
       const { data: allAttempts, error: allAttemptsError } = await supabase
         .from("attempts")
         .select("*")
         .in("section_id", sections.map(s => s.id))
         .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+        .not("submitted_at", "is", null)
+        // created_at alone is not a total order, and this list decides both the
+        // sitting boundaries and which attempt represents each section. The id
+        // tiebreak makes it exactly the RPC's `created_at DESC, id DESC` here,
+        // and its `created_at ASC, id ASC` once reversed below.
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false });
 
       if (allAttemptsError) throw allAttemptsError;
 
@@ -214,20 +225,44 @@ export default function ExamReview() {
       const selectedAttemptIds = selectedAttempts.map(a => a.id);
 
       // 5. Fetch Responses for ALL selected attempts
+      // The question comes from the student view (no answer key), and the key
+      // arrives separately from get_attempt_answer_key, which only answers for
+      // a SUBMITTED attempt that is the caller's own or on an exam they own.
+      // Reviewing is the one place a student is meant to see the answers.
       const { data: responsesData, error: responsesError } = await supabase
         .from("responses")
         .select(`
           *,
-          question:parsed_questions(*)
+          question:parsed_questions_student(*)
         `)
         .in("attempt_id", selectedAttemptIds);
 
       if (responsesError) throw responsesError;
 
+      const { data: keyRows, error: keyError } = await (supabase.rpc as any)(
+        "get_attempt_answer_key",
+        { p_attempt_id: attemptId }
+      );
+      if (keyError) throw keyError;
+      const answerKey = new Map<string, any>(
+        ((keyRows ?? []) as any[]).map(r => [r.question_id, r.correct_answer])
+      );
+
       // Sort responses: First by section order, then by question number
       const sectionOrder = new Map(sections.map((s, index) => [s.id, index]));
 
-      const sortedResponses = (responsesData as any).sort((a: any, b: any) => {
+      // A response whose question did not come back would previously crash the
+      // whole page here rather than degrade — the sort dereferenced it blindly.
+      const withQuestion = ((responsesData ?? []) as any[])
+        .filter((r: any) => r.question)
+        .map((r: any) => ({
+          ...r,
+          // Fold the key back onto the question so every renderer below reads
+          // it from the same place it always did.
+          question: { ...r.question, correct_answer: answerKey.get(r.question_id) ?? null },
+        }));
+
+      const sortedResponses = withQuestion.sort((a: any, b: any) => {
         const sectionA = sectionOrder.get(a.question.section_id) ?? 999;
         const sectionB = sectionOrder.get(b.question.section_id) ?? 999;
 
@@ -333,134 +368,25 @@ export default function ExamReview() {
 
       // 7. Compute Rank across ALL users for this exam
       try {
-        const sectionIds = sections.map((s: any) => s.id);
+        // Ranking runs in the database. RLS only ever showed this client its
+        // OWN attempts, so ranking locally compared the student against their
+        // own retakes and printed it as a cohort placement. get_my_exam_ranks
+        // sees every student's sittings with definer rights and returns only
+        // this caller's rows, so Analytics and this page now agree by
+        // construction rather than by two copies of the same algorithm.
+        // p_user_id is honoured only for the exam's owner, so a creator
+        // reviewing a student's attempt still sees that student's placement —
+        // which this page has always shown — while a student passing someone
+        // else's id just gets their own rows back.
+        const { data: rankRows, error: rankError } = await (supabase.rpc as any)(
+          "get_my_exam_ranks",
+          { p_exam_ids: [examId], p_user_id: userId }
+        );
+        if (rankError) throw rankError;
 
-        // Fetch all attempts for this exam (all users).
-        // Submitted only, matching Analytics: an abandoned in-progress row would
-        // rank as a phantom session and, having no marks_score, would knock the
-        // whole exam off marks-ranking.
-        // Cast to any because marks_score / marks_max were added by the marks-module
-        // migration but the generated Supabase types in src/integrations/supabase/types.ts
-        // haven't been regenerated — same workaround used elsewhere for marks columns.
-        const { data: allExamAttempts, error: rankError } = (await supabase
-          .from("attempts")
-          .select("id, user_id, section_id, score, total_questions, marks_score, marks_max, created_at")
-          .in("section_id", sectionIds)
-          .not("submitted_at", "is", null)
-          .order("created_at", { ascending: true })) as { data: any[] | null; error: any };
-
-        if (!rankError && allExamAttempts && allExamAttempts.length > 0) {
-          // Group attempts into sessions
-          // A session starts when a user creates an attempt for any first section
-          const userAttempts: Record<string, any[]> = {};
-          allExamAttempts.forEach(a => {
-            if (!userAttempts[a.user_id]) userAttempts[a.user_id] = [];
-            userAttempts[a.user_id].push(a);
-          });
-
-          // Build sessions: each first-section attempt starts a new session.
-          // Track BOTH totalScore (correct count) and totalMarks (marks_score sum)
-          // so we can rank by marks when the exam has a scoring config — raw
-          // correct-count is meaningless on an exam with negative marking.
-          interface ExamSession {
-            sessionKey: string;
-            userId: string;
-            totalScore: number;
-            totalQuestions: number;
-            totalMarks: number;
-            sessionHasMarks: boolean;
-            attemptIds: string[];
-          }
-
-          const sessions: ExamSession[] = [];
-
-          Object.entries(userAttempts).forEach(([uid, attempts]) => {
-            // Sort by created_at
-            attempts.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-            let currentSession: ExamSession | null = null;
-
-            attempts.forEach(attempt => {
-              const hasMarks = attempt.marks_score !== null && attempt.marks_score !== undefined;
-              const marksScore = hasMarks ? Number(attempt.marks_score) : 0;
-
-              if (firstSectionIds.has(attempt.section_id)) {
-                // Save previous session if exists
-                if (currentSession) {
-                  sessions.push(currentSession);
-                }
-                // Start new session
-                currentSession = {
-                  sessionKey: `${uid}_${attempt.id}`,
-                  userId: uid,
-                  totalScore: attempt.score || 0,
-                  totalQuestions: attempt.total_questions || 0,
-                  totalMarks: marksScore,
-                  sessionHasMarks: hasMarks,
-                  attemptIds: [attempt.id],
-                };
-              } else if (currentSession) {
-                // Add to current session
-                currentSession.totalScore += (attempt.score || 0);
-                currentSession.totalQuestions += (attempt.total_questions || 0);
-                currentSession.totalMarks += marksScore;
-                // A session is treated as "scored" only if every attempt has marks;
-                // any missing marks_score makes the marks total an undercount.
-                if (!hasMarks) currentSession.sessionHasMarks = false;
-                currentSession.attemptIds.push(attempt.id);
-              }
-            });
-
-            // Push last session
-            if (currentSession) {
-              sessions.push(currentSession);
-            }
-          });
-
-          // Rank by marks if every session on this exam has marks; otherwise
-          // fall back to raw correct-count so unscored exams still get ranked.
-          const rankByMarks = sessions.length > 0 && sessions.every(s => s.sessionHasMarks);
-          const rankValueOf = (s: ExamSession) => rankByMarks ? s.totalMarks : s.totalScore;
-
-          sessions.sort((a, b) => rankValueOf(b) - rankValueOf(a));
-
-          // Apply competition ranking (1, 2, 2, 4)
-          let currentRank = 1;
-          sessions.forEach((session, index) => {
-            if (index === 0) {
-              (session as any).rank = currentRank;
-            } else {
-              if (rankValueOf(session) === rankValueOf(sessions[index - 1])) {
-                (session as any).rank = (sessions[index - 1] as any).rank;
-              } else {
-                (session as any).rank = index + 1;
-              }
-            }
-          });
-
-          setTotalExamAttempts(sessions.length);
-
-          // Find current user's session that contains the current attemptId
-          const currentSession = sessions.find(s =>
-            s.attemptIds.includes(attemptId!)
-          );
-
-          if (currentSession) {
-            setRank((currentSession as any).rank);
-          } else {
-            // Fallback: find session for this user by matching the same metric
-            // used for ranking — marks if available, else correct count.
-            const userSessions = sessions.filter(s => s.userId === userId);
-            if (userSessions.length > 0) {
-              const matchingSession = userSessions.find(s =>
-                rankByMarks
-                  ? s.sessionHasMarks  // best-effort: any scored session for this user
-                  : s.totalScore === aggregatedStats.score
-              );
-              setRank(matchingSession ? (matchingSession as any).rank : (userSessions[0] as any).rank);
-            }
-          }
-        }
+        const mine = (rankRows as any[] | null)?.find(r => r.attempt_id === attemptId);
+        setRank(mine ? mine.rank : null);
+        setTotalExamAttempts(mine ? mine.total : 0);
       } catch (rankErr) {
         console.error("Error computing rank:", rankErr);
         // Non-critical: don't block the page if ranking fails
