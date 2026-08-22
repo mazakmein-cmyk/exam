@@ -12,6 +12,7 @@ import { rememberLastExam } from "@/lib/lastExamMemo";
 import CreatorExamBlocked from "@/components/CreatorExamBlocked";
 import InstructionText from "@/components/exam/InstructionText";
 import { readNavigationSettings } from "@/lib/examSettings";
+import { studentQuestionsRelation } from "@/lib/dbFeatures";
 import { dropShapeLine, reconcileTimingLine } from "@/lib/examInstructionEngine.js";
 import { sumSectionMinutes, totalExamMinutes } from "@/lib/examNavigation.js";
 import { fetchTimingGroups, type TimingGroupRow } from "@/lib/timingGroupSettings";
@@ -356,11 +357,13 @@ const ExamIntro = () => {
                 let allQuestionRows: { id: string; section_id: string }[] = [];
                 const questionCounts = new Map<string, number>();
                 if (primarySecIds.length > 0) {
-                    // Student view: ids and section only, and it must not
-                    // depend on the base-table policy or this screen silently
-                    // renders zero questions and zero marks.
+                    // Ids and section only. The answer-key-free view is used
+                    // once 20260832000000 is applied and the base table before
+                    // that — this read discards its error, so naming a missing
+                    // relation would silently render zero questions, zero marks.
+                    const questionsRelation = await studentQuestionsRelation();
                     const { data: qsData } = await supabase
-                        .from("parsed_questions_student" as any)
+                        .from(questionsRelation as any)
                         .select("id, section_id")
                         .in("section_id", primarySecIds);
                     allQuestionRows = ((qsData || []) as any[]).map((q) => ({

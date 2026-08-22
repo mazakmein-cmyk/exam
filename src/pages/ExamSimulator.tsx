@@ -82,6 +82,7 @@ type QuestionState = {
 };
 
 import { saveExamAttempt } from "@/services/examService";
+import { studentQuestionsRelation } from "@/lib/dbFeatures";
 import { createProgressQueue, progressRow } from "@/services/examProgress";
 
 const ExamSimulator = () => {
@@ -425,6 +426,13 @@ const ExamSimulator = () => {
       // columns arrive by hand-pasted migration, and naming a column the live
       // schema has not got yet fails the whole query — which would leave the
       // student unable to open the paper at all.
+      //
+      // Same reasoning for the relation questions come from: the answer-key-free
+      // view only exists once 20260832000000 is applied, and the question fetch
+      // below discards its error — so naming a missing view yields an exam with
+      // ZERO questions rather than an error. Probed once per session.
+      const questionsRelation = await studentQuestionsRelation();
+
       const [
         { data: { user } },
         { data: examData },
@@ -446,7 +454,7 @@ const ExamSimulator = () => {
         // answer_hint. select("*") on the table delivered the whole answer key
         // into the candidate's browser at exam start.
         supabase
-          .from("parsed_questions_student" as any)
+          .from(questionsRelation as any)
           .select("*")
           .eq("section_id", sectionId)
           .eq("is_excluded", false)
@@ -523,7 +531,7 @@ const ExamSimulator = () => {
           if (ids.length === 0) return;
           const { data: restData, error: restError } = await supabase
             // Student view — see the note on the section fetch above.
-            .from("parsed_questions_student" as any)
+            .from(questionsRelation as any)
             .select("*")
             .in("section_id", ids)
             .eq("is_excluded", false)
@@ -665,7 +673,7 @@ const ExamSimulator = () => {
               // so per-question marks config resolves. Ids only, and through
               // the student view so it works without the base-table policy.
               const { data: primaryQuestions } = await supabase
-                .from("parsed_questions_student" as any)
+                .from(questionsRelation as any)
                 .select("id, question_group_id")
                 .eq("section_id", primarySection.id)
                 .in("question_group_id", groupIds);

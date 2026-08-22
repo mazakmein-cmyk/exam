@@ -354,23 +354,40 @@ test("answerKeySql: per-question marks survive for students", () => {
   );
 });
 
-test("studentScreens: the runner and intro read the view, never the table", () => {
+test("studentScreens: the runner and intro resolve the relation, never hardcode the table", () => {
   const runner = readSrc("pages/ExamSimulator.tsx");
   const intro = readSrc("pages/ExamIntro.tsx");
-  assertNotContains(runner, 'from("parsed_questions")', "The runner must not read the base table");
-  assertNotContains(intro, 'from("parsed_questions")', "The intro must not read the base table");
-  assertContains(runner, 'from("parsed_questions_student"', "The runner must read the student view");
-  assertContains(intro, 'from("parsed_questions_student"', "The intro must read the student view");
+  // Hardcoding either name is the bug. The base table leaks the key; the view
+  // does not exist until 20260832000000 is applied, and these reads DISCARD
+  // their error — so naming a missing relation yields an exam with zero
+  // questions, silently. studentQuestionsRelation() picks whichever is there.
+  assertNotContains(runner, 'from("parsed_questions")', "The runner must not hardcode the base table");
+  assertNotContains(intro, 'from("parsed_questions")', "The intro must not hardcode the base table");
+  assertNotContains(runner, 'from("parsed_questions_student"', "The runner must not hardcode the view either");
+  assertContains(runner, "await studentQuestionsRelation()", "The runner must resolve the relation at runtime");
+  assertContains(intro, "await studentQuestionsRelation()", "The intro must resolve the relation at runtime");
   // And it must never have needed the key: the runner never read it. Comments
   // stripped, so prose explaining the change does not trip this.
   const runnerCode = runner.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assertNotContains(runnerCode, "correct_answer", "The runner must not touch the answer key at all");
 });
 
-test("examReviewTs: the review gets the key separately and cannot crash on a missing question", () => {
+test("dbFeatures: the relation probe prefers the view and degrades to the table", () => {
+  const src = readSrc("lib/dbFeatures.ts");
+  assertContains(src, 'return "parsed_questions_student"', "The view must win when it exists");
+  assertContains(src, "isRelationMissingError(error)", "A missing relation must be told apart from a transient failure");
+  assertContains(src, 'return "parsed_questions"', "It must fall back rather than leave the exam empty");
+  // A transient failure must not pin the wrong answer for the whole session.
+  assertContains(src, "questionsRelation = null", "A transient failure must re-probe next time");
+});
+
+test("examReviewTs: the review reveals the key separately and cannot crash on a missing question", () => {
   const src = readSrc("pages/ExamReview.tsx");
-  assertContains(src, "question:parsed_questions_student(*)", "Review must embed the student view");
+  assertContains(src, "question:${questionsRelation}(*)", "Review must embed whichever relation exists");
   assertContains(src, "get_attempt_answer_key", "Review must fetch the key through the reveal function");
+  // Pre-migration the embedded row still carries its own key, so falling
+  // through to null would blank every answer the review is meant to show.
+  assertContains(src, "?? r.question.correct_answer", "The embedded key must be the fallback");
   // The old sort dereferenced r.question blindly, so a filtered-out question
   // blanked the whole page with a TypeError instead of degrading.
   assertContains(src, "filter((r: any) => r.question)", "A response with no question must be dropped, not dereferenced");

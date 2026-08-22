@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { MarksAwardedBadge } from "@/components/marks/MarksAwardedBadge";
 import { formatMarks } from "@/services/scoringEngine";
 import { formatDuration } from "@/lib/utils";
+import { studentQuestionsRelation } from "@/lib/dbFeatures";
 import OnboardingModal from "@/components/OnboardingModal";
 import { fetchTimingGroups, type TimingGroupRow } from "@/lib/timingGroupSettings";
 import { groupDisplayName, groupPoolMinutes, resolveTimingGroupIds } from "@/lib/timingGroups.js";
@@ -229,24 +230,33 @@ export default function ExamReview() {
       // arrives separately from get_attempt_answer_key, which only answers for
       // a SUBMITTED attempt that is the caller's own or on an exam they own.
       // Reviewing is the one place a student is meant to see the answers.
+      // Which relation to embed depends on whether 20260832000000 is applied;
+      // before it, the base table still carries the key and the reveal function
+      // does not exist. Naming a missing relation makes the embed come back
+      // null, which used to blank this whole page.
+      const questionsRelation = await studentQuestionsRelation();
       const { data: responsesData, error: responsesError } = await supabase
         .from("responses")
         .select(`
           *,
-          question:parsed_questions_student(*)
+          question:${questionsRelation}(*)
         `)
         .in("attempt_id", selectedAttemptIds);
 
       if (responsesError) throw responsesError;
 
-      const { data: keyRows, error: keyError } = await (supabase.rpc as any)(
-        "get_attempt_answer_key",
-        { p_attempt_id: attemptId }
-      );
-      if (keyError) throw keyError;
-      const answerKey = new Map<string, any>(
-        ((keyRows ?? []) as any[]).map(r => [r.question_id, r.correct_answer])
-      );
+      // The key comes separately once it is withheld from the question row.
+      // Absent (pre-migration) the embedded row still carries correct_answer,
+      // so the map stays empty and the fold below is a no-op.
+      const answerKey = new Map<string, any>();
+      if (questionsRelation === "parsed_questions_student") {
+        const { data: keyRows, error: keyError } = await (supabase.rpc as any)(
+          "get_attempt_answer_key",
+          { p_attempt_id: attemptId }
+        );
+        if (keyError) throw keyError;
+        ((keyRows ?? []) as any[]).forEach(r => answerKey.set(r.question_id, r.correct_answer));
+      }
 
       // Sort responses: First by section order, then by question number
       const sectionOrder = new Map(sections.map((s, index) => [s.id, index]));
@@ -259,7 +269,12 @@ export default function ExamReview() {
           ...r,
           // Fold the key back onto the question so every renderer below reads
           // it from the same place it always did.
-          question: { ...r.question, correct_answer: answerKey.get(r.question_id) ?? null },
+          // Revealed key first; pre-migration the embedded row still has its
+          // own, and falling through to null would blank every answer shown.
+          question: {
+            ...r.question,
+            correct_answer: answerKey.get(r.question_id) ?? r.question.correct_answer ?? null,
+          },
         }));
 
       const sortedResponses = withQuestion.sort((a: any, b: any) => {
