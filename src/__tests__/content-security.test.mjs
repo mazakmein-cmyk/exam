@@ -222,6 +222,42 @@ test("vercel.json sends the baseline security headers on every route", () => {
   );
 });
 
+test("vercel.json carries no pseudo-comment keys", () => {
+  // Vercel validates this file against a strict schema and rejects unknown
+  // properties, so a "//" key used as a comment fails the DEPLOY before the
+  // build starts — and `npm run build` cannot catch it, because only Vercel
+  // validates the file. It has cost one red deploy already:
+  //   `headers[4]` should NOT have additional property `//`
+  // The explanations live in docs/vercel-config.md instead.
+  const raw = readSrc("vercel.json");
+  assert(!/"\/\/"\s*:/.test(raw), 'vercel.json must not use "//" as a comment key');
+
+  // Belt and braces: no entry in either array may carry a key the schema does
+  // not know, whatever it is called.
+  const cfg = JSON.parse(raw);
+  const allowed = {
+    rewrites: new Set(["source", "destination", "has", "missing", "statusCode"]),
+    headers: new Set(["source", "headers", "has", "missing"]),
+  };
+  for (const [key, keys] of Object.entries(allowed)) {
+    for (const [i, entry] of (cfg[key] ?? []).entries()) {
+      for (const prop of Object.keys(entry)) {
+        assert(keys.has(prop), `${key}[${i}] has an unknown property "${prop}" — Vercel will reject the deploy`);
+      }
+    }
+  }
+});
+
+test("the vercel.json rules that are easy to break are documented", () => {
+  // Each of these was explained inline until the schema rejected it. If a rule
+  // is reshaped, the reasoning has to move with it or the next person narrows
+  // the SPA fallback and 404s every dynamic route.
+  const doc = readSrc("docs/vercel-config.md");
+  for (const needle of ["rewrites[0]", "headers[4]", "headers[5]"]) {
+    assert(doc.includes(needle), `docs/vercel-config.md must still explain ${needle}`);
+  }
+});
+
 test("KaTeX CSS ships with the math chunks, not the global bundle", () => {
   assert(
     !/@import ['"]katex/.test(readSrc("src/index.css")),
