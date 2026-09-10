@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { isRecoveryLanding } from "@/lib/recoveryLanding";
+import { hasPendingSubmissions } from "@/lib/pendingSubmissions.js";
 
 const AuthStateListener = () => {
     const navigate = useNavigate();
@@ -93,8 +94,8 @@ const AuthStateListener = () => {
                         // review page. Detect via either URL trigger or pending payload.
                         const params = new URLSearchParams(window.location.search);
                         const isExamSubmitFlow = params.get('trigger') === 'exam_submit'
-                            || !!sessionStorage.getItem('pendingExamSubmissions')
-                            || !!sessionStorage.getItem('pendingExamSubmission');
+                            // Checks the durable queue and the legacy keys alike.
+                            || hasPendingSubmissions();
                         if (!isExamSubmitFlow) {
                             navigate('/marketplace');
                         }

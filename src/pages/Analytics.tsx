@@ -6,13 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, TrendingUp, Clock, Target, Users, BookOpen, Eye, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowLeft, TrendingUp, Clock, Target, Users, BookOpen, Eye, CheckCircle2, ChevronDown, ChevronRight, Info } from "lucide-react";
+// Aliased: the chart library's Tooltip already owns the bare name on this page.
+import { Tooltip as InfoTooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { normalizeAnswerText } from "@/lib/answerNormalize.js";
+import { fileExpiredAttempts } from "@/services/attemptFiling";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import SEO from "@/components/SEO";
 import { formatDuration } from "@/lib/utils";
 import { fetchTimingGroups } from "@/lib/timingGroupSettings";
 import { groupDisplayName, groupPoolMinutes, resolveTimingGroupIds } from "@/lib/timingGroups.js";
+import { getRowBudget, allocateRows, BUDGET_UNLIMITED } from "@/lib/rowBudget";
 
 interface Attempt {
   id: string;
@@ -42,6 +47,14 @@ interface QuestionStats {
   id: string;
   q_no: number;
   text: string;
+  /**
+   * Identity of the section this question belongs to — section_group_id, which
+   * is one id shared by every language variant. NOT the name: names are
+   * translated per language (ExamIntro walks siblings to localise them), so
+   * keying on one both splits a translated section and merges two sections a
+   * creator left on the same default name.
+   */
+  sectionKey: string;
   sectionName: string;
   sectionSortOrder: number;
   totalAttempts: number;
@@ -62,6 +75,7 @@ interface QuestionStats {
 }
 
 import { useUserRole } from "@/hooks/use-user-role";
+import { studentSectionColumns } from "@/lib/sectionColumns";
 
 /**
  * Read an object-shaped correct answer ({ answer: ... } / { value: ... }).
@@ -103,11 +117,32 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [examName, setExamName] = useState<string>("");
   const [firstSectionIds, setFirstSectionIds] = useState<Set<string>>(new Set());
-  const [lastSectionIds, setLastSectionIds] = useState<Set<string>>(new Set());
+  // Every section's language and birthday. Completion is judged against the
+  // sections that existed WHEN A SITTING STARTED, so the section list itself —
+  // not just today's last id — has to be in hand.
+  const [sectionMeta, setSectionMeta] = useState<{
+    id: string;
+    language: string;
+    created_at: string;
+    name: string;
+    time_minutes: number;
+    sort_order: number;
+    section_group_id: string | null;
+  }[]>([]);
+  /** Which language authored the paper; its row labels every merged section. */
+  const [primaryLanguage, setPrimaryLanguage] = useState<string | null>(null);
   const [questionStats, setQuestionStats] = useState<QuestionStats[]>([]);
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionStats | null>(null);
-  const [selectedSectionName, setSelectedSectionName] = useState<string | null>(null);
+  const [selectedSectionKey, setSelectedSectionKey] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  /**
+   * Sections the creator explicitly asked to see in full, by identity. Exempt
+   * from the row budget and contributing nothing to it, so revealing one
+   * section never changes what another is showing.
+   */
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  /** Set by "View all": drops the budget for the whole table in one click. */
+  const [showAllRows, setShowAllRows] = useState(false);
   // Rank data for student history: maps attemptId -> { rank, total }
   const [examRanks, setExamRanks] = useState<Record<string, { rank: number; total: number }>>({}); 
   // Maps examId -> Set of firstSectionIds (used for session-based history grouping)
@@ -127,19 +162,31 @@ export default function Analytics() {
   const [leaderboard, setLeaderboard] = useState<{ rank: number; userId: string; username: string; displayName: string; totalScore: number; totalQuestions: number; totalMarks: number; rankedByMarks: boolean }[]>([]);
   // Monotonic tag for in-flight fetches; see fetchData.
   const fetchSeqRef = useRef(0);
-  const toggleSection = (sectionName: string) => {
+  const toggleSection = (sectionKey: string) => {
     const newCollapsed = new Set(collapsedSections);
-    if (newCollapsed.has(sectionName)) {
-      newCollapsed.delete(sectionName);
+    if (newCollapsed.has(sectionKey)) {
+      newCollapsed.delete(sectionKey);
     } else {
-      newCollapsed.add(sectionName);
+      newCollapsed.add(sectionKey);
     }
     setCollapsedSections(newCollapsed);
   };
 
+  /** "View more" on one section: show the rest of it, and keep it shown. */
+  const expandSection = (sectionKey: string) => {
+    setExpandedSections(prev => new Set(prev).add(sectionKey));
+  };
+
+  // Lazy filing of abandoned attempts (resume spec) — this page is the other
+  // place a student reliably lands. Fire-and-forget, once per tab session; a
+  // filed attempt shows up on the next load rather than racing this one.
+  useEffect(() => {
+    void fileExpiredAttempts();
+  }, []);
+
   useEffect(() => {
     if (roleLoading) return;
-    
+
     // For Creator side this type of analytics (Student overall performance) shouldn't be accessed
     if (role === 'creator' && !examId) {
       navigate('/dashboard', { replace: true });
@@ -162,7 +209,8 @@ export default function Analytics() {
     setAttempts([]);
     setExamName("");
     setFirstSectionIds(new Set());
-    setLastSectionIds(new Set());
+    setSectionMeta([]);
+    setPrimaryLanguage(null);
     setExamRanks({});
     setFirstSectionsByExamId({});
 
@@ -221,6 +269,10 @@ export default function Analytics() {
         // We can do this by filtering on the joined column, but JS client requires specific syntax or embedded resource filtering.
         // Easier approach: Get sections for this exam first, then get attempts for those sections.
 
+        // Resolved before the batch below: it decides whether the hand-migrated
+        // timing_group_id can be named. Probed once per session and cached.
+        const sectionCols = await studentSectionColumns();
+
         // 1. Parallelize all independent exam-scoped fetches.
         // examData, allSections, sectionAttempts, and questionsData are all keyed by examId
         // with no dependency between them — fire them concurrently.
@@ -231,13 +283,21 @@ export default function Analytics() {
           questionsData,
           timingGroupRows,
           { data: summaryRaw, error: summaryError },
+          { data: engagedRaw, error: engagedError },
         ] = await Promise.all([
           supabase.from("exams").select("name, user_id, primary_language").eq("id", examId).single(),
           supabase
             .from("sections")
-            // select * so the hand-migrated timing_group_id rides along when the
-            // live schema has it — naming it in a list would fail pre-migration.
-            .select("*")
+            // A named column list, not select("*"). The wide select was also
+            // handing this page's readers pdf_url and pdf_name — a link to the
+            // source question paper and its original file name — and /analytics
+            // is a STUDENT route. Nothing here reads either field.
+            //
+            // studentSectionColumns still solves what the old comment was about:
+            // it names the hand-migrated timing_group_id only when the column
+            // exists, so timing groups keep working on both sides of that
+            // migration instead of the query failing pre-migration.
+            .select(sectionCols as "*")
             .eq("exam_id", examId)
             .order("sort_order", { ascending: true })
             .order("created_at", { ascending: true }),
@@ -251,6 +311,7 @@ export default function Analytics() {
                   time_minutes,
                   sort_order,
                   created_at,
+                  section_group_id,
                   exam:exams(name)
                 )
               `)
@@ -268,7 +329,7 @@ export default function Analytics() {
               .from("parsed_questions")
               .select(`
                 *,
-                section:sections!inner(id, name, exam_id, sort_order)
+                section:sections!inner(id, name, exam_id, sort_order, language, section_group_id)
               `)
               // Match what ExamSimulator actually serves (it filters identically):
               // counting excluded questions here inflates every attempt's
@@ -291,9 +352,24 @@ export default function Analytics() {
           // real students at 0%. Payload is now a few numbers per attempt and
           // per question regardless of how many students sat the paper.
           (supabase.rpc as any)("get_exam_analytics", { p_exam_id: examId }),
+          // Which sittings actually answered something. Counted in the database
+          // against the same mock_has_answer the marks engine uses for a skip,
+          // so viewing a question is not answering it.
+          (supabase.rpc as any)("get_exam_engaged_attempts", { p_exam_id: examId }),
         ]);
 
-        if (examError) throw examError;
+        // Zero rows (PGRST116) is RLS hiding an unpublished exam from a
+        // non-owner — an ownership answer, not a failure.
+        if (examError && (examError as any).code !== "PGRST116") throw examError;
+        // Ownership gate. This branch renders the creator dashboard, and until
+        // now RLS alone decided what it showed — a student pasting ?examId=
+        // walked into a hollow creator UI, and any future base-table read
+        // would quietly reopen the leak. Both ids are already in hand from
+        // requests this page always made, so the gate costs nothing.
+        if (!examData || (examData as any).user_id !== user.id) {
+          navigate(role === "creator" ? "/dashboard" : "/analytics", { replace: true });
+          return;
+        }
         // Migrations here are applied by hand, so the client can be live before
         // the function exists. Say which file to paste rather than throwing —
         // throwing blanks the whole dashboard, which reads exactly like an exam
@@ -311,6 +387,21 @@ export default function Analytics() {
           }
         }
         const summary = (summaryRaw as any) || { attempts: [], questions: [] };
+        // Missing function = not migrated yet. Fall back to "every attempt
+        // counts", which is exactly the behaviour this replaces, rather than
+        // blanking a dashboard over a metric definition.
+        const engagedMigrated =
+          !engagedError || !/does not exist|schema cache/i.test(engagedError.message || "");
+        if (engagedError && !engagedMigrated) {
+          console.warn(
+            "get_exam_engaged_attempts missing — counting every start as an attempt. " +
+            "Apply 20260845000000_engaged_attempts.sql.",
+            engagedError
+          );
+        } else if (engagedError) {
+          throw engagedError;
+        }
+        const engagedIds = new Set<string>(((engagedRaw as any) || []) as string[]);
         if (isStale()) return;
         setExamName(examData.name);
         const examCreatorId = examData.user_id; // Store creator ID to filter out their attempts
@@ -347,7 +438,6 @@ export default function Analytics() {
         }
 
         const localFirstIds = new Set<string>();
-        const localLastIds = new Set<string>();
 
         if (allSections && allSections.length > 0) {
           const langMap = new Map<string, any[]>();
@@ -357,14 +447,24 @@ export default function Analytics() {
             langMap.get(lang)!.push(s);
           });
           
-          // Add the first and last section elements per-language variant strictly
+          // The opener of each language variant delimits a sitting.
           langMap.forEach((secs) => {
             localFirstIds.add(secs[0].id);
-            localLastIds.add(secs[secs.length - 1].id);
           });
-          
+
           setFirstSectionIds(localFirstIds);
-          setLastSectionIds(localLastIds);
+          setSectionMeta(
+            allSections.map((sec: any) => ({
+              id: sec.id,
+              language: sec.language || "en",
+              created_at: sec.created_at,
+              name: sec.name || "Unknown Section",
+              time_minutes: sec.time_minutes || 0,
+              sort_order: sec.sort_order || 0,
+              section_group_id: sec.section_group_id || null,
+            }))
+          );
+          setPrimaryLanguage((examData as any)?.primary_language || null);
         }
 
         // Filter out the creator's own attempts from analytics. The summary
@@ -390,6 +490,9 @@ export default function Analytics() {
 
           return {
             ...attempt,
+            // A sitting counts once the student answered something. Before the
+            // migration lands every attempt counts, as it always did.
+            engaged: engagedMigrated ? engagedIds.has(attempt.id) : true,
             score: correctCount,
             total_questions: totalQuestions,
             accuracy_percentage: accuracy,
@@ -425,6 +528,10 @@ export default function Analytics() {
               totalQuestions: number;
               totalMarks: number;
               sessionHasMarks: boolean;
+              /** Was any section of this sitting actually handed in? */
+              hasSubmitted: boolean;
+              /** Did anyone answer anything in it? */
+              hasEngaged: boolean;
             };
             const sessions: LbSession[] = [];
 
@@ -457,12 +564,29 @@ export default function Analytics() {
                 if (!prev || lbBeats(a, prev)) latestBySection.set(a.section_id, a);
               });
               const counted = Array.from(latestBySection.values());
+              // Marks are written by the grader, and the grader only runs on
+              // submission — so an abandoned section has marks_score NULL by
+              // construction, not because the creator forgot to configure one.
+              // Letting it answer "does this sitting have marks?" is what let a
+              // single closed tab switch the whole board to correct-count
+              // ranking. Only handed-in sections get a say, which is exactly
+              // what get_my_exam_ranks does: it filters to submitted BEFORE its
+              // bool_and(has_marks).
+              const marksCounted = counted.filter(a => a.submitted_at);
               return {
                 userId: uid,
+                // Unchanged on purpose: what the board SHOWS and ranks by is not
+                // what this fix is about, and abandoned rows still contribute
+                // their real score the way they always have.
                 totalScore: counted.reduce((s, a) => s + (a.score || 0), 0),
                 totalQuestions: counted.reduce((s, a) => s + (a.total_questions || 0), 0),
                 totalMarks: counted.reduce((s, a) => s + marksOf(a).value, 0),
-                sessionHasMarks: counted.every(a => marksOf(a).hasMarks),
+                sessionHasMarks:
+                  marksCounted.length > 0 && marksCounted.every(a => marksOf(a).hasMarks),
+                hasSubmitted: marksCounted.length > 0,
+                // `atts`, not `counted`: an engaged attempt that lost the
+                // per-section tie-break still proves the sitting was real.
+                hasEngaged: atts.some(a => a.engaged !== false),
               };
             };
 
@@ -487,28 +611,46 @@ export default function Analytics() {
               }
             });
 
-            // Rank by marks when every session has marks; otherwise fall back
-            // to accuracy %. Same gating as ExamReview and the student rank.
-            const rankByMarks = sessions.length > 0 && sessions.every(s => s.sessionHasMarks);
-            const rankValueOf = (s: LbSession) =>
-              rankByMarks
-                ? s.totalMarks
-                : (s.totalQuestions > 0 ? s.totalScore / s.totalQuestions : 0);
+            // Rank by marks when every session has marks; otherwise by RAW
+            // CORRECT COUNT — the owner's decision (2026-08-23), and exactly
+            // what get_my_exam_ranks does (`ELSE r.total_score`). This board
+            // used to fall back to accuracy % here, so the same cohort ranked
+            // one way on the creator's screen and another on every student's
+            // badge whenever sittings differed in size.
+            // A sitting where nothing was answered is not a result. Every tile
+            // on this page already ignores those (see engagedAttempts); leaving
+            // them here put a 0/N ghost on Top Students whenever an exam had
+            // fewer than three real sittings. Before 20260845000000 lands
+            // `engaged` is true for everything, so this filter is a no-op and
+            // the board is exactly what it is today.
+            const board = sessions.filter(s => s.hasEngaged);
 
-            sessions.sort((a, b) => {
+            // Only sittings that were handed in get a vote on the ranking basis.
+            // An abandoned one cannot have marks, so counting it guaranteed the
+            // gate failed — one closed tab silently demoted the whole exam to
+            // correct-count ranking and inverted it, promoting the guesser over
+            // the student who left the risky questions alone.
+            const gateSessions = board.filter(s => s.hasSubmitted);
+            const rankByMarks =
+              gateSessions.length > 0 && gateSessions.every(s => s.sessionHasMarks);
+            const rankValueOf = (s: LbSession) =>
+              rankByMarks ? s.totalMarks : s.totalScore;
+
+            board.sort((a, b) => {
               const va = rankValueOf(a);
               const vb = rankValueOf(b);
               if (vb !== va) return vb - va;
-              // Tie-break on raw score so deterministic ordering survives.
-              return b.totalScore - a.totalScore;
+              // Display order only — equal values share the rank below, as they
+              // do in the SQL's RANK(). Fewer questions faced sorts first.
+              return a.totalQuestions - b.totalQuestions;
             });
 
             // Competition-style ranking
             const rankedSessions: (LbSession & { rank: number })[] = [];
-            for (let i = 0; i < sessions.length; i++) {
-              const s = sessions[i];
+            for (let i = 0; i < board.length; i++) {
+              const s = board[i];
               let rank = i + 1;
-              if (i > 0 && rankValueOf(s) === rankValueOf(sessions[i - 1])) {
+              if (i > 0 && rankValueOf(s) === rankValueOf(board[i - 1])) {
                 rank = rankedSessions[i - 1].rank;
               }
               rankedSessions.push({ ...s, rank });
@@ -559,36 +701,123 @@ export default function Analytics() {
           const statByQuestion = new Map<string, any>();
           (summary.questions || []).forEach((q: any) => statByQuestion.set(q.question_id, q));
 
-          const finalStats: QuestionStats[] = (questionsData || []).map((q: any) => {
-            const agg = statByQuestion.get(q.id);
-            const totalAttempts = agg?.total_attempts ?? 0;
-            const correctCount = agg?.correct_count ?? 0;
-            const totalTime = agg?.total_time_seconds ?? 0;
+          // ONE ROW PER QUESTION, NOT PER TRANSLATION.
+          //
+          // A bilingual paper stores a separate parsed_questions row per
+          // language — that is how a Hindi student sees Hindi text — linked to
+          // its primary twin by question_group_id, a pairing PublishExamDialog
+          // refuses to ship without. This page grouped by section NAME, which
+          // every language variant shares, so a 25-question paper listed 50
+          // rows: each question twice, each copy carrying only the students who
+          // sat in that language. The whole-class number — the only one a
+          // creator actually wants — appeared nowhere on the screen.
+          //
+          // Pooling here rather than in SQL keeps get_exam_analytics counting
+          // rows where they live; which language a student read is a
+          // presentation detail, and this is the presentation layer.
+          const primaryLang = (examData as any)?.primary_language || null;
+          const questionGroups = new Map<string, any[]>();
+          (questionsData || []).forEach((q: any) => {
+            // Single-language exams have no group id — the question is its own
+            // group, so this collapses to exactly the old behaviour.
+            const key = q.question_group_id || q.id;
+            if (!questionGroups.has(key)) questionGroups.set(key, []);
+            questionGroups.get(key)!.push(q);
+          });
+
+          const labelNorm = (v: any) => String(v ?? "").trim().toLowerCase();
+
+          const finalStats: QuestionStats[] = Array.from(questionGroups.values()).map(rows => {
+            // Content comes from the primary language: it is the paper the
+            // creator authored, and the option text every dialog renders.
+            const primary =
+              rows.find((r: any) => (r.section?.language || null) === primaryLang) || rows[0];
+
+            const aggs = rows
+              .map((r: any) => statByQuestion.get(r.id))
+              .filter(Boolean) as any[];
+            const pool = (field: string) => aggs.reduce((n, a) => n + (a[field] ?? 0), 0);
+
+            const totalAttempts = pool("total_attempts");
+            const correctCount = pool("correct_count");
+            const totalTime = pool("total_time_seconds");
+
+            // The winning wrong answer is stored as the option TEXT it matched,
+            // so it cannot be pooled as a string: the same choice is spelled one
+            // way in English and another in Hindi, and a Hindi label would
+            // highlight nothing on a primary-language paper. Resolve each
+            // translation's label to an option INDEX within its own options,
+            // take the index the larger cohort chose, and render the primary
+            // paper's wording for it.
+            //
+            // The weight is that translation's TOTAL wrong count, not the count
+            // for this particular label — the summary ships only the winning
+            // label, not the tally behind it. A proxy, and monotonic in cohort
+            // size, which is all it is used for: choosing between two languages.
+            const indexWeight = new Map<number, number>();
+            let fallbackLabel: string | null = null;
+            let fallbackWrong = -1;
+
+            rows.forEach((r: any) => {
+              const agg = statByQuestion.get(r.id);
+              const label = agg?.most_common_wrong;
+              if (typeof label !== "string" || label.trim() === "") return;
+              const wrong = agg?.wrong_count ?? 0;
+              if (wrong > fallbackWrong) {
+                fallbackWrong = wrong;
+                fallbackLabel = label;
+              }
+              const opts = Array.isArray(r.options) ? r.options : [];
+              const idx = opts.findIndex((o: any) => labelNorm(o) === labelNorm(label));
+              if (idx >= 0) indexWeight.set(idx, (indexWeight.get(idx) || 0) + wrong);
+            });
+
+            let mostCommonWrong: string | null = fallbackLabel;
+            if (indexWeight.size > 0) {
+              const winningIndex = [...indexWeight.entries()].sort(
+                (a, b) => b[1] - a[1] || a[0] - b[0]
+              )[0][0];
+              const primaryOptions = Array.isArray(primary.options) ? primary.options : [];
+              // Falls back to the label when the primary paper has no option at
+              // that index — a numeric or short-answer question, where the label
+              // is language-independent anyway.
+              mostCommonWrong = primaryOptions[winningIndex] ?? fallbackLabel;
+            }
 
             return {
-              id: q.id,
-              q_no: q.q_no,
-              text: q.text,
-              sectionName: q.section.name,
-              sectionSortOrder: q.section.sort_order,
+              id: primary.id,
+              q_no: primary.q_no,
+              text: primary.text,
+              // The section's identity, so the snippet dialog can match on it
+              // instead of on a name that may be translated.
+              sectionKey: primary.section.section_group_id || primary.section.id,
+              sectionName: primary.section.name,
+              sectionSortOrder: primary.section.sort_order,
               totalAttempts,
               correctCount,
-              wrongCount: agg?.wrong_count ?? 0,
-              unansweredCount: agg?.unanswered_count ?? 0,
+              wrongCount: pool("wrong_count"),
+              unansweredCount: pool("unanswered_count"),
               accuracy: totalAttempts > 0 ? (correctCount / totalAttempts) * 100 : 0,
               avgTime: totalAttempts > 0 ? totalTime / totalAttempts : 0,
-              correctAnswer: q.correct_answer,
-              answerType: q.answer_type,
-              options: q.options,
+              correctAnswer: primary.correct_answer,
+              answerType: primary.answer_type,
+              options: primary.options,
 
-              imageUrl: q.image_url,
-              imageUrls: q.image_urls,
-              optionImageUrls: Array.isArray(q.option_image_urls) ? q.option_image_urls : null,
-              reviewedCount: agg?.reviewed_count ?? 0,
+              imageUrl: primary.image_url,
+              imageUrls: primary.image_urls,
+              optionImageUrls: Array.isArray(primary.option_image_urls)
+                ? primary.option_image_urls
+                : null,
+              reviewedCount: pool("reviewed_count"),
               // The full tally stays in the database; only the winning label is
-              // shipped, already capped at 120 chars there.
+              // shipped, already capped at 120 chars there. A blank label is a
+              // cleared answer counted before 20260833000000 landed — not a
+              // misconception anyone can act on.
               commonWrongAnswers: {},
-              mostCommonWrong: agg?.most_common_wrong ?? null,
+              mostCommonWrong:
+                typeof mostCommonWrong === "string" && mostCommonWrong.trim() !== ""
+                  ? mostCommonWrong
+                  : null,
             };
           });
 
@@ -745,8 +974,14 @@ export default function Analytics() {
 
   // --- Calculations ---
 
-  // Completed attempts for performance stats
-  const completedAttempts = attempts.filter(a => a.submitted_at);
+  // Completed attempts for performance stats. `engaged` too, or a paper handed
+  // in without a single answer would sit in the accuracy and time averages as a
+  // real 0% while being excluded from Total Attempts and Completion — the two
+  // halves of one dashboard disagreeing about who counts, which is the whole
+  // problem this rule exists to end. See engagedAttempts below.
+  const completedAttempts = attempts.filter(
+    a => a.submitted_at && (!examId || (a as any).engaged !== false)
+  );
   const validAttempts = examId ? completedAttempts : attempts;
 
   // Compute student history ranking sessions globally
@@ -761,8 +996,15 @@ export default function Analytics() {
     // Session-based grouping: a new session starts each time the user
     // hits the first section of an exam. Sorted by created_at ascending
     // so sessions are detected in chronological order.
+    //
+    // Attempts whose section/exam came back NULL (RLS hides an unpublished
+    // exam) are KEPT — owner's decision (2026-08-23): nothing a student did
+    // ever disappears. They row up labelled "(exam no longer available)", and
+    // keeping them is what makes this list's count agree with the accuracy
+    // and avg-time tiles, which have always been computed over the raw
+    // attempts array. Filtering them out here showed "Total Mock Exams: 0"
+    // above a non-zero accuracy.
     const sortedAttempts = [...attempts]
-      .filter(a => a.section && a.section.exam)
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
     // Group by exam_id first, then detect sessions within each exam
@@ -807,9 +1049,13 @@ export default function Analytics() {
       };
       const first = atts[0];
       return {
-        examName: first.section.exam.name || 'Unknown Exam',
+        // A null section/exam is RLS hiding an unpublished exam, not missing
+        // data — say so instead of crashing or pretending it never happened.
+        examName: first.section?.exam
+          ? (first.section.exam.name || 'Unknown Exam')
+          : '(exam no longer available)',
         date: new Date(first.submitted_at).toLocaleDateString(),
-        sections: counted.map(a => a.section.name || 'Unknown Section'),
+        sections: counted.map(a => a.section?.name || '—'),
         totalScore: counted.reduce((s, a) => s + (a.score || 0), 0),
         totalQuestions: counted.reduce((s, a) => s + (a.total_questions || 0), 0),
         totalTime: counted.reduce(
@@ -865,19 +1111,93 @@ export default function Analytics() {
   // Logic: Total Attempts = Starts of the First Section
   // Logic: Completed = Submissions of the Last Section
 
+  // A sitting is a sitting once the student answered something. Clicking Start
+  // creates a row before any of that — the clock and resume both need one — so
+  // every headline number below filters on `engaged` or it would count people
+  // who bounced off the start screen as students who scored zero. Set by
+  // get_exam_engaged_attempts; true for everything on an un-migrated database.
+  // completedAttempts above applies the same filter for the same reason.
+  const engagedAttempts = examId
+    ? attempts.filter(a => (a as any).engaged !== false)
+    : attempts;
+
   const totalAttempts = examId 
-    ? (firstSectionIds.size > 0 ? attempts.filter(a => firstSectionIds.has(a.section_id)).length : 0)
+    ? (firstSectionIds.size > 0 ? engagedAttempts.filter(a => firstSectionIds.has(a.section_id)).length : 0)
     : studentSessionsList.length;
 
-  const submittedCount = (examId && lastSectionIds.size > 0)
-    ? attempts.filter(a => lastSectionIds.has(a.section_id) && a.submitted_at).length
-    : (examId ? 0 : attempts.filter(a => a.submitted_at).length);
+  // Completion, judged one sitting at a time.
+  //
+  // This used to be "submitted whichever section is last TODAY", a definition
+  // re-applied to the whole history on every load. Appending a section
+  // therefore un-completed every sitting that finished before it existed — a
+  // paper 50 people completed read 0% — and because the two halves counted
+  // different sections, the rate could also exceed 100%.
+  //
+  // A sitting is complete when it submitted every section that existed when it
+  // STARTED. Editing the exam can no longer rewrite the past, and since each
+  // sitting is opened by exactly one first-section attempt, `completed` is
+  // counted out of the same sittings totalAttempts counts — the rate cannot
+  // pass 100%.
+  const completedSittings = (() => {
+    if (!examId || firstSectionIds.size === 0 || sectionMeta.length === 0) return 0;
+
+    const metaById = new Map(sectionMeta.map(sec => [sec.id, sec]));
+    const byUser: Record<string, any[]> = {};
+    engagedAttempts.forEach(a => {
+      (byUser[a.user_id] ||= []).push(a);
+    });
+
+    let completed = 0;
+    const judge = (sitting: any[]) => {
+      const opener = metaById.get(sitting[0].section_id);
+      // Section deleted since: nothing survives to judge the sitting against.
+      if (!opener) return;
+      const startedAt = new Date(sitting[0].created_at).getTime();
+      if (Number.isNaN(startedAt)) return;
+      // Same language only — a Hindi sitting is not incomplete for skipping the
+      // English sections.
+      const required = sectionMeta.filter(
+        sec =>
+          sec.language === opener.language &&
+          new Date(sec.created_at).getTime() <= startedAt
+      );
+      if (required.length === 0) return;
+      const submitted = new Set(
+        sitting.filter(a => a.submitted_at).map(a => a.section_id)
+      );
+      if (required.every(sec => submitted.has(sec.id))) completed++;
+    };
+
+    Object.values(byUser).forEach(list => {
+      const sorted = [...list].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+      let cur: any[] | null = null;
+      sorted.forEach(a => {
+        if (firstSectionIds.has(a.section_id)) {
+          if (cur) judge(cur);
+          cur = [a];
+        } else if (cur) {
+          cur.push(a);
+        }
+        // An attempt before any first-section attempt has no datable start, so
+        // it opens no sitting — it is not counted either side of the ratio.
+      });
+      if (cur) judge(cur);
+    });
+
+    return completed;
+  })();
+
+  const submittedCount = examId
+    ? completedSittings
+    : attempts.filter(a => a.submitted_at).length;
 
   const completionRate = totalAttempts > 0 ? (submittedCount / totalAttempts) * 100 : 0;
 
   // Repeat Attempts (Creator Only)
   // Repeat Attempts (Creator Only)
-  const studentAttempts = attempts.reduce((acc: any, attempt) => {
+  const studentAttempts = engagedAttempts.reduce((acc: any, attempt) => {
     // Only count attempts for the first section to avoid counting section transitions as repeats
     if (examId && firstSectionIds.size > 0 && !firstSectionIds.has(attempt.section_id)) {
       return acc;
@@ -887,45 +1207,93 @@ export default function Analytics() {
   }, {});
   const repeatersCount = Object.values(studentAttempts).filter((count: any) => count > 1).length;
 
-  const uniqueStudents = new Set(attempts.map(a => a.user_id)).size;
+  const uniqueStudents = new Set(engagedAttempts.map(a => a.user_id)).size;
 
   const totalCorrectQs = validAttempts.reduce((sum, a) => sum + (a.score || 0), 0);
   const totalAttemptedQs = validAttempts.reduce((sum, a) => sum + (a.total_questions || 0), 0);
+  // Correct ÷ ALL questions — a SCORE percentage: skipping lowers it. It was
+  // labelled "Accuracy" for a long time, which told a careful-but-slow student
+  // they didn't know their concepts (issue 13).
   const overallAccuracy = totalAttemptedQs > 0 ? (totalCorrectQs / totalAttemptedQs) * 100 : 0;
+  // Correct ÷ ANSWERED — true accuracy: of the shots taken, how many hit.
+  // Attempts older than 20260838000000 carry no answered count and fall back
+  // to the full-paper denominator, i.e. to the score% this tile used to show.
+  const totalAnsweredQs = validAttempts.reduce(
+    (sum, a) => sum + ((a as any).questions_answered ?? a.total_questions ?? 0),
+    0
+  );
+  const trueAccuracy = totalAnsweredQs > 0 ? (totalCorrectQs / totalAnsweredQs) * 100 : 0;
   
   const totalTimeSpentQs = validAttempts.reduce((sum, a) => sum + (Math.round((a.avg_time_per_question || 0) * (a.total_questions || 0))), 0);
-  const avgTimePerQuestion = totalAttemptedQs > 0 ? totalTimeSpentQs / totalAttemptedQs : 0;
+  // The speed tile divides by questions actually OPENED, not the paper's full
+  // count — the full count made abandoning 90 of 100 questions read as being
+  // 10x faster (issue 12). Attempts older than 20260838000000 carry no
+  // visited count and fall back to the old denominator.
+  const totalVisitedQs = validAttempts.reduce(
+    (sum, a) => sum + ((a as any).questions_visited ?? a.total_questions ?? 0),
+    0
+  );
+  const avgTimePerQuestion = totalVisitedQs > 0 ? totalTimeSpentQs / totalVisitedQs : 0;
   
 
   // For Student View: Trend of accuracy over attempts
   // For Creator View: Trend of average accuracy over time (grouped by day)
   const accuracyTrendData = examId
     ? (() => {
-      // Group by date
-      const grouped = validAttempts.reduce((acc: any, attempt) => {
-        const date = new Date(attempt.submitted_at).toLocaleDateString();
-        if (!acc[date]) {
-          acc[date] = { date, totalAccuracy: 0, scoreCount: 0, attemptCount: 0 };
+      // This line has to add up to the Total Attempts tile above it — both are
+      // "sittings where the student answered something". It counted only
+      // SUBMITTED ones, so the bars summed to less than the tile and there was
+      // nothing on screen to explain the gap.
+      //
+      // Keyed on the day the paper was TAKEN, falling back to created_at:
+      // an abandoned sitting has no submitted_at, and bucketing it by that
+      // would file every one of them under "Invalid Date".
+      const grouped: Record<string, any> = {};
+      const dayOf = (attempt: any) => {
+        const d = new Date(attempt.submitted_at || attempt.created_at);
+        if (Number.isNaN(d.getTime())) return null;
+        // Sort key is ISO so it orders lexicographically and never depends on
+        // the viewer's date format; the label stays local for display.
+        return {
+          key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+          label: d.toLocaleDateString(),
+        };
+      };
+      const bucket = (day: { key: string; label: string }) => {
+        if (!grouped[day.key]) {
+          grouped[day.key] = { key: day.key, date: day.label, totalAccuracy: 0, scoreCount: 0, attemptCount: 0 };
         }
+        return grouped[day.key];
+      };
 
-        // Always add to scoring metrics
-        acc[date].totalAccuracy += attempt.accuracy_percentage;
-        acc[date].scoreCount++;
+      // The Attempts line: every engaged sitting, matching the tile exactly.
+      engagedAttempts.forEach((attempt: any) => {
+        // Fallback: with no firstSectionIds determined, counting everything is
+        // safer than counting nothing.
+        if (firstSectionIds.size > 0 && !firstSectionIds.has(attempt.section_id)) return;
+        const day = dayOf(attempt);
+        if (day) bucket(day).attemptCount++;
+      });
 
-        // Only count as an "Exam Attempt" if it's the first section
-        // Fallback: If no firstSectionIds are determined, counting everything is safer than counting nothing
-        if (firstSectionIds.size === 0 || firstSectionIds.has(attempt.section_id)) {
-          acc[date].attemptCount++;
-        }
+      // Accuracy is averaged over GRADED sittings only. Folding an abandoned
+      // one in as a 0% would invent a score nobody was given.
+      validAttempts.forEach((attempt: any) => {
+        const day = dayOf(attempt);
+        if (!day) return;
+        const g = bucket(day);
+        g.totalAccuracy += attempt.accuracy_percentage;
+        g.scoreCount++;
+      });
 
-        return acc;
-      }, {});
-
-      return Object.values(grouped).map((g: any) => ({
-        date: g.date,
-        accuracy: parseFloat((g.totalAccuracy / g.scoreCount).toFixed(2)),
-        attempts: g.attemptCount
-      })).reverse(); // Reverse to show chronological if fetched desc
+      return Object.values(grouped)
+        .sort((a: any, b: any) => a.key.localeCompare(b.key))
+        .map((g: any) => ({
+          date: g.date,
+          // null, not 0: a day with only abandoned sittings has no accuracy to
+          // report, and recharts draws a gap rather than a dive to zero.
+          accuracy: g.scoreCount > 0 ? parseFloat((g.totalAccuracy / g.scoreCount).toFixed(2)) : null,
+          attempts: g.attemptCount,
+        }));
     })()
     : validAttempts
       .slice()
@@ -938,38 +1306,75 @@ export default function Analytics() {
 
   // Section-wise performance
   // Section-wise performance
+  // A section's identity is its section_group_id — one id shared by every
+  // language variant — not its name.
+  //
+  // Keying on the name did two opposite wrong things at once. Section names are
+  // TRANSLATED per language (ExamIntro walks siblings via section_group_id to
+  // localise them, and only time_minutes is mirrored on rename), so a creator
+  // who renders the Hindi section in Hindi split one section into two rows with
+  // half the cohort each. And every new section is created named "New Section",
+  // so two a creator never renamed merged into one row averaging two unrelated
+  // papers — hiding a weak section behind a strong one.
+  //
+  // The label, time limit and position come from the PRIMARY language's row
+  // rather than whichever attempt happened to land first. time_minutes and
+  // sort_order are mirrored across twins so those agree either way; the name and
+  // the id behind the shared-pool badge do not.
+  const sectionByKey = new Map<string, any>();
+  sectionMeta.forEach(sec => {
+    const key = sec.section_group_id || sec.id;
+    const current = sectionByKey.get(key);
+    // Primary wins; otherwise first seen, so a single-language exam is unchanged.
+    if (!current || (primaryLanguage && sec.language === primaryLanguage)) {
+      sectionByKey.set(key, sec);
+    }
+  });
+
   const sectionPerformance = validAttempts.reduce((acc: any, attempt) => {
     // Guard clause for missing section data
     if (!attempt.section) return acc;
 
-    const sectionName = attempt.section.name || "Unknown Section";
-    if (!acc[sectionName]) {
-      acc[sectionName] = {
-        name: sectionName,
-        sectionId: attempt.section_id,
+    const key =
+      (attempt.section as any).section_group_id || attempt.section_id;
+    // Prefer the primary row's facts; fall back to this attempt's own section
+    // when the section list has not loaded or the row has since been deleted.
+    const label = sectionByKey.get(key);
+
+    if (!acc[key]) {
+      acc[key] = {
+        key,
+        name: label?.name || attempt.section.name || "Unknown Section",
+        sectionId: label?.id || attempt.section_id,
         totalAttempts: 0,
         avgAccuracy: 0,
         totalAccuracy: 0,
         totalTime: 0,
         avgTime: 0,
         totalTimeSpent: 0,
-        timeLimit: attempt.section.time_minutes || 0,
-        sortOrder: attempt.section.sort_order || 0,
-        createdAt: attempt.section.created_at || new Date().toISOString()
+        timeLimit: label?.time_minutes ?? attempt.section.time_minutes ?? 0,
+        sortOrder: label?.sort_order ?? attempt.section.sort_order ?? 0,
+        createdAt: label?.created_at || attempt.section.created_at || new Date().toISOString()
       };
     }
-    acc[sectionName].totalAttempts++;
-    acc[sectionName].totalAccuracy += attempt.accuracy_percentage;
-    acc[sectionName].totalTime += attempt.avg_time_per_question; // Keep for existing charts if needed
-    acc[sectionName].totalTimeSpent += (attempt.total_time_spent || 0);
+    acc[key].totalAttempts++;
+    acc[key].totalAccuracy += attempt.accuracy_percentage;
+    acc[key].totalTime += attempt.avg_time_per_question; // Keep for existing charts if needed
+    acc[key].totalTimeSpent += (attempt.total_time_spent || 0);
 
-    acc[sectionName].avgAccuracy =
-      parseFloat((acc[sectionName].totalAccuracy / acc[sectionName].totalAttempts).toFixed(2));
-    acc[sectionName].avgTime =
-      acc[sectionName].totalTime / acc[sectionName].totalAttempts;
+    acc[key].avgAccuracy =
+      parseFloat((acc[key].totalAccuracy / acc[key].totalAttempts).toFixed(2));
+    acc[key].avgTime =
+      acc[key].totalTime / acc[key].totalAttempts;
 
     return acc;
   }, {});
+
+  /** Readable title for the snippet dialog, resolved from the selected identity. */
+  const selectedSectionLabel =
+    sectionByKey.get(selectedSectionKey || "")?.name ??
+    questionStats.find(q => q.sectionKey === selectedSectionKey)?.sectionName ??
+    "";
 
   const sectionData = Object.values(sectionPerformance).sort((a: any, b: any) => {
     if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
@@ -988,7 +1393,7 @@ export default function Analytics() {
   if (firstSectionIds.size > 0) {
     // Group attempts by user
     const attemptsByUser: Record<string, Attempt[]> = {};
-    attempts.forEach(a => {
+    engagedAttempts.forEach(a => {
       if (!attemptsByUser[a.user_id]) attemptsByUser[a.user_id] = [];
       attemptsByUser[a.user_id].push(a);
     });
@@ -1046,6 +1451,74 @@ export default function Analytics() {
       else scoreDistribution[4].count++;
     });
   }
+
+  /**
+   * How many rows this device is worth painting before the creator asks for
+   * more. A device fact, not a data fact — resolved once per mount.
+   */
+  const rowBudget = useMemo(() => getRowBudget(), []);
+
+  /**
+   * Question Analysis rows, grouped by section and sorted, once per data change.
+   *
+   * This used to live inline in the JSX, which meant every unrelated re-render
+   * on this page — opening a dialog, a tooltip, revealing a section — re-ran the
+   * reduce and re-sorted every question. It also sorted the grouped arrays in
+   * place while rendering. Both are why the table felt slow to interact with
+   * even after it had painted.
+   */
+  const questionSections = useMemo(() => {
+    const groups = questionStats.reduce((groups: Record<string, QuestionStats[]>, q) => {
+      // By identity, not name: two sections left on the same default name would
+      // otherwise share one heading.
+      const group = groups[q.sectionKey] || [];
+      group.push(q);
+      groups[q.sectionKey] = group;
+      return groups;
+    }, {});
+
+    return Object.entries(groups)
+      .sort((a, b) => (a[1][0]?.sectionSortOrder || 0) - (b[1][0]?.sectionSortOrder || 0))
+      .map(([sectionKey, questions]) => ({
+        sectionKey,
+        sectionName: questions[0]?.sectionName ?? "Unknown Section",
+        // Copied before sorting: questionStats is state, and the inline version
+        // reordered the caller's own arrays mid-render.
+        questions: [...questions].sort((a, b) => a.q_no - b.q_no),
+      }));
+  }, [questionStats]);
+
+  /**
+   * Visible row count per section, in the same order. "View all" and a roomy
+   * device are the same thing here: no budget, no controls.
+   */
+  const visibleRowCounts = useMemo(
+    () => allocateRows(
+      questionSections.map(s => s.questions.length),
+      showAllRows ? BUDGET_UNLIMITED : rowBudget,
+      questionSections.map(s => expandedSections.has(s.sectionKey)),
+    ),
+    [questionSections, rowBudget, showAllRows, expandedSections],
+  );
+
+  /**
+   * Total rows behind a click right now — drives the header's "View all".
+   *
+   * Collapsed sections are skipped, deliberately WITHOUT refunding their budget:
+   * allocateRows is STABLE by design (a section is charged whether or not it is
+   * shown, so collapsing one never reflows another). But a collapsed section's
+   * rows are hidden by the chevron, not by the budget — "View all" would lift
+   * the budget and still paint nothing there, because rendering is gated on
+   * !collapsed. Counting them made the header offer "View all" when every row
+   * actually on screen was already visible.
+   */
+  const hiddenRowCount = questionSections.reduce(
+    (n, section, i) =>
+      collapsedSections.has(section.sectionKey)
+        ? n
+        : n + (section.questions.length - visibleRowCounts[i]),
+    0,
+  );
 
   // Insights Data
   const mostSkipped = [...questionStats].sort((a, b) => b.unansweredCount - a.unansweredCount).slice(0, 5).filter(a => a.unansweredCount > 0);
@@ -1122,18 +1595,42 @@ export default function Analytics() {
             <Card className="p-6 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
               <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Overall Accuracy</span>
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                  Accuracy
+                  <InfoTooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="w-3.5 h-3.5 cursor-help" aria-label="How accuracy is calculated" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[240px] text-xs">
+                      Of the questions you answered, how many were right.
+                      Calculated as correct answers ÷ questions answered —
+                      skipping a question doesn't lower it.
+                    </TooltipContent>
+                  </InfoTooltip>
+                </span>
                 <div className="w-8 h-8 rounded-lg bg-green-500/10 flex items-center justify-center text-green-500">
                   <CheckCircle2 className="w-4 h-4" />
                 </div>
               </div>
-              <span className="text-4xl font-black tracking-tight text-green-600 dark:text-green-500">{overallAccuracy.toFixed(1)}%</span>
+              <span className="text-4xl font-black tracking-tight text-green-600 dark:text-green-500">{trueAccuracy.toFixed(1)}%</span>
+              <div className="mt-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                Score: <span className="font-semibold text-foreground">{overallAccuracy.toFixed(1)}%</span>
+                <InfoTooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="w-3.5 h-3.5 cursor-help" aria-label="How score is calculated" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[240px] text-xs">
+                    Correct answers ÷ all questions in your papers, skipped ones
+                    included — so skipping lowers your score, not your accuracy.
+                  </TooltipContent>
+                </InfoTooltip>
+              </div>
             </Card>
 
             <Card className="p-6 relative overflow-hidden group border-border/60 hover:-translate-y-0.5 transition-transform duration-200">
               <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Avg Time / Question</span>
+                <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Avg Time / Attempted Question</span>
                 <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-500">
                   <Clock className="w-4 h-4" />
                 </div>
@@ -1204,8 +1701,19 @@ export default function Analytics() {
                   <BookOpen className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Accuracy / Q</span>
-                  <span className="text-2xl font-black tracking-tight text-foreground">{overallAccuracy.toFixed(1)}%</span>
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+                    Avg Score %
+                    <InfoTooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3 h-3 cursor-help" aria-label="How average score is calculated" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[240px] text-xs">
+                        Correct answers ÷ all questions across every student's
+                        attempt, skipped ones included.
+                      </TooltipContent>
+                    </InfoTooltip>
+                  </span>
+                  <span className="text-2xl font-black tracking-tight text-foreground block">{overallAccuracy.toFixed(1)}%</span>
                 </div>
               </div>
             </Card>
@@ -1217,7 +1725,7 @@ export default function Analytics() {
                   <Clock className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Avg Time / Q</span>
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Avg Time / Attempted Q</span>
                   <span className="text-2xl font-black tracking-tight text-foreground">{avgTimePerQuestion.toFixed(1)}s</span>
                 </div>
               </div>
@@ -1443,10 +1951,10 @@ export default function Analytics() {
                 </thead>
                 <tbody className="divide-y">
                   {sectionData.map((section: any) => (
-                    <tr key={section.name} className="hover:bg-muted/30">
+                    <tr key={section.key} className="hover:bg-muted/30">
                       <td className="px-2 py-3 font-medium">{section.name}</td>
                       <td className="px-2 py-3 text-center">
-                        <Button variant="ghost" size="sm" onClick={() => setSelectedSectionName(section.name)}>
+                        <Button variant="ghost" size="sm" onClick={() => setSelectedSectionKey(section.key)}>
                           <Eye className="w-4 h-4 text-primary" />
                         </Button>
                       </td>
@@ -1485,7 +1993,16 @@ export default function Analytics() {
         {/* Question-Level Analytics (Creator Only) */}
         {examId && questionStats.length > 0 && (
           <Card className="p-6 mb-6">
-            <h3 className="text-lg font-semibold mb-4">Question Analysis</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <h3 className="text-lg font-semibold">Question Analysis</h3>
+              {/* Only ever rendered when something is actually hidden, so a
+                  device with room to spare shows no control at all. */}
+              {hiddenRowCount > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setShowAllRows(true)}>
+                  View all {questionStats.length} questions
+                </Button>
+              )}
+            </div>
             <div className="overflow-x-auto pb-4">
               <table className="w-full text-sm text-left min-w-[700px]">
                 <thead className="bg-muted/50 text-muted-foreground uppercase text-xs">
@@ -1498,26 +2015,19 @@ export default function Analytics() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {Object.entries(
-                    questionStats.reduce((groups: any, q) => {
-                      const group = groups[q.sectionName] || [];
-                      group.push(q);
-                      groups[q.sectionName] = group;
-                      return groups;
-                    }, {})
-                  ).sort((a: any, b: any) => {
-                    const orderA = a[1][0]?.sectionSortOrder || 0;
-                    const orderB = b[1][0]?.sectionSortOrder || 0;
-                    return orderA - orderB;
-                  }).map(([sectionName, questions]: [string, any]) => (
-                    <Fragment key={sectionName}>
+                  {questionSections.map(({ sectionKey, sectionName, questions }, sectionIndex) => {
+                    const visible = visibleRowCounts[sectionIndex];
+                    const hidden = questions.length - visible;
+                    const collapsed = collapsedSections.has(sectionKey);
+                    return (
+                    <Fragment key={sectionKey}>
                       <tr
                         className="bg-muted/20 cursor-pointer hover:bg-muted/30 transition-colors"
-                        onClick={() => toggleSection(sectionName)}
+                        onClick={() => toggleSection(sectionKey)}
                       >
                         <td colSpan={4} className="px-4 py-2 font-semibold text-primary">
                           <div className="flex items-center gap-2">
-                            {collapsedSections.has(sectionName) ? (
+                            {collapsed ? (
                               <ChevronRight className="w-4 h-4" />
                             ) : (
                               <ChevronDown className="w-4 h-4" />
@@ -1526,10 +2036,18 @@ export default function Analytics() {
                             <Badge variant="outline" className="ml-2 text-xs font-normal">
                               {questions.length} questions
                             </Badge>
+                            {/* The heading carries the count whether or not the
+                                rows are on screen, so a section the budget could
+                                not reach still announces its size. */}
+                            {!collapsed && hidden > 0 && (
+                              <span className="text-xs font-normal text-muted-foreground">
+                                showing {visible}
+                              </span>
+                            )}
                           </div>
                         </td>
                       </tr>
-                      {!collapsedSections.has(sectionName) && questions.sort((a: any, b: any) => a.q_no - b.q_no).map((q: QuestionStats, idx: number) => (
+                      {!collapsed && questions.slice(0, visible).map((q: QuestionStats) => (
                         <tr key={q.id} className="hover:bg-muted/30">
                           <td className="px-2 py-3 font-medium text-center">{q.q_no}</td>
                           <td className="px-2 py-3 text-center">
@@ -1554,22 +2072,33 @@ export default function Analytics() {
                           </td>
                         </tr>
                       ))}
+                      {!collapsed && hidden > 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-2 py-3 text-center">
+                            <Button variant="ghost" size="sm" onClick={() => expandSection(sectionKey)}>
+                              View {hidden} more
+                              <ChevronDown className="w-4 h-4 ml-1" />
+                            </Button>
+                          </td>
+                        </tr>
+                      )}
                     </Fragment>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </Card>
         )}
 
-        <Dialog open={!!selectedSectionName} onOpenChange={(open) => !open && setSelectedSectionName(null)}>
+        <Dialog open={!!selectedSectionKey} onOpenChange={(open) => !open && setSelectedSectionKey(null)}>
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Section Snippet: {selectedSectionName}</DialogTitle>
+              <DialogTitle>Section Snippet: {selectedSectionLabel}</DialogTitle>
             </DialogHeader>
             <div className="space-y-8">
               {questionStats
-                .filter(q => q.sectionName === selectedSectionName)
+                .filter(q => q.sectionKey === selectedSectionKey)
                 .map((question, qIdx) => (
                   <div key={question.id} className="border rounded-lg p-6 bg-card">
                     <h4 className="font-semibold mb-4 text-primary">Question {qIdx + 1}</h4>
@@ -1611,7 +2140,7 @@ export default function Analytics() {
                         <p className="font-semibold text-sm text-muted-foreground">Options:</p>
                         {((Array.isArray(question.options) ? question.options : []) as string[]).map((option, oIdx) => {
                           const correctVal = question.correctAnswer;
-                          const normalize = (val: any) => String(val).trim().toLowerCase();
+                          const normalize = (val: any) => normalizeAnswerText(val);
                           let isCorrect = false;
 
                           if (Array.isArray(correctVal)) {
@@ -1663,7 +2192,7 @@ export default function Analytics() {
                     </div>
                   </div>
                 ))}
-              {questionStats.filter(q => q.sectionName === selectedSectionName).length === 0 && (
+              {questionStats.filter(q => q.sectionKey === selectedSectionKey).length === 0 && (
                 <p className="text-muted-foreground text-center">No questions found for this section.</p>
               )}
             </div>
@@ -1715,7 +2244,7 @@ export default function Analytics() {
                     <p className="font-semibold text-sm text-muted-foreground">Options:</p>
                     {((Array.isArray(selectedQuestion.options) ? selectedQuestion.options : []) as string[]).map((option, idx) => {
                       const correctVal = selectedQuestion.correctAnswer;
-                      const normalize = (val: any) => String(val).trim().toLowerCase();
+                      const normalize = (val: any) => normalizeAnswerText(val);
                       let isCorrect = false;
 
                       if (Array.isArray(correctVal)) {
@@ -1828,7 +2357,28 @@ export default function Analytics() {
                             {rankInfo.rank === 1 && <span>🏆</span>}
                             #{rankInfo.rank}<span className="opacity-60">/{rankInfo.total}</span>
                           </span>
-                        ) : null;
+                        ) : (
+                          // A row the server left unranked (issue 11): the
+                          // grouping is re-derived from the paper AS IT IS NOW,
+                          // so an attempt from before a restructure — or on an
+                          // exam since unpublished — has no sitting to rank.
+                          // Say so instead of leaving a silent gap. Rendered
+                          // only after ranksResolved (the spinner above), so it
+                          // never flashes while ranks are still loading.
+                          <InfoTooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full border border-border/60 bg-muted/50 text-muted-foreground cursor-help">
+                                Unranked
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-[250px] text-xs">
+                              This attempt predates a change to the paper (or
+                              its exam is no longer available), so it isn't
+                              ranked against other students. Your score still
+                              counts in your stats.
+                            </TooltipContent>
+                          </InfoTooltip>
+                        );
                       })()}
                       <div className="text-right">
                         {group.sessionHasMarks ? (

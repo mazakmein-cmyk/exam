@@ -50,6 +50,14 @@ export type TimerTarget = {
   endMs: number | null;
   /** Allotted + granted seconds — the denominator for rings and bars. */
   totalSeconds: number;
+  /**
+   * Simulated seconds per real second — the rehearsal speed. The deadline and
+   * the expiry stay on real time; only the DISPLAYED remaining/total are
+   * multiplied, so a rehearsal at 10x shows the question's full simulated
+   * clock ticking ten seconds per second instead of a compressed clock ticking
+   * one. Omitted (or 1) everywhere live.
+   */
+  displayScale?: number;
 };
 
 export type CountdownSnapshot = {
@@ -118,22 +126,33 @@ export function createLiveTimerStore(): LiveTimerStore {
   const recompute = () => {
     const now = nowProvider();
     const running = isRunning(target.endMs, now);
-    const remaining = remainingSeconds(target.endMs, now);
+    // A scaled display reads simulated seconds off the real clock: 1.3 real
+    // seconds left at 10x shows 13. This makes the number move several steps
+    // per tick during a rehearsal — deliberate, that's what "the clock runs
+    // fast" looks like, and only the leaf subscribers pay for it.
+    const scale = target.displayScale ?? 1;
+    const remaining =
+      scale === 1
+        ? remainingSeconds(target.endMs, now)
+        : target.endMs === null
+          ? 0
+          : Math.max(0, Math.ceil(((target.endMs - now) * scale) / 1000));
+    const total = Math.round(target.totalSeconds * scale);
 
-    // Snapshots change at most once a second, never at the 250ms tick rate.
-    // The tick exists so the *visible second* is never late; the ring's own CSS
-    // transition does the smoothing between seconds. Emitting sub-second
-    // fractions here would put a 4Hz re-render back into the leaf for no
-    // visible gain.
+    // Snapshots change at most once a second (live), never at the 250ms tick
+    // rate. The tick exists so the *visible second* is never late; the ring's
+    // own CSS transition does the smoothing between seconds. Emitting
+    // sub-second fractions here would put a 4Hz re-render back into the leaf
+    // for no visible gain.
     if (
       remaining !== countdown.remaining ||
       running !== countdown.running ||
-      target.totalSeconds !== countdown.total
+      total !== countdown.total
     ) {
       countdown = {
         remaining,
-        total: target.totalSeconds,
-        fraction: target.totalSeconds > 0 ? remaining / target.totalSeconds : 0,
+        total,
+        fraction: total > 0 ? remaining / total : 0,
         running,
       };
       emit(countdownListeners);
@@ -189,7 +208,8 @@ export function createLiveTimerStore(): LiveTimerStore {
       const changed =
         next.key !== target.key ||
         next.endMs !== target.endMs ||
-        next.totalSeconds !== target.totalSeconds;
+        next.totalSeconds !== target.totalSeconds ||
+        (next.displayScale ?? 1) !== (target.displayScale ?? 1);
       if (!changed) return;
 
       // A new key is a new question; the same key with a later deadline is A3
@@ -322,8 +342,10 @@ export function useLiveTimerTarget(params: {
   timeSeconds: number | null | undefined;
   /** False whenever no question should be counting down at all. */
   active: boolean;
+  /** Rehearsal speed for the DISPLAY only — see TimerTarget.displayScale. */
+  displayScale?: number;
 }): void {
-  const { index, unlockedAt, extraSeconds, timeSeconds, active } = params;
+  const { index, unlockedAt, extraSeconds, timeSeconds, active, displayScale } = params;
 
   useEffect(() => {
     if (!active || index < 0 || unlockedAt === null || timeSeconds === null || timeSeconds === undefined) {
@@ -334,8 +356,9 @@ export function useLiveTimerTarget(params: {
       key: index,
       endMs: visualEndMs(unlockedAt, timeSeconds, extraSeconds),
       totalSeconds: totalSeconds(timeSeconds, extraSeconds),
+      displayScale,
     });
-  }, [active, index, unlockedAt, extraSeconds, timeSeconds]);
+  }, [active, index, unlockedAt, extraSeconds, timeSeconds, displayScale]);
 }
 
 /**

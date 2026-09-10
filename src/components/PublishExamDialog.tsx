@@ -117,9 +117,17 @@ export default function PublishExamDialog({
   const [selectedLangsForPublish, setSelectedLangsForPublish] = useState<string[]>([]);
   const [validating, setValidating] = useState(true);
   // marksWarning carries severity so the dialog can render an error-level
-  // banner (red) when the exam has NO marking scheme configured at any layer,
-  // distinct from the amber warning shown for partial coverage.
+  // banner (red) when the exam has NO marking scheme configured at any layer.
+  // That case stays ADVISORY: an exam with no marks anywhere is a consistent
+  // choice — everything ranks by correct count.
   const [marksWarning, setMarksWarning] = useState<{ severity: "warning" | "error"; text: string } | null>(null);
+  // marksGate BLOCKS. Marks on part of the paper is not a choice, it is a
+  // contradiction: the ranking gate (bool_and(has_marks)) silently flips the
+  // whole exam to correct-count mode the moment one attempt lands on an
+  // unscored question, so the creator's +4/−1 scheme stops deciding ranks and
+  // nothing on screen says so. All or nothing: remove marks everywhere, or
+  // cover every section.
+  const [marksGate, setMarksGate] = useState<string | null>(null);
 
   // ── The instructions disclaimer ──────────────────────────────────────────
   // Same contract as marksWarning: advisory, never a gate. The exam editor
@@ -167,6 +175,7 @@ export default function PublishExamDialog({
     setPublishLangErrors({});
     setSupportedLangsToPublish([]);
     setSelectedLangsForPublish([]);
+    setMarksGate(null);
 
     try {
       const supportsOptionImages = await tableHasColumn("parsed_questions", "option_image_urls");
@@ -462,7 +471,10 @@ export default function PublishExamDialog({
         const allSectionIds = primarySections.map((s: any) => s.id);
         const { data: allQsData } = await supabase
           .from("parsed_questions")
-          .select("id, section_id")
+          // answer_type rides along on the same request: subjective questions
+          // are graded by hand and exempt from marks coverage, exactly as the
+          // answer-key gate exempts them from needing a key.
+          .select("id, section_id, answer_type")
           .in("section_id", allSectionIds);
         if (allQsData && allQsData.length > 0) {
           // A question is "scored" if any of these exist:
@@ -499,24 +511,49 @@ export default function PublishExamDialog({
             (((questionConfigsRes as any).data) || []).map((r: any) => r.question_id)
           );
 
+          // Coverage is judged over gradeable questions only — subjective ones
+          // are marked by hand and never forced into the scheme.
+          const gradeable = (allQsData as any[]).filter((q) => q.answer_type !== "subjective");
+          const sectionNameById = new Map<string, string>(
+            primarySections.map((s: any) => [s.id, s.name])
+          );
           let unscored = 0;
-          for (const q of allQsData as any[]) {
+          const uncoveredBySection = new Map<string, number>();
+          for (const q of gradeable) {
             const hasQ = questionIdsWithConfig.has(q.id);
             const hasS = sectionIdsWithConfig.has(q.section_id);
-            if (!hasQ && !hasS && !hasExamDefault) unscored++;
+            if (!hasQ && !hasS && !hasExamDefault) {
+              unscored++;
+              uncoveredBySection.set(
+                q.section_id,
+                (uncoveredBySection.get(q.section_id) || 0) + 1
+              );
+            }
           }
 
-          if (unscored === allQsData.length) {
+          if (gradeable.length > 0 && unscored === gradeable.length) {
+            // Everything unscored is consistent — the exam simply has no marks
+            // and ranks by correct count throughout. Advisory, never a gate.
             setMarksWarning({
               severity: "error",
               text:
                 "No marking scheme is configured for this exam. Students will submit and see their results without any marks.",
             });
           } else if (unscored > 0) {
-            setMarksWarning({
-              severity: "warning",
-              text: `${unscored} of ${allQsData.length} questions are unscored and will count as 0 marks.`,
-            });
+            // PART of the paper carries marks: the one state that must not
+            // ship. One attempt touching an unscored question flips the whole
+            // exam's ranking to correct-count mode (bool_and(has_marks)), so
+            // the configured scheme silently stops deciding ranks. Name the
+            // holes so the fix is a checklist, not a hunt.
+            const holes = Array.from(uncoveredBySection.entries()).map(
+              ([sid, n]) =>
+                `"${sectionNameById.get(sid) || "Unnamed section"}" (${n} question${n === 1 ? "" : "s"})`
+            );
+            setMarksWarning(null);
+            setMarksGate(
+              `Marks are set on only part of this paper. Either remove marks from every section, ` +
+                `or add marks to: ${holes.join(", ")}.`
+            );
           } else {
             setMarksWarning(null);
           }
@@ -907,6 +944,20 @@ export default function PublishExamDialog({
               ) : isPublishing ? (
                 <div className="space-y-4 text-sm text-muted-foreground outline-none">
                   <p>Select the languages you want to publish for "{examName}".</p>
+                  {/* Unlike every advisory banner below, this one GATES: the
+                      Publish button stays disabled until the paper is all-marks
+                      or no-marks. Partial coverage silently re-ranks the whole
+                      exam by correct count the moment one attempt lands on an
+                      unscored question. */}
+                  {marksGate && (
+                    <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800 p-3 text-xs text-red-700 dark:text-red-400">
+                      <span className="shrink-0 mt-0.5">⛔</span>
+                      <span>
+                        <span className="font-semibold">Publishing is blocked. </span>
+                        {marksGate}
+                      </span>
+                    </div>
+                  )}
                   {marksWarning && (
                     <div
                       className={
@@ -1074,7 +1125,12 @@ export default function PublishExamDialog({
           <AlertDialogCancel disabled={loading || regeneratingLang !== null}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleExecute}
-            disabled={validating || loading || regeneratingLang !== null}
+            disabled={
+              validating ||
+              loading ||
+              regeneratingLang !== null ||
+              (isPublishing && marksGate !== null)
+            }
             className={isPublishing ? "bg-primary" : "bg-orange-500 hover:bg-orange-600"}
           >
             {loading ? "Saving..." : isPublishing ? "Publish" : "Unpublish"}

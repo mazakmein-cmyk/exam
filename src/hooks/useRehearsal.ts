@@ -47,6 +47,16 @@ export type RehearsalState = {
   analytics: Map<number, ReturnType<typeof eventsToAnalytics>>;
   speed: RehearsalSpeed;
   finished: boolean;
+  /**
+   * Seconds the creator GRANTED on the open question with +30s/+60s, raw.
+   * The chip and the 300s cap read this number, so it means the same thing it
+   * means live. What the clock consumes is scaledExtraSeconds: the speed
+   * multiplier compresses ALL simulated time, granted extensions included —
+   * at 10x a +30s grant plays out in 3 real seconds, same as the question
+   * itself. The two controls stay independent: speed never changes what was
+   * granted, a grant never slows the rehearsal down.
+   */
+  extraSeconds: number;
 };
 
 const IDLE: RehearsalState = {
@@ -60,6 +70,7 @@ const IDLE: RehearsalState = {
   analytics: new Map(),
   speed: 1,
   finished: false,
+  extraSeconds: 0,
 };
 
 export type UseRehearsalResult = RehearsalState & {
@@ -77,9 +88,21 @@ export type UseRehearsalResult = RehearsalState & {
    * way for a question to be over.
    */
   endNow: () => void;
+  /**
+   * A3 in the rehearsal: grow the open question's clock, in memory.
+   *
+   * Same contract as the flush — the +30s/+60s buttons must do something here
+   * rather than nothing (they are controls the creator is practising), and they
+   * must not reach the network to do it. The countdown already derives its
+   * deadline from unlockedAt + seconds + extraSeconds, live and rehearsed alike,
+   * so all this does is move the same number the live RPC moves.
+   */
+  addTime: (seconds: number) => void;
   setSpeed: (speed: RehearsalSpeed) => void;
   /** Total seconds for the open question, already scaled by speed. */
   scaledSeconds: number;
+  /** The granted extension as the clock consumes it — scaled by speed. */
+  scaledExtraSeconds: number;
 };
 
 function correctIndexOf(correctAnswer: unknown): number {
@@ -209,6 +232,8 @@ export function useRehearsal(questions: RehearsalQuestion[]): UseRehearsalResult
         confusionCount: 0,
         optionTally: {},
         finished: false,
+        // Added time belongs to the question it was added on, as live.
+        extraSeconds: 0,
       };
     });
   }, [clearTimers]);
@@ -271,14 +296,46 @@ export function useRehearsal(questions: RehearsalQuestion[]): UseRehearsalResult
         confusionCount: landed.filter((e) => e.confused).length,
         optionTally,
         analytics,
+        // The deadline is unlockedAt + scaled + extraSeconds; the line above
+        // lands that sum on now only if the extension is zeroed with it.
+        extraSeconds: 0,
       };
     });
   }, [clearTimers]);
+
+  const addTime = useCallback((seconds: number) => {
+    setState((prev) => {
+      // Only an open question has a clock to grow — same refusal the live RPC
+      // makes with ADDTIME_NOT_LIVE, minus the toast.
+      if (!prev.active || prev.index < 0 || !prev.unlockedAt || prev.finished) return prev;
+      return { ...prev, extraSeconds: prev.extraSeconds + Math.max(0, seconds) };
+    });
+  }, []);
 
   const scaledSeconds = useMemo(() => {
     const q = state.index >= 0 ? questions[state.index] : null;
     return q ? Math.max(1, Math.round(q.time_seconds / state.speed)) : 0;
   }, [questions, state.index, state.speed]);
 
-  return { ...state, start, stop, unlockNext, endNow, setSpeed, scaledSeconds };
+  // Same compression the question window gets: a rehearsal at 10x consumes a
+  // +30s grant in 3 real seconds. Floored at 1 so a grant is never invisible.
+  const scaledExtraSeconds = useMemo(
+    () =>
+      state.extraSeconds > 0
+        ? Math.max(1, Math.round(state.extraSeconds / state.speed))
+        : 0,
+    [state.extraSeconds, state.speed]
+  );
+
+  return {
+    ...state,
+    start,
+    stop,
+    unlockNext,
+    endNow,
+    addTime,
+    setSpeed,
+    scaledSeconds,
+    scaledExtraSeconds,
+  };
 }

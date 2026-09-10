@@ -101,6 +101,7 @@ import { selectMoment } from "@/lib/live/moments.js";
 import { fireCelebration, shouldCelebrate } from "@/lib/live/celebrate";
 import { fetchLiveMoments, type LiveMoment } from "@/services/liveExamService";
 import { useLiveSession } from "@/hooks/useLiveSession";
+import { mergePushedQuestion } from "@/lib/live/pushedQuestions.js";
 import { usePeerWindow } from "@/hooks/usePeerWindow";
 import { useFitText } from "@/hooks/useFitText";
 import { controlWindowName } from "@/lib/live/presentChannel";
@@ -196,6 +197,23 @@ export default function LiveExamPresent() {
 
   const [exam, setExam] = useState<LiveExam | null>(null);
   const [questions, setQuestions] = useState<LiveQuestion[]>([]);
+  // Read by the merge effect below. A ref, not a dependency: depending on
+  // `questions` would re-run the merge on the render the merge itself caused.
+  const questionsRef = useRef<LiveQuestion[]>([]);
+  questionsRef.current = questions;
+
+  // total_questions FIRST, questions.length only as a fallback.
+  //
+  // This order used to be the other way round, and it was correct then: the
+  // browser held the whole paper, so questions.length WAS the total. Since
+  // 20260844000000 the array holds only what has been released, so preferring it
+  // would shrink every "x of N" on the page as the session ran — the progress
+  // bar, the score denominator and the lobby's "N questions" would all count
+  // what has been asked so far instead of what the paper contains.
+  //
+  // total_questions is the authored count for one language, maintained wherever
+  // questions are added or imported.
+  const totalQuestionCount = exam?.total_questions || questions.length || 0;
   const [leaderboard, setLeaderboard] = useState<LiveParticipant[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [moments, setMoments] = useState<LiveMoment[]>([]);
@@ -419,6 +437,49 @@ export default function LiveExamPresent() {
 
   const status = session.status ?? exam?.status ?? null;
   const index = session.currentQuestionIndex;
+
+  /**
+   * File each newly unlocked question onto the wall.
+   *
+   * The fetch above runs once per (exam, language) and never again, which was
+   * fine while the student view returned the whole paper. It does not any more —
+   * it stops at the question being played (20260844000000). Without this the
+   * wall would load empty when the creator opens it before starting (the cursor
+   * sits at -1, so nothing is released yet) and then stay empty for the entire
+   * session, in front of the room, with no error anywhere.
+   *
+   * Costs nothing: the question arrives on the exam row this page is already
+   * receiving over Realtime and in the sync poll.
+   */
+  useEffect(() => {
+    const outcome = mergePushedQuestion(
+      questionsRef.current,
+      session.currentQuestionPayload,
+      index,
+      language,
+    );
+
+    if (outcome.kind === "gap") {
+      // Missed unlocks would leave the array sparse, and this page addresses it
+      // by position. Refetch — the view is gated, so this returns only what has
+      // been asked.
+      if (!liveExamId) return;
+      let cancelled = false;
+      fetchAllLiveQuestionsStudent(liveExamId, language)
+        .then((qs) => {
+          // Same rule as the loader above: never blank a live wall.
+          if (!cancelled && qs.length > 0) setQuestions(qs);
+        })
+        .catch(() => {
+          /* Keep whatever is already on the wall. */
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (outcome.kind === "merged") setQuestions(outcome.questions);
+  }, [session.currentQuestionPayload, index, language, liveExamId]);
   const question = index >= 0 ? questions[index] : null;
   const isLive = status === "live";
   const isEnded = status === "ended";
@@ -910,7 +971,7 @@ export default function LiveExamPresent() {
           <div className="flex shrink-0 items-center gap-4">
             <p className="text-[clamp(1.1rem,1.7vw,1.9rem)] font-bold leading-none tabular-nums">
               <span style={{ color: "var(--stage-fg)" }}>Q{index + 1}</span>
-              <span style={{ color: "var(--stage-faint)" }}> / {questions.length}</span>
+              <span style={{ color: "var(--stage-faint)" }}> / {totalQuestionCount}</span>
             </p>
             {/* How far through the set we are — the question a room asks out loud
                 every few minutes, answered without anyone having to. */}
@@ -922,7 +983,7 @@ export default function LiveExamPresent() {
               <div
                 className="h-full rounded-full transition-[width] duration-700 ease-out"
                 style={{
-                  width: `${questions.length > 0 ? ((index + 1) / questions.length) * 100 : 0}%`,
+                  width: `${totalQuestionCount > 0 ? ((index + 1) / totalQuestionCount) * 100 : 0}%`,
                   background: "var(--stage-muted)",
                 }}
               />

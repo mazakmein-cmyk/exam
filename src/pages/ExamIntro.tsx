@@ -16,6 +16,7 @@ import { studentQuestionsRelation } from "@/lib/dbFeatures";
 import { dropShapeLine, reconcileTimingLine } from "@/lib/examInstructionEngine.js";
 import { sumSectionMinutes, totalExamMinutes } from "@/lib/examNavigation.js";
 import { fetchTimingGroups, type TimingGroupRow } from "@/lib/timingGroupSettings";
+import { studentSectionColumns } from "@/lib/sectionColumns";
 import {
   groupDisplayName,
   hasGroupUnits,
@@ -294,14 +295,21 @@ const ExamIntro = () => {
                 setSelectedLanguage(pubLangs[0]);
             }
 
-            // Fetch ALL Sections (select * so the hand-migrated timing_group_id
-            // rides along when the live schema has it — naming it in a column
-            // list would fail the whole query pre-migration) plus the exam's
-            // timing groups, which resolve to [] on an un-migrated database.
+            // Fetch ALL Sections, plus the exam's timing groups, which resolve
+            // to [] on an un-migrated database.
+            //
+            // A named column list rather than select("*"): the wide select was
+            // also handing students pdf_url and pdf_name, a link to the source
+            // question paper and its original file name, neither of which
+            // anything on this page reads. studentSectionColumns decides at
+            // runtime whether the hand-migrated timing_group_id can be named —
+            // it is load-bearing here (resolveTimingGroupIds reads it off these
+            // rows) but naming it pre-migration would fail the whole query.
+            const sectionCols = await studentSectionColumns();
             const [{ data: sections, error: sectionsError }, groupRows] = await Promise.all([
                 supabase
                     .from("sections")
-                    .select("*")
+                    .select(sectionCols as "*")
                     .eq("exam_id", examId)
                     .order("sort_order", { ascending: true })
                     .order("created_at", { ascending: true }),

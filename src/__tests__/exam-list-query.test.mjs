@@ -224,18 +224,33 @@ await test("a transient failure does NOT latch the column off for the session", 
 console.log("\n[5] the callers");
 
 await test("the student library reads through the helper, never a bare select", () => {
-  const LIBRARY = readSrc("pages/Marketplace.tsx");
+  // The published-exams fetch was extracted to lib/publishedExams.ts so the
+  // home page can share its react-query cache entry. The invariant travelled
+  // with it — this assertion followed (it used to grep Marketplace.tsx and
+  // went stale, failing on every clean checkout).
+  const FETCH = readSrc("lib/publishedExams.ts");
   assert(
-    /queryExamList\(\(columns\) =>/.test(LIBRARY),
+    /queryExamList\(\(columns\) =>/.test(FETCH),
     "the published-exams read must go through the fallback helper"
   );
   assert(
-    !/\.from\("exams"\)\s*\.select\("\*"\)/.test(LIBRARY),
+    !/\.from\("exams"\)\s*\.select\("\*"\)/.test(FETCH),
     "select(*) here is what shipped the translation blobs to every visitor"
   );
   assert(
-    !/select\(\s*"[^"]*paper_type/.test(LIBRARY),
+    !/select\(\s*"[^"]*paper_type/.test(FETCH),
     "the column must be named by the helper's list, not hardcoded at the call site where nothing can retry"
+  );
+  // And the library page actually consumes that one fetch — a second, bare
+  // exams read sneaking back into the page would bypass all of the above.
+  const LIBRARY = readSrc("pages/Marketplace.tsx");
+  assert(
+    /queryFn: fetchPublishedExams/.test(LIBRARY),
+    "the library must read through fetchPublishedExams"
+  );
+  assert(
+    !/\.from\("exams"\)/.test(LIBRARY),
+    "no direct exams read may exist in the library page at all"
   );
 });
 

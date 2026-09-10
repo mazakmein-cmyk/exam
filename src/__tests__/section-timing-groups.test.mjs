@@ -220,7 +220,7 @@ test("groupPoolMinutes tolerates junk the way sumSectionMinutes does", () => {
   assertEqual(groupPoolMinutes({ time_minutes: 0 }, []), 0);
 });
 
-test("a group id split into two non-adjacent runs stays two units", () => {
+test("a split group never merges across the gap — and never pays its pool twice", () => {
   const broken = [
     { id: "b-1", time_minutes: 10, language: "en", timing_group_id: G1 },
     { id: "b-2", time_minutes: 10, language: "en", timing_group_id: G1 },
@@ -228,8 +228,31 @@ test("a group id split into two non-adjacent runs stays two units", () => {
     { id: "b-4", time_minutes: 10, language: "en", timing_group_id: G1 },
     { id: "b-5", time_minutes: 10, language: "en", timing_group_id: G1 },
   ];
-  const units = timingUnits(broken, GROUPS, resolveTimingGroupIds(broken, "en"));
-  assertDeep(units.map((u) => u.kind), ["group", "solo", "group"], "corrupt order never merges across the gap");
+  // An explicit 45-minute pool makes the payout visible: each run used to
+  // carry the FULL pool (45 + 45 for one split — issue 6, students got a
+  // doubled paper). The first proper run keeps the pool; stragglers degrade
+  // to their own per-section clocks.
+  const overridden = GROUPS.map((g) => (g.id === G1 ? { ...g, time_minutes: 45 } : g));
+  const units = timingUnits(broken, overridden, resolveTimingGroupIds(broken, "en"));
+  assertDeep(
+    units.map((u) => u.kind),
+    ["group", "solo", "solo", "solo"],
+    "corrupt order never merges across the gap, and only the first run is a pooled unit"
+  );
+  assertDeep(units.map((u) => u.minutes), [45, 30, 10, 10], "the pool pays exactly once");
+});
+
+test("a lone straggler run does not consume the pool a later proper run deserves", () => {
+  const leadingOrphan = [
+    { id: "o-1", time_minutes: 10, language: "en", timing_group_id: G1 },
+    { id: "o-2", time_minutes: 30, language: "en", timing_group_id: null },
+    { id: "o-3", time_minutes: 10, language: "en", timing_group_id: G1 },
+    { id: "o-4", time_minutes: 10, language: "en", timing_group_id: G1 },
+  ];
+  const overridden = GROUPS.map((g) => (g.id === G1 ? { ...g, time_minutes: 45 } : g));
+  const units = timingUnits(leadingOrphan, overridden, resolveTimingGroupIds(leadingOrphan, "en"));
+  assertDeep(units.map((u) => u.kind), ["solo", "solo", "group"], "a run of one is solo, as ever");
+  assertDeep(units.map((u) => u.minutes), [10, 30, 45], "the pool lands on the first run of two-or-more");
 });
 
 test("a run of ONE member behaves solo — no pool it no longer shares", () => {

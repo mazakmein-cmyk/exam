@@ -1,5 +1,6 @@
 
 import { supabase } from "@/integrations/supabase/client";
+import { normalizeAnswerText } from "@/lib/answerNormalize.js";
 
 export type QuestionState = {
     selectedAnswer: any;
@@ -65,7 +66,9 @@ export const saveExamAttempt = async ({
 
         let isCorrect = false;
 
-        const normalize = (val: any) => String(val).trim().toLowerCase();
+        // NFC + numeric canon, same rule as the server grader — see
+        // lib/answerNormalize.js for why both halves exist.
+        const normalize = (val: any) => normalizeAnswerText(val);
 
         if (selectedAnswer !== null && correctAnswer !== null && correctAnswer !== undefined) {
             if (Array.isArray(correctAnswer)) {
@@ -146,6 +149,10 @@ export const saveExamAttempt = async ({
     // All-or-nothing on purpose: if the function is not there yet, the whole
     // original path below runs unchanged. No half-graded submissions.
     let serverGraded = false;
+    // Whether the server also computed marks. A database carrying the grader but
+    // not 20260843000000 returns nothing here, so the browser keeps doing it —
+    // which is also the only shape in which marks_score is still writable.
+    let serverScoredMarks = false;
     try {
         const { data: graded, error: gradeError } = await (supabase.rpc as any)(
             "submit_exam_attempt",
@@ -171,6 +178,7 @@ export const saveExamAttempt = async ({
             );
         } else if (graded) {
             serverGraded = true;
+            serverScoredMarks = (graded as any).marks_scored === true;
             // The server counted from the section, not from this payload, so
             // trust its numbers over the ones computed above.
             correctCount = Number((graded as any).score ?? correctCount);
@@ -252,10 +260,15 @@ export const saveExamAttempt = async ({
     }
 
     // ── MARKS MODULE: Non-fatal additive scoring ──
+    // Skipped entirely when the server scored: 20260843000000 computes marks in
+    // the same transaction as the grade and locks marks_score/marks_max, so this
+    // pass would recompute the same numbers and then fail on a locked column.
     // Does not affect existing `score` column. Writes to `marks_score`, `marks_max`, and `question_marks_log`.
     // KEY: For multi-language exams, scoring config is set on the PRIMARY language's sections/questions.
     // We resolve to primary IDs here so Hindi (or any secondary) students get the correct marks config.
     try {
+        if (serverScoredMarks) return finalAttemptId;
+
         const { getQuestionScoringConfigs, getSectionScoringDefaults, getExamScoringDefault,
                 getExamIdForSection, saveMarksLog, updateAttemptMarks } = await import('./scoringService');
         const { calculateMarks } = await import('./scoringEngine');

@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import SEO from "@/components/SEO";
+import OnboardingModal from "@/components/OnboardingModal";
 import LiveQuestionBody, { questionPreviewText } from "@/components/live/LiveQuestionBody";
 import LiveOption, { optionLetter, type OptionVisual } from "@/components/live/LiveOption";
 import LiveLeaderboard from "@/components/live/LiveLeaderboard";
@@ -60,8 +61,9 @@ import { LiveTimerBar, LiveTimerChip } from "@/components/live/LiveTimer";
 import {
   fetchLiveExamByShareCode,
   fetchAllLiveQuestionsStudent,
+  LiveLinkExpiredError,
   fetchRevealedAnswers,
-  fetchLiveSections,
+  fetchLiveSectionsStudent,
   fetchAllAnalytics,
   joinLiveExam,
   fetchPublicLeaderboard,
@@ -76,6 +78,7 @@ import {
   type LiveQuestionAnalytics,
 } from "@/services/liveExamService";
 import { useLiveSession } from "@/hooks/useLiveSession";
+import { mergePushedQuestion } from "@/lib/live/pushedQuestions.js";
 import {
   useLiveCountdown,
   useLiveTimerExpiry,
@@ -255,7 +258,17 @@ export default function LiveExamStudent() {
   // "take" for students, "preview" for the exam's own creator (watch-only, no
   // participant row, no answers), "blocked" for a creator on someone else's.
   const [access, setAccess] = useState<ExamAccessMode>("take");
+  /**
+   * The link points at a session that finished before this person ever joined.
+   * Distinct from "blocked" (wrong account type) and from a missing exam: the
+   * link was real, they are simply late, and no participant row was written.
+   */
+  const [linkExpired, setLinkExpired] = useState(false);
   const isPreview = access === "preview";
+  // Signed in but no profiles row yet — typically an account created moments
+  // ago from this very share link. They must finish onboarding (name, user ID)
+  // before joining, or the leaderboard shows their email prefix as their name.
+  const [needsProfile, setNeedsProfile] = useState(false);
 
   // Exam Data
   const [exam, setExam] = useState<LiveExam | null>(null);
@@ -368,6 +381,23 @@ export default function LiveExamStudent() {
       setAccess(mode);
       if (mode === "blocked") return;
 
+      // 2b. Profile gate — an account created moments ago from this very link
+      // has no profiles row yet. Stop before joining so the participant row is
+      // never written with a fallback display name; OnboardingModal's
+      // onComplete re-runs init() once the profile is saved.
+      if (mode === "take") {
+        const { data: profileRow } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("id", authUser.id)
+          .maybeSingle();
+        if (!profileRow) {
+          setNeedsProfile(true);
+          return;
+        }
+      }
+      setNeedsProfile(false);
+
       examRef.current = examData;
       setExam(examData);
       joinIndexRef.current = examData.current_question_index;
@@ -382,7 +412,7 @@ export default function LiveExamStudent() {
       // 4. Load Questions, Sections, Responses, Reveals, Analytics
       const [qs, secs, myResponses, revealed, analyticsRows] = await Promise.all([
         fetchAllLiveQuestionsStudent(examData.id, lang),
-        fetchLiveSections(examData.id, lang).catch(() => [] as LiveSection[]),
+        fetchLiveSectionsStudent(examData.id, lang).catch(() => [] as LiveSection[]),
         fetchMyResponses(examData.id),
         fetchRevealedAnswers(examData.id),
         fetchAllAnalytics(examData.id).catch(() => [] as LiveQuestionAnalytics[]),
@@ -417,6 +447,12 @@ export default function LiveExamStudent() {
       // from here — a load and an unlock must take the same path or the two
       // drift apart on rejoin.
     } catch (error: any) {
+      // Not a failure to report as one: they opened a link to a session that is
+      // over. No row was written, so they are not an attendee of anything.
+      if (error instanceof LiveLinkExpiredError) {
+        setLinkExpired(true);
+        return;
+      }
       toast({ title: "Error", description: error.message || "Failed to join live exam.", variant: "destructive" });
     } finally {
       setLoading(false);
@@ -432,7 +468,7 @@ export default function LiveExamStudent() {
     try {
       const [qs, secs] = await Promise.all([
         fetchAllLiveQuestionsStudent(exam.id, lang),
-        fetchLiveSections(exam.id, lang),
+        fetchLiveSectionsStudent(exam.id, lang),
       ]);
       questionsRef.current = qs;
       setQuestions(qs);
@@ -611,6 +647,75 @@ export default function LiveExamStudent() {
 
   const sessionStatus = session.status ?? exam?.status ?? null;
   const sessionIndex = session.currentQuestionIndex;
+
+  /**
+   * File the newly unlocked question into my list.
+   *
+   * A student's browser used to receive the ENTIRE paper the moment they opened
+   * the link — which is handed out at publish, before the session starts. The
+   * answer keys were withheld, but in a live exam the paper IS the secret:
+   * one-question-at-a-time was a visual effect, not a rule. The server now
+   * releases only up to the question being played (20260844000000).
+   *
+   * That leaves the question of how each new one arrives. Fetching per unlock
+   * would cost one request per question per student, which is exactly what a
+   * free-tier project cannot spend. So the server writes the open question onto
+   * the live_exams row instead, and it rides messages this page already
+   * receives: the Realtime row push, and the sync poll that runs anyway for the
+   * heartbeat, the clock samples and the head count. Zero added requests.
+   *
+   * The payload carries every language, so switching language mid-session does
+   * not become a request either.
+   */
+  useEffect(() => {
+    const payload = session.currentQuestionPayload;
+    const ordinal = sessionIndex;
+    if (!payload || payload.length === 0 || ordinal < 0) return;
+
+    // The canonical map is keyed on PRIMARY-language ids, because that is what
+    // analytics and reveals arrive keyed on. It was built once at join and so
+    // only covers the questions asked before this student walked in; without
+    // this it would stay that size and every later question's analytics would
+    // be dropped on the floor by the `ord === undefined` guard.
+    const primaryLang = exam?.primary_language || "en";
+    const primaryRow = payload.find((q) => q.language === primaryLang);
+    if (primaryRow && !canonicalIdToOrdinalRef.current.has(primaryRow.id)) {
+      canonicalIdToOrdinalRef.current.set(primaryRow.id, ordinal);
+    }
+
+    const outcome = mergePushedQuestion(
+      questionsRef.current,
+      payload,
+      ordinal,
+      activeLanguage,
+    );
+
+    if (outcome.kind === "gap") {
+      // Refetch rather than guess. The view is gated now, so the same call that
+      // used to hand over the whole paper hands over exactly what has been
+      // asked — one request, only on a genuinely missed unlock, self-healing.
+      if (!exam) return;
+      let cancelled = false;
+      fetchAllLiveQuestionsStudent(exam.id, activeLanguage)
+        .then((qs) => {
+          if (cancelled) return;
+          questionsRef.current = qs;
+          setQuestions(qs);
+        })
+        .catch(() => {
+          // Leave the list as it stands: short is recoverable on the next
+          // unlock, and a toast here would fire on a transient blip.
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (outcome.kind === "merged") {
+      questionsRef.current = outcome.questions;
+      setQuestions(outcome.questions);
+    }
+  }, [session.currentQuestionPayload, sessionIndex, activeLanguage, exam]);
 
   /**
    * WHICH of my questions is the one the host has open.
@@ -909,12 +1014,20 @@ export default function LiveExamStudent() {
     return n;
   }, [questions, responses, revealedAnswers]);
 
+  type SectionBreakdownRow = { key: string; label: string; total: number; answered: number; correct: number };
   const sectionBreakdown = useMemo(() => {
-    if (!isEnded) return [] as [string, { total: number; answered: number; correct: number }][];
-    const m = new Map<string, { total: number; answered: number; correct: number }>();
+    if (!isEnded) return [] as SectionBreakdownRow[];
+    // Keyed by the section's IDENTITY, labelled by its name. Keying on the name
+    // merged two sections a creator never renamed ("New Section" twice) into
+    // one row averaging two unrelated topics — and gave React duplicate keys.
+    // A student's questions are all one language, so live_section_id is the
+    // identity here. The live row's current name is preferred over the
+    // denormalised section_label, which only some rename paths keep in sync.
+    const m = new Map<string, SectionBreakdownRow>();
     questions.forEach((q, idx) => {
-      const label = q.section_label || sectionNameById.get(q.live_section_id) || "General";
-      const entry = m.get(label) || { total: 0, answered: 0, correct: 0 };
+      const key = q.live_section_id || "general";
+      const label = sectionNameById.get(q.live_section_id) || q.section_label || "General";
+      const entry = m.get(key) || { key, label, total: 0, answered: 0, correct: 0 };
       entry.total++;
       const res = responses.get(idx);
       if (res) {
@@ -923,9 +1036,9 @@ export default function LiveExamStudent() {
         if (c === null && revealedAnswers.has(q.id)) c = isResponseCorrect(res.selected_answer, revealedAnswers.get(q.id), q.answer_type);
         if (c === true) entry.correct++;
       }
-      m.set(label, entry);
+      m.set(key, entry);
     });
-    return Array.from(m.entries());
+    return Array.from(m.values());
   }, [isEnded, questions, responses, revealedAnswers, sectionNameById]);
 
   const overallAccuracy = useMemo(() => {
@@ -1000,7 +1113,51 @@ export default function LiveExamStudent() {
     [participant, session.privacyMode, myRank, myTotalCorrect, answeredCount]
   );
 
-  const totalQuestionCount = questions.length || exam?.total_questions || 0;
+  // total_questions FIRST, questions.length only as a fallback.
+  //
+  // This order used to be the other way round, and it was correct then: the
+  // browser held the whole paper, so questions.length WAS the total. Since
+  // 20260844000000 the array holds only what has been released, so preferring it
+  // would shrink every "x of N" on the page as the session ran — the progress
+  // bar, the score denominator and the lobby's "N questions" would all count
+  // what has been asked so far instead of what the paper contains.
+  //
+  // total_questions is the authored count for one language, maintained wherever
+  // questions are added or imported.
+  const totalQuestionCount = exam?.total_questions || questions.length || 0;
+
+  /**
+   * How many questions the host actually put in front of the room.
+   *
+   * The cursor, not this student's list length: the cursor is what the host
+   * asked, and it is the same number for everybody regardless of which language
+   * they joined with.
+   */
+  const askedCount = useMemo(() => {
+    if (sessionIndex < 0) return 0;
+    const asked = sessionIndex + 1;
+    // Clamped, because a cursor past the end of the paper would otherwise
+    // produce a denominator larger than the exam.
+    return totalQuestionCount > 0 ? Math.min(asked, totalQuestionCount) : asked;
+  }, [sessionIndex, totalQuestionCount]);
+
+  /**
+   * What a SCORE is out of — which is not the same as how big the paper is.
+   *
+   * End a session after 3 of 20 and a student who answered all three correctly
+   * used to read "3/20 Correct" directly beside "100% Accuracy", because the two
+   * numbers had different denominators and neither said so: correct was out of
+   * every authored question, accuracy out of the ones actually answered. Both
+   * were true, together they were nonsense, and the student was being scored
+   * against 17 questions nobody ever showed them.
+   *
+   * Out of what was asked, the two agree: "3/3" and "100%".
+   *
+   * Only while the session is over. Mid-session, "Q3 / 20" and "3/20 answered"
+   * are progress through the paper, which is exactly what a candidate wants to
+   * see — so those keep the authored total.
+   */
+  const scoreOutOf = isEnded ? askedCount : totalQuestionCount;
 
   // ─── Celebration: confetti + chime once per revealed-correct question ──
 
@@ -1173,8 +1330,54 @@ export default function LiveExamStudent() {
   }
 
   // Must precede the not-found branch: a blocked creator never gets an `exam`.
+  if (linkExpired) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-6 text-center">
+        <div className="h-14 w-14 rounded-2xl bg-muted flex items-center justify-center">
+          <Radio className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <div>
+          <h1 className="font-display text-xl font-bold">Link expired</h1>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            This live exam has already ended, so you can't join it now. Ask your
+            host to share the results, or the link to their next session.
+          </p>
+        </div>
+        <Button variant="outline" onClick={() => navigate("/dashboard")}>
+          Back to dashboard
+        </Button>
+      </div>
+    );
+  }
+
   if (access === "blocked") {
     return <CreatorExamBlocked backTo="/dashboard?tab=live" />;
+  }
+
+  // Must also precede the not-found branch: the profile gate stops init()
+  // before `exam` is set, on purpose — nothing (participant row, realtime
+  // subscriptions) may start until onboarding is done.
+  if (needsProfile) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-6 text-center">
+        <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Radio className="h-6 w-6 text-primary" />
+        </div>
+        <div>
+          <h1 className="font-display text-xl font-bold">One last step</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Complete your profile to join the live exam.
+          </p>
+        </div>
+        <OnboardingModal
+          isOpen
+          onComplete={() => {
+            setNeedsProfile(false);
+            init();
+          }}
+        />
+      </div>
+    );
   }
 
   if (!exam) {
@@ -1324,9 +1527,24 @@ export default function LiveExamStudent() {
                 {sections.map((s) => (
                   <div key={s.id} className="flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5">
                     <span className="text-sm font-medium">{s.name}</span>
-                    <span className="text-xs tabular-nums text-muted-foreground">
-                      {questionCountBySection.get(s.id) || 0} questions
-                    </span>
+                    {/* Shown only when it is actually known.
+                     *
+                     * This is the waiting room, and since 20260844000000 the
+                     * browser holds only questions that have been RELEASED —
+                     * which before the host starts is none. So this count read
+                     * "0 questions" against every section, to a student sitting
+                     * there waiting, on a paper that has plenty.
+                     *
+                     * Not fetched instead: that would be one more request per
+                     * student at join, the hottest path there is, to label
+                     * something the badge above already covers with the paper's
+                     * real total. Rendered conditionally rather than deleted so
+                     * it comes back on its own if the counts ever arrive. */}
+                    {(questionCountBySection.get(s.id) || 0) > 0 && (
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {questionCountBySection.get(s.id)} questions
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1877,7 +2095,7 @@ export default function LiveExamStudent() {
                     <div className="px-3 py-4 text-center">
                       <p className="text-2xl font-bold tabular-nums text-emerald-600">
                         {myTotalCorrect}
-                        <span className="text-base font-semibold text-muted-foreground">/{totalQuestionCount}</span>
+                        <span className="text-base font-semibold text-muted-foreground">/{scoreOutOf}</span>
                       </p>
                       <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Correct</p>
                     </div>
@@ -1924,12 +2142,12 @@ export default function LiveExamStudent() {
                       Section breakdown
                     </p>
                     <div className="mt-3 space-y-3">
-                      {sectionBreakdown.map(([label, s]) => {
+                      {sectionBreakdown.map((s) => {
                         const pct = s.total > 0 ? (s.correct / s.total) * 100 : 0;
                         return (
-                          <div key={label}>
+                          <div key={s.key}>
                             <div className="flex items-baseline justify-between gap-3">
-                              <span className="truncate text-sm font-medium">{label}</span>
+                              <span className="truncate text-sm font-medium">{s.label}</span>
                               <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                                 <span className="font-bold text-emerald-600">{s.correct}</span> / {s.total} correct ·{" "}
                                 {s.answered} attempted
@@ -2166,7 +2384,7 @@ export default function LiveExamStudent() {
                   {inRoom} in the room
                 </span>
                 <span className="tabular-nums">
-                  {answeredCount}/{totalQuestionCount} answered
+                  {answeredCount}/{scoreOutOf} answered
                 </span>
               </div>
             </div>

@@ -8,6 +8,11 @@ import { useToast } from "@/hooks/use-toast";
 import { getSignInErrorToast } from "@/lib/signInErrors";
 import { ArrowLeft, GraduationCap, Eye, EyeOff } from "lucide-react";
 import { saveExamAttempt } from "@/services/examService";
+import {
+  clearPendingSubmissions,
+  readPendingSubmissions,
+  writePendingSubmissions,
+} from "@/lib/pendingSubmissions.js";
 import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
 import OnboardingModal from "@/components/OnboardingModal";
@@ -196,26 +201,23 @@ const StudentAuth = () => {
     if (savingRef.current) return;
     savingRef.current = true;
     try {
-      const pendingSubmissionsStr = sessionStorage.getItem('pendingExamSubmissions');
-      const singleSubmissionStr = sessionStorage.getItem('pendingExamSubmission');
-      let pendingSubmissions = [];
-      if (pendingSubmissionsStr) {
-        try { pendingSubmissions = JSON.parse(pendingSubmissionsStr); } catch (e) { console.error("Error parsing pending submissions", e); }
-      }
-      if (singleSubmissionStr) {
-        try { pendingSubmissions.push(JSON.parse(singleSubmissionStr)); } catch (e) { console.error("Error parsing single submission", e); }
-      }
+      // Reads the durable queue AND drains the legacy sessionStorage keys —
+      // see lib/pendingSubmissions.js for both halves of issue 18.
+      const pendingSubmissions = readPendingSubmissions();
       // No pending mock-exam work: honor returnTo (e.g. back to a live exam) if present.
       if (pendingSubmissions.length === 0) { navigate(returnTo || "/marketplace"); return; }
       setSavingResults(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate("/marketplace"); return; }
       let lastAttemptId = null;
-      for (const submission of pendingSubmissions) {
-        lastAttemptId = await saveExamAttempt({ ...submission, userId: user.id });
+      // Cross each section off AS IT LANDS. Clearing only after the whole loop
+      // meant a network hiccup on section 3 left all 3 parked — and the next
+      // sign-in re-saved sections 1-2 as duplicate attempts.
+      for (let i = 0; i < pendingSubmissions.length; i++) {
+        lastAttemptId = await saveExamAttempt({ ...pendingSubmissions[i], userId: user.id });
+        writePendingSubmissions(pendingSubmissions.slice(i + 1));
       }
-      sessionStorage.removeItem('pendingExamSubmissions');
-      sessionStorage.removeItem('pendingExamSubmission');
+      clearPendingSubmissions();
       toast({ title: "Exams Submitted", description: `Successfully saved ${pendingSubmissions.length} section(s).` });
       if (lastAttemptId) { navigate(`/exam/review/${lastAttemptId}`); } else { navigate("/marketplace"); }
     } catch (error) {

@@ -177,6 +177,9 @@ export function sectionProgress(questions, states) {
 /**
  * Does this stored value count as an answer? Mirrors ExamSimulator's
  * isAnswerPresent: empty array (nothing ticked) and blank string do not.
+ * scoringEngine's hasAnswerValue and the SQL mock_answer_present
+ * (20260833000000) are deliberate copies of this rule — if it changes,
+ * change all three.
  * @param {any} value
  * @returns {boolean}
  */

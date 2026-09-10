@@ -141,10 +141,16 @@ export function groupPoolMinutes(group, members) {
  *
  * Rules the tests pin:
  *  • Consecutive sections sharing a resolved group id form one group unit.
- *  • A group id split into two non-adjacent runs (corrupt order) coalesces per
- *    maximal run — two units, never a crash and never a merged skip-over.
+ *  • A group id split into non-adjacent runs (corrupt order — a drag while
+ *    whole-paper switching hid the group boxes, issue 6) never merges across
+ *    the gap and NEVER PAYS ITS POOL TWICE: the first run of two-or-more
+ *    members carries the pool, and every later run of the same group degrades
+ *    to solo per-section clocks. A 45-minute pool used to pay out per run —
+ *    45 + 45 for one split — inflating every student's paper silently.
  *  • A run of ONE member behaves solo (its own clock): a group that has lost
  *    all but one section must not hand that section a pool it no longer shares.
+ *    A lone straggler run does not consume the pool — a proper run later in the
+ *    paper still gets it.
  *  • Unknown/missing group data (no resolved entry, unknown group id) → solo.
  *
  * @param {GroupableSectionLike[]|null|undefined} sections  ONE language's rows, in paper order.
@@ -171,6 +177,11 @@ export function timingUnits(sections, groups, resolvedIds) {
 
   /** @type {TimingUnit[]} */
   const units = [];
+  // Group ids whose pool has already been paid out. A group split into
+  // several runs pays ONCE: the first proper run gets the pool, stragglers
+  // run on their own per-section clocks (issue 6 — each run used to carry the
+  // full pool, so one split doubled the paper's time).
+  const pooled = new Set();
   for (let i = 0; i < list.length; ) {
     const groupId = groupIdOf(list[i]);
     if (!groupId) {
@@ -191,15 +202,21 @@ export function timingUnits(sections, groups, resolvedIds) {
       members.push(list[j]);
       j += 1;
     }
-    if (members.length === 1) {
-      units.push({
-        kind: "solo",
-        groupId: null,
-        group: null,
-        sectionIds: [members[0].id],
-        minutes: positiveMinutes(members[0]),
-      });
+    if (members.length === 1 || pooled.has(groupId)) {
+      // A run of one, or a straggler run of an already-paid group: each
+      // member on its own clock — "a part of one section is just that
+      // section", and a pool never pays twice.
+      for (const m of members) {
+        units.push({
+          kind: "solo",
+          groupId: null,
+          group: null,
+          sectionIds: [m.id],
+          minutes: positiveMinutes(m),
+        });
+      }
     } else {
+      pooled.add(groupId);
       units.push({
         kind: "group",
         groupId,

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { createTwinPlaceholders } from "@/lib/questionTwins";
 import { renderMathInHtml, renderMathInText, renderMathInRichText } from "@/lib/renderMath";
 import { htmlToPlainText, isRichTextEmpty, isOptionFilled, countFilledOptions } from "@/lib/richText";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
@@ -215,6 +216,13 @@ export default function ExamDetail() {
   const [groupSelectMode, setGroupSelectMode] = useState(false);
   const [selectedForGroup, setSelectedForGroup] = useState<string[]>([]);
   const [savingGroups, setSavingGroups] = useState(false);
+  // Add Section is async and reads `sections`/`allSections` BEFORE the insert
+  // returns, so two clicks inside one round trip both saw the same list and both
+  // minted the same "New Section N" and the same sort_order. The ref is the
+  // latch (synchronous — state would not flip between two clicks in one tick);
+  // the state only drives the buttons' disabled prop.
+  const addSectionInFlightRef = useRef(false);
+  const [addingSection, setAddingSection] = useState(false);
   /** Local name drafts while a group header is being typed in (id → text). */
   const [groupNameDrafts, setGroupNameDrafts] = useState<Record<string, string>>({});
 
@@ -270,6 +278,9 @@ export default function ExamDetail() {
   // Delete Section Confirmation State
   const [deleteSectionId, setDeleteSectionId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  // How many students' attempts the pending section delete would erase
+  // (cascade). null = unknown/still counting → the dialog stays generic.
+  const [deleteImpactCount, setDeleteImpactCount] = useState<number | null>(null);
   const [showDeleteExamDialog, setShowDeleteExamDialog] = useState(false);
   const [pendingSectionReorder, setPendingSectionReorder] = useState<any>(null);
 
@@ -621,7 +632,22 @@ export default function ExamDetail() {
       ]);
       setTimingGroups(groupRows);
 
-      if (examError) throw examError;
+      // Zero rows (PGRST116) is RLS hiding an unpublished exam from a
+      // non-owner — an ownership answer, not a failure.
+      if (examError && (examError as any).code !== "PGRST116") throw examError;
+      // Ownership gate — this page is the exam's EDITOR. A published exam row
+      // is world-readable for the marketplace, so RLS alone leaves a non-owner
+      // in a hollow editor; the id comparison turns that into a redirect.
+      // getSession reads the locally cached session: no network request.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!examData || !session?.user || (examData as any).user_id !== session.user.id) {
+        toast({
+          title: "This exam isn't yours",
+          description: "Only its creator can open the editor.",
+        });
+        navigate("/dashboard", { replace: true });
+        return;
+      }
       setExam(examData as unknown as Exam);
       setExamTitle(examData.name);
       setExamCategory((examData as any).exam_category || "");
@@ -1256,16 +1282,65 @@ export default function ExamDetail() {
     }
   };
 
+  // Section STRUCTURE — add, delete, reorder — is decided in the primary
+  // language and mirrored to every twin. A secondary tab may rename (content),
+  // nothing else. The buttons are disabled too; these guards are the backstop
+  // for a keyboard shortcut, a stale render, or a future call site.
+  const refuseStructureOnSecondary = (what: string): boolean => {
+    if (!isMultiLang || isPrimaryLanguage) return false;
+    const primaryLabel = AVAILABLE_LANGUAGES.find(l => l.code === primaryLanguage)?.label || primaryLanguage;
+    toast({
+      title: `${what} are managed in the primary language`,
+      description: `Switch to ${primaryLabel} to change the paper's structure. Translations can only edit content.`,
+      variant: "destructive",
+    });
+    return true;
+  };
+
   const handleAddSection = async () => {
     if (!exam) return;
+    if (refuseStructureOnSecondary("Sections")) return;
+    if (addSectionInFlightRef.current) return;
+    addSectionInFlightRef.current = true;
+    setAddingSection(true);
     try {
       const groupId = crypto.randomUUID();
       const newSortOrder = sections.length;
 
+      // Every section used to be born called "New Section", so a creator who
+      // added three and renamed one was left with two rows sharing a name —
+      // indistinguishable in this editor, and (until section identity landed)
+      // merged into a single row in analytics.
+      //
+      // The lowest free number rather than sections.length + 1: deleting the
+      // middle section of three and adding another would otherwise reissue a
+      // name already in use.
+      //
+      // Scanned over allSections (EVERY language), not the active language's
+      // list, because one name is written to every twin below. A creator who
+      // translates the Hindi name leaves no "New Section N" on the Hindi tab, so
+      // scanning only that tab would restart at 1 and hand the English side a
+      // second section with a name it already has — the exact collision this
+      // numbering exists to prevent. Twins share a number, so scanning all
+      // languages yields the same set as scanning one whenever names are in sync.
+      const usedNumbers = new Set(
+        allSections
+          .map(s => /^New Section (\d+)$/.exec((s.name || "").trim())?.[1])
+          .filter(Boolean)
+          .map(Number)
+      );
+      let nextNumber = 1;
+      while (usedNumbers.has(nextNumber)) nextNumber++;
+
+      // One name for every language: a translation is renamed deliberately, and
+      // starting the twins in sync is what makes an untranslated paper read
+      // consistently.
+      const newSectionName = `New Section ${nextNumber}`;
+
       // Create a section for each supported language
       const sectionsToCreate = supportedLanguages.map(lang => ({
         exam_id: exam.id,
-        name: "New Section",
+        name: newSectionName,
         time_minutes: 60,
         sort_order: newSortOrder,
         language: lang,
@@ -1301,6 +1376,9 @@ export default function ExamDetail() {
         description: error.message || "Failed to add section",
         variant: "destructive",
       });
+    } finally {
+      addSectionInFlightRef.current = false;
+      setAddingSection(false);
     }
   };
 
@@ -1716,10 +1794,38 @@ export default function ExamDetail() {
   const handleDeleteSectionClick = (sectionId: string) => {
     setDeleteSectionId(sectionId);
     setShowDeleteDialog(true);
+    // Issue 32: attempts hang off sections with ON DELETE CASCADE, so this
+    // button is the one action on the platform that physically erases student
+    // results. Count who gets hit — across every language twin, since the
+    // delete below removes them all — and put the number in the dialog. One
+    // head-count query, only when the dialog opens; null renders as the quiet
+    // no-students dialog (never block a delete on a failed count).
+    setDeleteImpactCount(null);
+    (async () => {
+      try {
+        const target = allSections.find((s) => s.id === sectionId);
+        const twinIds = (target?.section_group_id
+          ? allSections.filter((s) => s.section_group_id === target.section_group_id)
+          : allSections.filter((s) => s.id === sectionId)
+        ).map((s) => s.id);
+        if (twinIds.length === 0) return;
+        const { count, error } = await supabase
+          .from("attempts")
+          .select("id", { count: "exact", head: true })
+          .in("section_id", twinIds);
+        if (!error) setDeleteImpactCount(count ?? 0);
+      } catch {
+        // Unknown impact reads as the plain dialog — same as before this fix.
+      }
+    })();
   };
 
   const handleConfirmDeleteSection = async () => {
     if (!deleteSectionId) return;
+    if (refuseStructureOnSecondary("Sections")) {
+      setDeleteSectionId(null);
+      return;
+    }
 
     try {
       // Find the section's group_id to delete across all languages
@@ -1790,6 +1896,7 @@ export default function ExamDetail() {
   // Publishing enforces the full set of rules either way — PublishExamDialog.
   const handleAddQuestion = async (opts?: { draft?: boolean }) => {
     if (!section) return false;
+    if (refuseStructureOnSecondary("Questions")) return false;
     const draft = opts?.draft === true;
 
     const strippedPassageText = passageText ? passageText.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
@@ -1940,45 +2047,17 @@ export default function ExamDetail() {
 
       setQuestions([...questions, data]);
 
-      // Multi-language sync: create placeholder questions in other language sections
-      if (isMultiLang && section.section_group_id && data.question_group_id) {
-        const siblingGroupSections = allSections.filter(
-          s => s.section_group_id === section.section_group_id && s.id !== section.id
-        );
-
-        for (const sibSec of siblingGroupSections) {
-          // Count existing questions in sibling to determine q_no
-          const { count } = await supabase
-            .from("parsed_questions")
-            .select("id", { count: "exact", head: true })
-            .eq("section_id", sibSec.id);
-
-          await supabase
-            .from("parsed_questions")
-            .insert({
-              section_id: sibSec.id,
-              q_no: (count || 0) + 1,
-              text: "",  // Empty placeholder — translator fills content
-              answer_type: newQuestionType,
-              options: (newQuestionType === "single" || newQuestionType === "multi")
-                ? newQuestion.options?.map(() => "") || ["", ""]  // Same count of options, empty text
-                : null,
-              // MUST be the REMAPPED answer: the sibling's options mirror the
-              // FILTERED primary list, so the raw pre-filter index would point
-              // at the wrong (or a nonexistent) option for every translated
-              // student.
-              correct_answer: newQuestion.correct_answer,
-              // Figures are language-independent — carry option images so
-              // translated students see the same pictures.
-              ...(newQuestion.option_image_urls
-                ? { option_image_urls: newQuestion.option_image_urls }
-                : {}),
-              requires_review: true,
-              is_excluded: false,
-              is_finalized: false,
-              question_group_id: data.question_group_id,  // Link to primary question
-            } as any);
-        }
+      // Multi-language sync: one empty placeholder per sibling-language section,
+      // linked by question_group_id. Shared helper — the same placeholder the
+      // AI add and ManualFixEditor now create, so a question born anywhere
+      // exists in every language. `data` is the row just inserted, so its
+      // options/answer key are already the REMAPPED values the placeholder must
+      // mirror (see lib/questionTwins.ts).
+      if (isMultiLang && section.section_group_id) {
+        const siblingIds = allSections
+          .filter(s => s.section_group_id === section.section_group_id && s.id !== section.id)
+          .map(s => s.id);
+        await createTwinPlaceholders(data as any, siblingIds);
       }
 
       // Reset form
@@ -2013,6 +2092,10 @@ export default function ExamDetail() {
 
   const handleConfirmDeleteQuestion = async () => {
     if (!deleteQuestionId) return;
+    if (refuseStructureOnSecondary("Questions")) {
+      setDeleteQuestionId(null);
+      return;
+    }
 
     try {
       // Find the question to get its q_no for cross-language deletion
@@ -2121,6 +2204,7 @@ export default function ExamDetail() {
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    if (refuseStructureOnSecondary("Questions")) return;
 
     if (over && active.id !== over.id) {
       setQuestions((items) => {
@@ -2216,6 +2300,7 @@ export default function ExamDetail() {
 
   const handleSectionDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    if (refuseStructureOnSecondary("Sections")) return;
     if (over && active.id !== over.id) {
       if (isMultiLang) {
         // Ask for confirmation to reorder across all languages
@@ -2533,19 +2618,55 @@ export default function ExamDetail() {
         throw error;
       }
 
-      // Figures are language-independent: mirror option images onto the
-      // sibling-language rows so translated students see the same pictures.
+      // Language-independent fields, mirrored onto the sibling-language rows.
+      //
+      // Figures are obvious: a picture is a picture. The ANSWER KEY belongs here
+      // for the same reason and was missing — it is a set of option INDICES, so
+      // it means the same thing in every translation. Without it a corrected key
+      // applied only to the language being edited, while compute_attempt_marks
+      // went on grading each student against their OWN row: right answer, marked
+      // wrong, with nothing on screen suggesting the languages disagree.
+      //
+      // The quick "set correct answer" control on this page already did this;
+      // the full editor did not, so whether a fix reached translations depended
+      // on which control the creator happened to use.
+      //
+      // Only under `!isMultiLang || isPrimaryLanguage`, which is also the only
+      // branch that puts correct_answer into updateData at all: the primary
+      // language owns the key, and pushing a translation's copy back over it
+      // would be the same bug pointing the other way.
       if (
         (!isMultiLang || isPrimaryLanguage) &&
         (newQuestionType === "single" || newQuestionType === "multi") &&
-        (data as any)?.question_group_id &&
-        Object.prototype.hasOwnProperty.call(updateData, "option_image_urls")
+        (data as any)?.question_group_id
       ) {
-        await supabase
-          .from("parsed_questions")
-          .update({ option_image_urls: updateData.option_image_urls } as any)
-          .eq("question_group_id", (data as any).question_group_id)
-          .neq("id", editingQuestionId);
+        const siblingUpdate: Record<string, any> = {};
+        if (Object.prototype.hasOwnProperty.call(updateData, "option_image_urls")) {
+          siblingUpdate.option_image_urls = updateData.option_image_urls;
+        }
+        if (Object.prototype.hasOwnProperty.call(updateData, "correct_answer")) {
+          siblingUpdate.correct_answer = updateData.correct_answer;
+        }
+
+        if (Object.keys(siblingUpdate).length > 0) {
+          const { error: siblingError } = await supabase
+            .from("parsed_questions")
+            .update(siblingUpdate as any)
+            .eq("question_group_id", (data as any).question_group_id)
+            .neq("id", editingQuestionId);
+
+          // The edited row IS saved by this point. Swallowing this would leave
+          // the languages disagreeing about the answer, which is precisely what
+          // this block exists to prevent, so it has to be said out loud.
+          if (siblingError) {
+            toast({
+              title: "Saved, but not copied to the other languages",
+              description:
+                "The other languages still hold the previous answer. Open this question again and save it once more.",
+              variant: "destructive",
+            });
+          }
+        }
       }
 
       setQuestions(questions.map(q => q.id === editingQuestionId ? data : q));
@@ -2739,6 +2860,7 @@ export default function ExamDetail() {
 
   const handleAddAiQuestion = async (question: any) => {
     if (!section) return;
+    if (refuseStructureOnSecondary("Questions")) return;
 
     try {
       const newQuestion: any = {
@@ -2750,7 +2872,11 @@ export default function ExamDetail() {
         correct_answer: question.correct_answer,
         requires_review: false,
         is_excluded: false,
-        is_finalized: true
+        is_finalized: true,
+        // This path inserted a lone row with no group id and no twins, so an
+        // AI-added question existed in the primary language only — the Hindi
+        // paper was one question short and the publish parity gate refused it.
+        question_group_id: isMultiLang ? crypto.randomUUID() : null,
       };
 
       if (question.answer_type === "single" || question.answer_type === "multi") {
@@ -2766,6 +2892,15 @@ export default function ExamDetail() {
       if (error) {
         console.error("Database error:", error);
         throw error;
+      }
+
+      // Same placeholder handleAddQuestion creates, so the question exists in
+      // every language the moment it exists in the primary.
+      if (isMultiLang && section.section_group_id) {
+        const siblingIds = allSections
+          .filter(s => s.section_group_id === section.section_group_id && s.id !== section.id)
+          .map(s => s.id);
+        await createTwinPlaceholders(data as any, siblingIds);
       }
 
       setQuestions([...questions, data]);
@@ -4157,7 +4292,7 @@ export default function ExamDetail() {
                       const renderSectionRow = (s: Section) => {
                         const index = sections.findIndex((x) => x.id === s.id);
                         return (
-                      <SortableSectionItem key={s.id} id={s.id}>
+                      <SortableSectionItem key={s.id} id={s.id} disabled={isMultiLang && !isPrimaryLanguage}>
                         <div
                           className={`relative cursor-pointer transition-all overflow-hidden ${
                             run.group
@@ -4229,6 +4364,7 @@ export default function ExamDetail() {
                                 e.preventDefault();
                                 handleDeleteSectionClick(s.id);
                               }}
+                              disabled={isMultiLang && !isPrimaryLanguage}
                             >
                               <Trash2 className="h-3 w-3" />
                             </Button>
@@ -4375,6 +4511,7 @@ export default function ExamDetail() {
                     variant="outline"
                     className="w-full gap-2 rounded-xl border-dashed text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/[0.03]"
                     onClick={handleAddSection}
+                    disabled={addingSection || (isMultiLang && !isPrimaryLanguage)}
                   >
                     <Plus className="h-4 w-4" />
                     Add Section
@@ -4875,6 +5012,7 @@ export default function ExamDetail() {
                     variant="outline"
                     className="mt-2 rounded-lg gap-2"
                     onClick={handleAddSection}
+                    disabled={addingSection || (isMultiLang && !isPrimaryLanguage)}
                   >
                     <Plus className="h-4 w-4" />
                     Add Section
@@ -5307,14 +5445,30 @@ export default function ExamDetail() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Section</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure? This will delete the section and all its questions. This action cannot be undone.
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Are you sure? This will delete the section and all its questions. This action cannot be undone.
+                </p>
+                {/* Issue 32: the cascade erases student results. The creator
+                    may still choose to — but never again without knowing. */}
+                {deleteImpactCount !== null && deleteImpactCount > 0 && (
+                  <p className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 dark:border-red-800 p-3 text-xs font-medium text-red-700 dark:text-red-400">
+                    ⚠ {deleteImpactCount} student attempt{deleteImpactCount === 1 ? "" : "s"} exist
+                    {deleteImpactCount === 1 ? "s" : ""} on this section. Deleting it permanently erases
+                    those results — answers, marks and ranks — and changes those students' scores on this
+                    exam. They will not be notified, and this cannot be recovered.
+                  </p>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteSectionId(null)}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmDeleteSection} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
+              {deleteImpactCount !== null && deleteImpactCount > 0
+                ? `Delete anyway — erase ${deleteImpactCount} attempt${deleteImpactCount === 1 ? "" : "s"}`
+                : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

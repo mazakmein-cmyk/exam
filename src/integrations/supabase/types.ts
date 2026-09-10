@@ -18,9 +18,12 @@ export type Database = {
         Row: {
           accuracy_percentage: number | null
           avg_time_per_question: number | null
+          clock_deadline_at: string | null
           created_at: string
           id: string
           language: string
+          questions_answered: number | null
+          questions_visited: number | null
           score: number | null
           section_id: string
           started_at: string
@@ -32,9 +35,12 @@ export type Database = {
         Insert: {
           accuracy_percentage?: number | null
           avg_time_per_question?: number | null
+          clock_deadline_at?: string | null
           created_at?: string
           id?: string
           language?: string
+          questions_answered?: number | null
+          questions_visited?: number | null
           score?: number | null
           section_id: string
           started_at?: string
@@ -46,9 +52,12 @@ export type Database = {
         Update: {
           accuracy_percentage?: number | null
           avg_time_per_question?: number | null
+          clock_deadline_at?: string | null
           created_at?: string
           id?: string
           language?: string
+          questions_answered?: number | null
+          questions_visited?: number | null
           score?: number | null
           section_id?: string
           started_at?: string
@@ -377,6 +386,7 @@ export type Database = {
           fast_correct: number
           fast_wrong: number
           fastest_time_ms: number | null
+          fastest_participant_id: string | null
           fastest_user_id: string | null
           fastest_user_name: string | null
           id: string
@@ -400,6 +410,7 @@ export type Database = {
           fast_correct?: number
           fast_wrong?: number
           fastest_time_ms?: number | null
+          fastest_participant_id?: string | null
           fastest_user_id?: string | null
           fastest_user_name?: string | null
           id?: string
@@ -423,6 +434,7 @@ export type Database = {
           fast_correct?: number
           fast_wrong?: number
           fastest_time_ms?: number | null
+          fastest_participant_id?: string | null
           fastest_user_id?: string | null
           fastest_user_name?: string | null
           id?: string
@@ -451,6 +463,35 @@ export type Database = {
             columns: ["live_question_id"]
             isOneToOne: false
             referencedRelation: "live_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_report_shares: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          live_exam_id: string
+          token: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          live_exam_id: string
+          token: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          live_exam_id?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_report_shares_live_exam_id_fkey"
+            columns: ["live_exam_id"]
+            isOneToOne: true
+            referencedRelation: "live_exams"
             referencedColumns: ["id"]
           },
         ]
@@ -1040,6 +1081,18 @@ export type Database = {
       set_live_report_sharing: {
         Args: { p_live_exam_id: string; p_enabled: boolean }
         Returns: string
+      }
+      start_exam_clock: {
+        Args: {
+          p_section_ids: string[]
+          p_clock_seconds: number
+          p_language?: string | null
+        }
+        Returns: Json
+      }
+      get_exam_question_time_stats: {
+        Args: { p_exam_id: string }
+        Returns: Json
       }
       renumber_live_global_indexes: {
         Args: { p_live_exam_id: string }

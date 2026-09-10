@@ -344,12 +344,16 @@ test("the search box only matches the non-default type label", () => {
  * shapes PostgREST produces.
  */
 test("the library never names the column anywhere that cannot retry", () => {
+  // The fetch lives in lib/publishedExams.ts since the home page began sharing
+  // it (this assertion used to grep Marketplace.tsx and went stale, failing on
+  // every clean checkout). The requirement is unchanged.
+  const FETCH = readSrc("lib/publishedExams.ts");
   assert(
-    /queryExamList\(\(columns\) =>/.test(LIBRARY),
+    /queryExamList\(\(columns\) =>/.test(FETCH),
     "the published-exams read must go through the helper that can fall back"
   );
   assert(
-    !/select\(\s*"[^"]*paper_type/.test(LIBRARY),
+    !/select\(\s*"[^"]*paper_type/.test(LIBRARY) && !/select\(\s*"[^"]*paper_type/.test(FETCH),
     "hardcoding paper_type into a select string would empty the library pre-migration — the helper owns that decision"
   );
   const HELPER = readSrc("lib/examListQuery.ts");

@@ -39,10 +39,34 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
 
 // ─── Utility ─────────────────────────────────────────────────────────
 
-const normalize = (val: unknown): string =>
-  String(val ?? "")
-    .trim()
-    .toLowerCase();
+/**
+ * A deliberate copy of lib/answerNormalize.js's normalizeAnswerText (this
+ * file must stay import-free); if one changes, change both — and the SQL
+ * mock_answer_norm (20260839000000) with them. NFC first: the same Hindi word
+ * arrives as different byte sequences from different keyboards. Then the
+ * numeric canon: "5.0", "05", "+5" all read as "5", guarded by a regex that
+ * excludes commas, exponents, and >15-digit precision traps.
+ */
+const NUMERIC_ANSWER_RE = /^[+-]?([0-9]{1,15}(\.[0-9]{1,10})?|\.[0-9]{1,10})$/;
+const normalize = (val: unknown): string => {
+  const s = String(val ?? "").normalize("NFC").trim();
+  if (NUMERIC_ANSWER_RE.test(s)) return String(Number(s));
+  return s.toLowerCase();
+};
+
+/**
+ * Does this stored value count as an answer? A deliberate copy of
+ * examNavigation's hasAnswer (this file must stay import-free); if one
+ * changes, change both. The runner stores "" when a student types into a
+ * text/numeric box and backspaces it empty — that is a cleared answer, and
+ * scoring it as wrong charges the negative-marking penalty for a blank.
+ */
+function hasAnswerValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim() !== "";
+  return true;
+}
 
 export function applyRounding(
   value: number,
@@ -92,7 +116,7 @@ export function scoreSCQ(
     },
   };
 
-  if (isSkipped || selectedAnswer === null || selectedAnswer === undefined) {
+  if (isSkipped || !hasAnswerValue(selectedAnswer)) {
     base.marks_awarded = -config.marks_skipped;
     base.breakdown.mode = "skipped";
     return base;
@@ -296,8 +320,7 @@ export function calculateMarks(
     const isSkipped =
       !state ||
       state.status === "untouched" ||
-      state.selectedAnswer === null ||
-      state.selectedAnswer === undefined;
+      !hasAnswerValue(state.selectedAnswer);
 
     const isMulti =
       q.answer_type === "multi" || q.answer_type === "multiple";

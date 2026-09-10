@@ -536,7 +536,13 @@ test("free mode submits every section, each with its own time", () => {
 
 test("anonymous free-mode students queue one pending submission per section", () => {
   const src = readSrc("pages/ExamSimulator.tsx");
-  assertContains(src, "...existingSubmissions, ...pending");
+  // The invariant is APPEND, never overwrite — a second finished section must
+  // not erase the first. The append moved into lib/pendingSubmissions.js
+  // (durable storage, issue 18), whose appendPendingSubmissions spreads the
+  // existing queue before the new entries.
+  assertContains(src, "appendPendingSubmissions(pending)");
+  const lib = readSrc("lib/pendingSubmissions.js");
+  assertContains(lib, "...readPendingSubmissions(), ...entries");
 });
 
 test("the completion dialog does not offer a next section in free mode", () => {

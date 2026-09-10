@@ -68,6 +68,7 @@ import {
   fetchLiveExam,
   fetchLiveReport,
   fetchLiveReportByToken,
+  fetchLiveReportShare,
   setLiveReportSharing,
   type LiveDeepDive,
   type LiveReport,
@@ -100,6 +101,40 @@ function Stat({
 
 /** Empty states say "N/A" rather than hiding — a missing section reads as a bug. */
 const NA = <span className="text-muted-foreground">N/A</span>;
+
+/**
+ * The creator's current share link, vault first. Tokens live in the
+ * creator-only live_report_shares table since 20260835000000 (the exam-row
+ * columns are scrubbed — they were readable by every student). The legacy
+ * columns answer only while that migration is not applied yet, when the vault
+ * read errors and the columns still carry the token.
+ */
+async function resolveShareToken(
+  liveExamId: string,
+  exam: { report_public: boolean; report_share_token: string | null }
+): Promise<string | null> {
+  try {
+    const share = await fetchLiveReportShare(liveExamId);
+    return share && share.enabled ? share.token : null;
+  } catch {
+    return exam.report_public ? exam.report_share_token : null;
+  }
+}
+
+/**
+ * A question's label for the report.
+ *
+ * `Q{(ordinal ?? 0) + 1}` used to sit at all three call sites, which turned a
+ * missing position into "Q1" — so every question nobody answered was reported
+ * as question 1, several of them at once, beside the real question 1. The server
+ * no longer sends a missing position (20260848000000 reads it from the question
+ * list rather than from a student's answer), but the report page renders stored
+ * payloads that were built BEFORE that migration, so the null case is still
+ * reachable and must not resolve to a real question number.
+ */
+function questionLabel(ordinal: number | null | undefined): string {
+  return ordinal === null || ordinal === undefined ? "Q—" : `Q${ordinal + 1}`;
+}
 
 export default function LiveExamReport() {
   const { creatorId, liveExamId, token } = useParams();
@@ -140,7 +175,9 @@ export default function LiveExamReport() {
         if (!isPublic && liveExamId) {
           const exam = await fetchLiveExam(liveExamId);
           if (cancelled) return;
-          setShareToken(exam.report_public ? exam.report_share_token : null);
+          const share = await resolveShareToken(liveExamId, exam);
+          if (cancelled) return;
+          setShareToken(share);
           try {
             const dd = await fetchLiveDeepDive(liveExamId, exam.primary_language || undefined);
             if (!cancelled) setDeep(dd);
@@ -329,7 +366,7 @@ export default function LiveExamReport() {
               <li key={q.ordinal} className="rounded-2xl border border-border/60 bg-card p-4">
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-xs font-bold tabular-nums text-muted-foreground">
-                    Q{(q.ordinal ?? 0) + 1}
+                    {questionLabel(q.ordinal)}
                   </span>
                   <span className="text-sm font-bold tabular-nums">
                     {q.accuracy_pct !== null ? `${q.accuracy_pct}% correct` : "no answers"}
@@ -380,7 +417,7 @@ export default function LiveExamReport() {
             {misconceptions.map(({ q, classification }) => (
               <li key={q.ordinal} className="text-sm text-muted-foreground">
                 <span className="font-semibold text-foreground">
-                  Q{(q.ordinal ?? 0) + 1}:
+                  {questionLabel(q.ordinal)}:
                 </span>{" "}
                 {classification.percentages[classification.dominantIndex!]}% believe{" "}
                 {optionLabel(classification.dominantIndex!)}
@@ -400,7 +437,7 @@ export default function LiveExamReport() {
           <ul className="mt-3 space-y-1.5">
             {confusionHotspots.map((q) => (
               <li key={q.ordinal} className="text-sm text-muted-foreground">
-                <span className="font-semibold text-foreground">Q{(q.ordinal ?? 0) + 1}</span> —{" "}
+                <span className="font-semibold text-foreground">{questionLabel(q.ordinal)}</span> —{" "}
                 {q.confusion_count} {q.confusion_count === 1 ? "student" : "students"}
               </li>
             ))}

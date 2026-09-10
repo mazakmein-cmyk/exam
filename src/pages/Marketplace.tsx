@@ -49,6 +49,7 @@ const JoinLiveExamDialog = lazy(() => import("@/components/live/JoinLiveExamDial
 type Exam = PublishedExam;
 
 import { useUserRole } from "@/hooks/use-user-role";
+import { fileExpiredAttempts } from "@/services/attemptFiling";
 
 /**
  * How many cards to put in the DOM before the reader asks for more by scrolling.
@@ -289,6 +290,14 @@ const Marketplace = () => {
     // is a visitor who hasn't signed in yet: they get the button, and the live
     // exam screen sends them through student auth and back to the room.
     const canJoinLive = role !== "creator";
+
+    // Lazy filing of abandoned attempts (resume spec): "the student opening
+    // the app at all" is the trigger, and this page is the app's front door.
+    // Fire-and-forget, once per tab session, no-op for signed-out visitors —
+    // see attemptFiling.ts for the cost accounting.
+    useEffect(() => {
+        void fileExpiredAttempts();
+    }, []);
 
     // Cached by react-query, so coming back from an exam page inside the stale
     // window repaints the library instantly instead of refetching it.

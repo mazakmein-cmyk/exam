@@ -38,6 +38,7 @@ import {
   type LiveExam,
   type LiveExamStatus,
   type LiveQuestionAnalytics,
+  type LiveQuestionPushed,
   type LiveSessionSync,
 } from "@/services/liveExamService";
 import { useLiveExamRealtime } from "./useLiveExamRealtime";
@@ -68,6 +69,16 @@ export type LiveSessionState = {
    * tag: it names the question the room has already left.
    */
   currentQuestionGroupId: string | null;
+  /**
+   * The open question in every language, delivered on a message that was going
+   * to be sent anyway, so a student never spends a request per unlock.
+   *
+   * Merged unlike currentQuestionGroupId: a stale payload is harmless here
+   * (consumers file it by id into a list they already hold, so re-seeing an old
+   * question is a no-op), whereas a stale tag actively misnames the open
+   * question. So this one is carried forward when an observation omits it.
+   */
+  currentQuestionPayload: LiveQuestionPushed[] | null;
   unlockedAt: string | null;
   extraSeconds: number;
   scheduledStartAt: string | null;
@@ -113,6 +124,7 @@ const INITIAL_STATE: LiveSessionState = {
   status: null,
   currentQuestionIndex: -1,
   currentQuestionGroupId: null,
+  currentQuestionPayload: null,
   unlockedAt: null,
   extraSeconds: 0,
   scheduledStartAt: null,
@@ -320,6 +332,8 @@ export function useLiveSession(
        * receives simply does not carry one.
        */
       currentQuestionGroupId?: string | null;
+      /** Absent means "unknown" on both lanes; see the merge. */
+      currentQuestionPayload?: LiveQuestionPushed[] | null;
       unlockedAt: string | null;
       extraSeconds: number;
       scheduledStartAt: string | null;
@@ -437,6 +451,17 @@ export function useLiveSession(
               : next.currentQuestionIndex === cur.currentQuestionIndex
                 ? cur.currentQuestionGroupId
                 : null,
+          // Unlike the tag above, carried forward when absent. Absent means the
+          // payload column is missing from this message — either the database
+          // predates the migration, or Realtime is echoing rows built from a
+          // cached column list that has not caught up yet (see payloadBool).
+          // Neither is "there is no question", and consumers file this by id, so
+          // holding the previous value costs nothing and dropping it would stall
+          // the room on the push lane until the next poll.
+          currentQuestionPayload:
+            next.currentQuestionPayload !== undefined
+              ? next.currentQuestionPayload
+              : cur.currentQuestionPayload,
           unlockedAt: next.unlockedAt,
           extraSeconds: next.extraSeconds,
           scheduledStartAt: next.scheduledStartAt,
@@ -513,6 +538,12 @@ export function useLiveSession(
           // Leaving it undefined would instead mean "unknown", and the merge
           // would keep a tag from a previous index.
           currentQuestionGroupId: sync.current_question_group_id ?? null,
+          // Left undefined when the key is missing, which is the opposite of the
+          // line above and deliberate: a missing tag is knowably "no tag", but a
+          // missing payload only means this database has not run the migration —
+          // and on that database nothing is pushing questions at all, so the
+          // right move is to keep whatever is held, not to blank it.
+          currentQuestionPayload: sync.current_question_payload ?? undefined,
           unlockedAt: sync.current_question_unlocked_at,
           extraSeconds: sync.current_question_extra_seconds ?? 0,
           scheduledStartAt: sync.scheduled_start_at,
@@ -618,6 +649,13 @@ export function useLiveSession(
       applyObservation({
         status: exam.status,
         currentQuestionIndex: exam.current_question_index,
+        // `in`, not `??`: absent must stay absent so the merge can tell "this
+        // message says nothing" from "there is no question". Same stale-column
+        // -list hazard the present_* keys hit, same fix.
+        currentQuestionPayload:
+          "current_question_payload" in (exam as Record<string, unknown>)
+            ? (exam.current_question_payload ?? null)
+            : undefined,
         unlockedAt: exam.current_question_unlocked_at,
         extraSeconds: exam.current_question_extra_seconds ?? 0,
         scheduledStartAt: exam.scheduled_start_at ?? null,
@@ -724,6 +762,25 @@ export function useLiveSession(
 }
 
 /**
+ * Whether two question payloads carry the same questions.
+ *
+ * By content, not by reference: every poll parses fresh objects out of JSON, so
+ * reference equality would report a change every 15s on a session where nothing
+ * happened — waking the room's consumers on a timer.
+ *
+ * Ids are enough. The payload is rebuilt only when the cursor moves, so two
+ * payloads holding the same ids ARE the same observation.
+ */
+function samePayload(
+  a: LiveQuestionPushed[] | null,
+  b: LiveQuestionPushed[] | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((q, i) => q.id === b[i].id);
+}
+
+/**
  * Field-by-field comparison so an unchanged sync is a no-op for React.
  * Spelled out rather than looped: a missed field here is a silent stale render,
  * and the compiler catches an omission when the state type grows.
@@ -733,6 +790,7 @@ function shallowEqualState(a: LiveSessionState, b: LiveSessionState): boolean {
     a.status === b.status &&
     a.currentQuestionIndex === b.currentQuestionIndex &&
     a.currentQuestionGroupId === b.currentQuestionGroupId &&
+    samePayload(a.currentQuestionPayload, b.currentQuestionPayload) &&
     a.unlockedAt === b.unlockedAt &&
     a.extraSeconds === b.extraSeconds &&
     a.scheduledStartAt === b.scheduledStartAt &&

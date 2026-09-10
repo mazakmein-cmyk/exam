@@ -1163,7 +1163,7 @@ const AdminDashboard = () => {
                                                         (user.exams_attempted || 0) > 0 ? (
                                                             <button
                                                                 className="text-indigo-600 font-medium hover:text-indigo-800 hover:underline"
-                                                                title="See which exams were attempted"
+                                                                title="Sittings where at least one question was answered — see which exams"
                                                                 onClick={() => handleViewAttempts(user)}
                                                             >
                                                                 {user.exams_attempted} Attempted
@@ -1667,6 +1667,14 @@ const AdminDashboard = () => {
                                     : `exam${activityData.length === 1 ? '' : 's'}`
                             }`}
                         </p>
+                        {activityMode === 'attempted' && (
+                            // Says what the number counts, because it is smaller
+                            // than the raw row count and the difference is the
+                            // whole point: opening a paper is not attempting it.
+                            <p className="text-xs text-gray-400">
+                                Counts sittings where at least one question was answered.
+                            </p>
+                        )}
                     </DialogHeader>
 
                     {activityLoading ? (
@@ -1676,7 +1684,7 @@ const AdminDashboard = () => {
                     ) : activityData.length === 0 ? (
                         <p className="text-center text-gray-500 py-10 text-sm">
                             {activityMode === 'attempted'
-                                ? 'No attempts found for this user.'
+                                ? 'No answered attempts found for this user.'
                                 : 'No exams found for this creator.'}
                         </p>
                     ) : (

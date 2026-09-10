@@ -2,6 +2,7 @@ import { useEffect, useState, lazy, Suspense } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
+import { createTwinPlaceholders, fetchSiblingSectionIds, mirrorToTwins } from "@/lib/questionTwins";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,8 @@ interface ParsedQuestion {
   id: string;
   q_no: number;
   section_label: string | null;
+  /** Links this row to its translations; null on legacy or single-language rows. */
+  question_group_id: string | null;
   text: string;
   options: any;
   answer_type: string;
@@ -48,6 +51,12 @@ export default function ManualFixEditor() {
   const [showPdf, setShowPdf] = useState(false);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const [splitView, setSplitView] = useState(true);
+  // Structure is decided in the primary language and mirrored to the twins in
+  // these sibling sections. A secondary-language section edits content only:
+  // add, reorder and exclude are disabled, and finalise records completion
+  // without touching the order.
+  const [isPrimarySection, setIsPrimarySection] = useState(true);
+  const [siblingSectionIds, setSiblingSectionIds] = useState<string[]>([]);
 
   useEffect(() => {
     fetchQuestions();
@@ -57,15 +66,44 @@ export default function ManualFixEditor() {
     try {
       const { data: section } = await supabase
         .from("sections")
-        .select("name, pdf_url")
+        // The exam's owner rides along on the request this page always made —
+        // sections → exams is an embedded read, not a second call.
+        // language / section_group_id / primary_language decide whether this
+        // section may change structure and where its mirrors go — same embed,
+        // still one request.
+        .select("name, pdf_url, language, section_group_id, exam:exams(user_id, primary_language)")
         .eq("id", sectionId)
         .single();
 
-      if (section) {
-        setSectionName(section.name);
-        setPdfUrl(section.pdf_url);
-        if (section.pdf_url) setShowPdf(true);
+      // Ownership gate — this page EDITS questions. RLS hides an unpublished
+      // exam's section from a non-owner entirely (section is null); a
+      // published one is world-readable, so the id comparison is what turns a
+      // hollow editor into a redirect. getSession reads the locally cached
+      // session: no network request.
+      const { data: { session } } = await supabase.auth.getSession();
+      const ownerId = (section as any)?.exam?.user_id ?? null;
+      if (!section || !session?.user || ownerId !== session.user.id) {
+        toast({
+          title: "This exam isn't yours",
+          description: "Only its creator can edit questions.",
+        });
+        navigate("/dashboard", { replace: true });
+        return;
       }
+
+      setSectionName(section.name);
+      setPdfUrl(section.pdf_url);
+
+      // Primary when the section's language is the exam's primary (both default
+      // to 'en', so a single-language exam is always primary). Siblings are the
+      // same section in every other language; empty means nothing to mirror.
+      const sectionLang = (section as any).language || "en";
+      const primaryLang = (section as any).exam?.primary_language || "en";
+      setIsPrimarySection(sectionLang === primaryLang);
+      setSiblingSectionIds(
+        await fetchSiblingSectionIds(sectionId!, (section as any).section_group_id)
+      );
+      if (section.pdf_url) setShowPdf(true);
 
       const { data, error } = await supabase
         .from("parsed_questions")
@@ -104,6 +142,17 @@ export default function ManualFixEditor() {
         .eq("id", id);
 
       if (error) throw error;
+
+      // Excluding a question is structural: it decides what every student is
+      // served. Writing it to one language row left the twin in the paper, so
+      // the Hindi cohort kept answering a question the English cohort never saw
+      // — and the creator dashboard's per-question pool went lopsided.
+      if ("is_excluded" in updates && isPrimarySection) {
+        const row = questions.find(q => q.id === id);
+        await mirrorToTwins(row?.question_group_id, siblingSectionIds, {
+          is_excluded: updates.is_excluded,
+        });
+      }
 
       setQuestions(prev =>
         prev.map(q => (q.id === id ? { ...q, ...updates } : q))
@@ -210,8 +259,19 @@ export default function ManualFixEditor() {
   };
 
   const addNewQuestion = async () => {
+    if (!isPrimarySection) {
+      toast({
+        title: "Questions are added in the primary language",
+        description: "A translation edits content only. Add the question on the primary paper and it appears here as a placeholder.",
+        variant: "destructive",
+      });
+      return;
+    }
     try {
       const maxQNo = Math.max(...questions.map(q => q.q_no), 0);
+      // A group id only when there are twins to link — a single-language exam
+      // keeps null, exactly as ExamDetail does.
+      const questionGroupId = siblingSectionIds.length > 0 ? crypto.randomUUID() : null;
       const { data, error } = await supabase
         .from("parsed_questions")
         .insert({
@@ -220,11 +280,16 @@ export default function ManualFixEditor() {
           text: "New question",
           answer_type: "single",
           requires_review: true,
-        })
+          question_group_id: questionGroupId,
+        } as any)
         .select()
         .single();
 
       if (error) throw error;
+
+      // The same placeholder ExamDetail's add creates, so a question born here
+      // exists in every language too.
+      await createTwinPlaceholders(data as any, siblingSectionIds);
 
       setQuestions([...questions, data]);
       setEditingId(data.id);
@@ -246,18 +311,31 @@ export default function ManualFixEditor() {
   const finalizeExam = async () => {
     setSaving(true);
     try {
-      // Update final order for all questions
-      const updates = questions.map((q, index) => ({
-        id: q.id,
-        final_order: index + 1,
-        is_finalized: true,
-      }));
-
-      for (const update of updates) {
-        await supabase
-          .from("parsed_questions")
-          .update({ final_order: update.final_order, is_finalized: true })
-          .eq("id", update.id);
+      // Update final order for all questions.
+      //
+      // Order is structure. On the primary paper the order is written here and
+      // mirrored to every twin by question_group_id, so a translated student
+      // sits the same paper in the same sequence. On a secondary paper the
+      // reorder controls are disabled, and finalising records completion only —
+      // writing final_order from a translation would let it diverge from the
+      // paper it translates.
+      for (const [index, q] of questions.entries()) {
+        if (isPrimarySection) {
+          const finalOrder = index + 1;
+          await supabase
+            .from("parsed_questions")
+            .update({ final_order: finalOrder, is_finalized: true })
+            .eq("id", q.id);
+          await mirrorToTwins(q.question_group_id, siblingSectionIds, {
+            final_order: finalOrder,
+            is_finalized: true,
+          });
+        } else {
+          await supabase
+            .from("parsed_questions")
+            .update({ is_finalized: true })
+            .eq("id", q.id);
+        }
       }
 
       // Mark section as finalized
@@ -350,7 +428,12 @@ export default function ManualFixEditor() {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Exam
           </Button>
-          <Button onClick={addNewQuestion} variant="outline">
+          <Button
+            onClick={addNewQuestion}
+            variant="outline"
+            disabled={!isPrimarySection}
+            title={isPrimarySection ? undefined : "Questions are added in the primary language"}
+          >
             <Plus className="mr-2 h-4 w-4" />
             Add Question
           </Button>
@@ -447,7 +530,7 @@ export default function ManualFixEditor() {
                       variant="ghost"
                       size="icon"
                       onClick={() => moveQuestion(index, "up")}
-                      disabled={index === 0}
+                      disabled={!isPrimarySection || index === 0}
                     >
                       <MoveUp className="h-4 w-4" />
                     </Button>
@@ -455,7 +538,7 @@ export default function ManualFixEditor() {
                       variant="ghost"
                       size="icon"
                       onClick={() => moveQuestion(index, "down")}
-                      disabled={index === questions.length - 1}
+                      disabled={!isPrimarySection || index === questions.length - 1}
                     >
                       <MoveDown className="h-4 w-4" />
                     </Button>
@@ -743,6 +826,7 @@ export default function ManualFixEditor() {
                     <Checkbox
                       id={`exclude-${question.id}`}
                       checked={question.is_excluded}
+                      disabled={!isPrimarySection}
                       onCheckedChange={(checked) =>
                         updateQuestion(question.id, { is_excluded: !!checked })
                       }

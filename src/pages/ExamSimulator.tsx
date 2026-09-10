@@ -44,6 +44,8 @@ import {
   totalExamSeconds,
 } from "@/lib/examNavigation.js";
 import { fetchTimingGroups } from "@/lib/timingGroupSettings";
+import { appendPendingSubmissions } from "@/lib/pendingSubmissions.js";
+import { sealAndFileSections } from "@/services/attemptFiling";
 import {
   groupDisplayName,
   groupPoolMinutes,
@@ -84,6 +86,7 @@ type QuestionState = {
 import { saveExamAttempt } from "@/services/examService";
 import { studentQuestionsRelation } from "@/lib/dbFeatures";
 import { createProgressQueue, progressRow } from "@/services/examProgress";
+import { studentSectionColumns } from "@/lib/sectionColumns";
 
 const ExamSimulator = () => {
   const { examId, sectionId } = useParams();
@@ -195,6 +198,11 @@ const ExamSimulator = () => {
   const timeWarningShownRef = useRef(false);
   // Web Worker for background-accurate countdown (not throttled by browser)
   const timerWorkerRef = useRef<Worker | null>(null);
+  // Same-device heartbeat for the 5-minute return window (resume spec).
+  // Non-null only while a signed-in, non-preview sitting is running; the
+  // worker's tick writes localStorage under this key every ~30s.
+  const examAliveKeyRef = useRef<string | null>(null);
+  const lastAliveBeatRef = useRef(0);
   // Always-current ref to handleAutoSubmit so the worker callback isn't stale
   const handleAutoSubmitRef = useRef<() => void>(() => {});
   // The question column scrolls, the action bar under it does not. Navigating
@@ -343,6 +351,14 @@ const ExamSimulator = () => {
       if (e.data.type === "TICK") {
         const remaining: number = e.data.remaining;
         setTimeRemaining(remaining);
+        // Same-device heartbeat for the 5-minute return window: a cheap
+        // localStorage write every ~30s of running clock. Zero network. When
+        // the tab dies, the last beat is "when they left"; handleStartSection
+        // compares against it before resuming.
+        if (examAliveKeyRef.current && Date.now() - lastAliveBeatRef.current > 30_000) {
+          lastAliveBeatRef.current = Date.now();
+          try { localStorage.setItem(examAliveKeyRef.current, String(lastAliveBeatRef.current)); } catch { /* best-effort */ }
+        }
         if (remaining <= 300 && !timeWarningShownRef.current) {
           timeWarningShownRef.current = true;
           setShowTimeWarning(true);
@@ -433,6 +449,9 @@ const ExamSimulator = () => {
       // ZERO questions rather than an error. Probed once per session.
       const questionsRelation = await studentQuestionsRelation();
 
+      // Resolved before the batch below: it decides whether the hand-migrated
+      // timing_group_id can be named. Probed once per session and cached.
+      const sectionCols = await studentSectionColumns();
       const [
         { data: { user } },
         { data: examData },
@@ -445,11 +464,11 @@ const ExamSimulator = () => {
         supabase.from("exams").select("*").eq("id", examId).single(),
         supabase
           .from("sections")
-          .select("*")
+          .select(sectionCols as "*")
           .eq("exam_id", examId)
           .order("sort_order", { ascending: true })
           .order("created_at", { ascending: true }),
-        supabase.from("sections").select("*").eq("id", sectionId).single(),
+        supabase.from("sections").select(sectionCols as "*").eq("id", sectionId).single(),
         // The student view, not the table: it has no correct_answer and no
         // answer_hint. select("*") on the table delivered the whole answer key
         // into the candidate's browser at exam start.
@@ -749,17 +768,32 @@ const ExamSimulator = () => {
       const questionsToInit = multiNav
         ? Object.values(questionsBySection).flat()
         : questions;
-      setQuestionStates(
-        questionsToInit.reduce((acc, q) => ({
+      const initialStates: Record<string, QuestionState> = questionsToInit.reduce(
+        (acc, q) => ({
           ...acc,
           [q.id]: {
             selectedAnswer: null,
             isMarkedForReview: false,
             timeSpentSeconds: 0,
-            status: "untouched",
+            status: "untouched" as const,
           },
-        }), {})
+        }),
+        {}
       );
+
+      // The scope's clock length. Free mode runs one clock for the paper; a
+      // timing part runs its pool; locked mode runs this section's own.
+      const clockMinutes = isFreeNav
+        ? totalPaperMinutes
+        : groupNav && unitInfo
+          ? unitInfo.minutes
+          : (section?.time_minutes || 0);
+      // Set when an unexpired sitting is resumed: the clock kept running while
+      // the tab was gone, so the worker gets the remainder, not the allowance.
+      let resumedSecondsLeft: number | null = null;
+      // The question the resumed sitting last touched — restored below so a
+      // resume lands where they left off instead of on Q1.
+      let resumePositionQid: string | null = null;
 
       // Create attempt record only now (not on page load).
       // A creator preview deliberately skips this: with no attempt row there is
@@ -783,23 +817,69 @@ const ExamSimulator = () => {
           : groupNav && unitInfo
             ? scopeSections.filter((s) => (questionsBySection[s.id] || []).length > 0)
             : [{ id: sectionId! } as Section];
-        const startedAt = new Date().toISOString();
-        const stamps = staggeredTimestamps(Date.now(), sectionsToOpen.length);
 
-        const { data, error } = await supabase
-          .from("attempts")
-          .insert(
-            sectionsToOpen.map((s, i) => ({
-              user_id: user.id,
-              section_id: s.id,
-              started_at: startedAt,
-              language: lang,
-              ...(multiNav ? { created_at: stamps[i] } : {}),
-            }))
-          )
-          .select();
+        // The 5-minute return window (owner's spec): away longer than 5
+        // minutes → the old sitting is SEALED — filed with its saved answers
+        // as a normal, ranked attempt — and this start becomes a fresh one.
+        // The heartbeat is same-device (the worker's ~30s localStorage beat);
+        // with no beat on record (another device, cleared storage) the safe
+        // fallback is resuming, which grants nothing — the clock ran anyway.
+        const aliveKey = `examClockAlive:${examId}`;
+        try {
+          const lastBeat = Number(localStorage.getItem(aliveKey) || 0);
+          if (lastBeat > 0 && Date.now() - lastBeat > 5 * 60 * 1000) {
+            await sealAndFileSections(user.id, sectionsToOpen.map((s) => s.id));
+          }
+        } catch {
+          // Sealing is best-effort; the resume path below stays the fallback.
+        }
 
-        if (error || !data || data.length === 0) {
+        // The clock lives in the DB (20260836000000): start_exam_clock REPLACES
+        // the plain insert — same single request — and returns the EXISTING
+        // sitting when an unexpired one is open, so a refresh resumes the same
+        // deadline instead of minting a fresh full-length clock.
+        let rows: { id: string; section_id: string }[] | null = null;
+        const { data: clock, error: clockError } = await supabase.rpc(
+          "start_exam_clock",
+          {
+            p_section_ids: sectionsToOpen.map((s) => s.id),
+            p_clock_seconds: Math.round(clockMinutes * 60),
+            p_language: lang ?? null,
+          }
+        );
+        const clockResult = clock as unknown as {
+          resumed?: boolean;
+          remaining_seconds?: number;
+          attempts?: { id: string; section_id: string }[];
+        } | null;
+        if (!clockError && Array.isArray(clockResult?.attempts) && clockResult.attempts.length > 0) {
+          rows = clockResult.attempts;
+          if (clockResult.resumed) {
+            resumedSecondsLeft = Math.max(1, Number(clockResult.remaining_seconds) || 0);
+          }
+        } else {
+          // Migration not applied yet (or the RPC failed): the exact insert
+          // this page has always done, so exams keep starting either way.
+          const startedAt = new Date().toISOString();
+          const stamps = staggeredTimestamps(Date.now(), sectionsToOpen.length);
+          const { data, error } = await supabase
+            .from("attempts")
+            .insert(
+              sectionsToOpen.map((s, i) => ({
+                user_id: user.id,
+                section_id: s.id,
+                started_at: startedAt,
+                language: lang,
+                ...(multiNav ? { created_at: stamps[i] } : {}),
+              }))
+            )
+            .select();
+          if (!error && data && data.length > 0) {
+            rows = data.map((row: any) => ({ id: row.id, section_id: row.section_id }));
+          }
+        }
+
+        if (!rows || rows.length === 0) {
           // The exam did not start, so give the screen back: a fullscreen start
           // card with an error toast is a dead end — no browser chrome, and the
           // Back button it wants is behind the fullscreen the click just took.
@@ -813,11 +893,77 @@ const ExamSimulator = () => {
         }
 
         const bySection: Record<string, string> = {};
-        for (const row of data) bySection[(row as any).section_id] = (row as any).id;
+        for (const row of rows) bySection[row.section_id] = row.id;
         setAttemptIdBySection(bySection);
         // The first section's attempt is the sitting's handle: it is what the
         // review link opens, and what `!attemptId` tests for anonymity.
-        setAttemptId(bySection[sectionsToOpen[0].id] ?? (data[0] as any).id);
+        setAttemptId(bySection[sectionsToOpen[0].id] ?? rows[0].id);
+
+        if (resumedSecondsLeft !== null) {
+          // Pull the answers already saved mid-sitting back into the page.
+          // This must not be skipped lightly: submit rewrites every response
+          // row from the page's state, so resuming the clock over blank state
+          // would erase the very answers the save-as-you-go work protected.
+          // select("*") on purpose — it cannot fail on a column that one
+          // pending migration hasn't added yet.
+          try {
+            const { data: saved } = await supabase
+              .from("responses")
+              .select("*")
+              .in("attempt_id", rows.map((r) => r.id));
+            let lastTouchedAt = 0;
+            for (const r of (saved || []) as any[]) {
+              if (!(r.question_id in initialStates)) continue;
+              initialStates[r.question_id] = {
+                selectedAnswer: r.selected_answer ?? null,
+                isMarkedForReview: !!r.is_marked_for_review,
+                timeSpentSeconds: r.time_spent_seconds || 0,
+                status: r.status ?? (hasAnswer(r.selected_answer) ? "attempted" : "viewed"),
+              };
+              // Position restore: land where they left off, not on Q1. The
+              // most recently written row is the best available "you were
+              // here" marker.
+              const touched =
+                new Date(r.updated_at || r.created_at || 0).getTime() || 0;
+              if (touched >= lastTouchedAt) {
+                lastTouchedAt = touched;
+                resumePositionQid = r.question_id;
+              }
+            }
+          } catch {
+            // Non-fatal: the clock still resumes; worst case the student
+            // re-answers, which is today's behaviour for the whole sitting.
+          }
+          toast({
+            title: "Welcome back",
+            description: "Your exam was still running — the clock never stopped.",
+          });
+        }
+      }
+
+      setQuestionStates(initialStates);
+
+      // Land a resumed sitting on the question it last touched. Guarded so a
+      // stale marker for a section this scope doesn't serve can never point
+      // the index at a question that isn't on screen.
+      if (resumedSecondsLeft !== null && resumePositionQid) {
+        const resumeSid = sectionByQuestionRef.current[resumePositionQid];
+        const resumeList = resumeSid ? questionsBySection[resumeSid] || [] : [];
+        const resumeIdx = resumeList.findIndex((q) => q.id === resumePositionQid);
+        if (resumeSid && resumeIdx >= 0 && (multiNav || resumeSid === activeSectionId)) {
+          if (multiNav) setActiveSectionId(resumeSid);
+          setCurrentQuestionIndex(resumeIdx);
+        }
+      }
+
+      // Arm the same-device heartbeat for the 5-minute return window, and
+      // beat once immediately so even a crash seconds from now has a record.
+      if (user && !isPreview) {
+        examAliveKeyRef.current = `examClockAlive:${examId}`;
+        lastAliveBeatRef.current = Date.now();
+        try { localStorage.setItem(examAliveKeyRef.current, String(lastAliveBeatRef.current)); } catch { /* best-effort */ }
+      } else {
+        examAliveKeyRef.current = null;
       }
 
       // A fresh clock re-arms the per-clock guards: the submit latch (held
@@ -828,15 +974,10 @@ const ExamSimulator = () => {
       submittingRef.current = false;
       timeWarningShownRef.current = false;
 
-      // Set absolute end time and start the Web Worker countdown. Free mode
-      // runs one clock for the paper; a timing part runs its pool; locked
-      // mode runs this section's own.
-      const clockMinutes = isFreeNav
-        ? totalPaperMinutes
-        : groupNav && unitInfo
-          ? unitInfo.minutes
-          : (section?.time_minutes || 0);
-      examEndTimeRef.current = Date.now() + clockMinutes * 60 * 1000;
+      // Set absolute end time and start the Web Worker countdown — the full
+      // allowance on a fresh start, the remainder on a resumed one.
+      examEndTimeRef.current =
+        Date.now() + (resumedSecondsLeft ?? clockMinutes * 60) * 1000;
       questionStartTimeRef.current = Date.now();
       timerWorkerRef.current?.postMessage({ type: "START", endTime: examEndTimeRef.current });
       setHasStarted(true);
@@ -958,6 +1099,23 @@ const ExamSimulator = () => {
     };
   }, []);
 
+  // Friction on refresh / tab close while the clock runs: the browser puts up
+  // its own "Leave site?" confirm. The text cannot be customised — browsers
+  // ignore any message for security — but the pause is the point: nobody
+  // reloads mid-exam by accident anymore. Disarmed the moment the sitting
+  // completes (hasStarted flips false before the review navigation), and
+  // in-app navigation never triggers it. Previews are exempt: nothing there
+  // is worth a warning.
+  useEffect(() => {
+    if (!hasStarted || isPreview) return;
+    const warnBeforeLeaving = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [hasStarted, isPreview]);
+
   /** Mark the question being left as seen, so the palette stops calling it untouched. */
   const markCurrentViewed = () => {
     const currentQuestion = questions[currentQuestionIndex];
@@ -1012,7 +1170,10 @@ const ExamSimulator = () => {
       [currentQuestion.id]: {
         ...prev[currentQuestion.id],
         selectedAnswer: value,
-        status: "attempted",
+        // Typing then backspacing to empty leaves "" — that is a cleared
+        // answer, not an attempt, and the scorer skips it rather than
+        // charging the wrong-answer penalty.
+        status: hasAnswer(value) ? "attempted" : "viewed",
       },
     }));
   };
@@ -1185,12 +1346,11 @@ const ExamSimulator = () => {
 
     // For anonymous users, store state and show dialog
     if (!attemptId) {
-      const existingSubmissionsStr = sessionStorage.getItem('pendingExamSubmissions');
-      const existingSubmissions = existingSubmissionsStr ? JSON.parse(existingSubmissionsStr) : [];
-
       // One entry per section, in section order. StudentAuth replays them
       // sequentially after sign-in, which is also what keeps the attempts'
-      // created_at order — and so the sitting — intact.
+      // created_at order — and so the sitting — intact. Parked durably
+      // (localStorage, via pendingSubmissions.js): closing the tab before
+      // signing in used to erase the whole finished paper.
       const pending = sectionsToSubmit.map((entry) => ({
         sectionId: entry.id,
         timeSpentSeconds: entry.timeSpent,
@@ -1198,7 +1358,7 @@ const ExamSimulator = () => {
         questionStates: updatedQuestionStates,
       }));
 
-      sessionStorage.setItem('pendingExamSubmissions', JSON.stringify([...existingSubmissions, ...pending]));
+      appendPendingSubmissions(pending);
 
       toast({
         title: isFreeNav ? "Paper Completed" : groupNav ? "Part Completed" : "Section Completed",

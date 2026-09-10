@@ -17,7 +17,9 @@ import { formatDuration } from "@/lib/utils";
 import { studentQuestionsRelation } from "@/lib/dbFeatures";
 import OnboardingModal from "@/components/OnboardingModal";
 import { fetchTimingGroups, type TimingGroupRow } from "@/lib/timingGroupSettings";
+import { normalizeAnswerText } from "@/lib/answerNormalize.js";
 import { groupDisplayName, groupPoolMinutes, resolveTimingGroupIds } from "@/lib/timingGroups.js";
+import { studentSectionColumns } from "@/lib/sectionColumns";
 
 interface Response {
   id: string;
@@ -79,6 +81,16 @@ export default function ExamReview() {
   const [marksLog, setMarksLog] = useState<Map<string, number>>(new Map());
   const [totalMarks, setTotalMarks] = useState<{score: number | null, max: number | null}>({score: null, max: null});
 
+  /**
+   * question_id → how long it typically takes to SOLVE this question (average
+   * over correct answers only, aggregates with no identities — see
+   * get_exam_question_time_stats). Empty until 20260838000000 is applied, and
+   * the row simply shows nothing extra.
+   */
+  const [solveTimeStats, setSolveTimeStats] = useState<
+    Record<string, { avg_seconds: number; solved_count: number }>
+  >({});
+
   // Post-exam onboarding overlay: set by StudentAuth when a fresh signup/signin
   // lands here without a profile row. Modal is non-dismissable (see OnboardingModal).
   const [showOnboardingModal, setShowOnboardingModal] = useState(
@@ -109,23 +121,32 @@ export default function ExamReview() {
       // 2. Parallelize the independent follow-up fetches.
       // examData, current user, sections and timing groups all key off examId —
       // no dependency between them. Groups resolve to [] on an un-migrated DB.
+      // Resolved before the batch below: it decides whether the hand-migrated
+      // timing_group_id can be named. Probed once per session and cached.
+      const sectionCols = await studentSectionColumns();
       const [
         { data: examData, error: examError },
         { data: { user } },
         { data: sections, error: sectionsError },
         timingGroupRows,
+        solveTimesRes,
       ] = await Promise.all([
         supabase.from("exams").select("name, user_id, primary_language").eq("id", examId).single(),
         supabase.auth.getUser(),
         supabase
           .from("sections")
-          .select("*")
+          .select(sectionCols as "*")
           .eq("exam_id", examId)
           .order("sort_order", { ascending: true })
           .order("created_at"),
         fetchTimingGroups(examId),
+        // Per-question solve times, aggregates only. Non-fatal by shape: a
+        // database without 20260838000000 answers with an error object, the
+        // ?? {} keeps the page whole, and the review just shows nothing extra.
+        (supabase.rpc as any)("get_exam_question_time_stats", { p_exam_id: examId }),
       ]);
       setTimingGroups(timingGroupRows);
+      setSolveTimeStats(((solveTimesRes as any)?.data as any) ?? {});
       setPrimaryLanguage((examData as any)?.primary_language || "en");
 
       if (!examError && examData) {
@@ -304,7 +325,9 @@ export default function ExamReview() {
           response.question.answer_type === "multi" ||
           response.question.answer_type === "multiple";
 
-        const normalize = (val: any) => String(val).trim().toLowerCase();
+        // NFC + numeric canon, same rule as the server grader — see
+        // lib/answerNormalize.js for why both halves exist.
+        const normalize = (val: any) => normalizeAnswerText(val);
 
         // Multi-correct: always recompute to detect partial credit
         if (isMulti && Array.isArray(correct)) {
@@ -601,8 +624,8 @@ export default function ExamReview() {
       return set.some(c => resolveToIndex(c, options) === valIdx);
     }
     // Fallback for free-text / unmappable values: direct normalized compare.
-    const norm = String(val).trim().toLowerCase();
-    return set.some(c => String(c).trim().toLowerCase() === norm);
+    const norm = normalizeAnswerText(val);
+    return set.some(c => normalizeAnswerText(c) === norm);
   };
 
   // Compact answer-chip pill — letter + option text, status color.
@@ -1158,6 +1181,12 @@ export default function ExamReview() {
                               )}
                               <Clock className="w-4 h-4" />
                               {formatDuration(response.time_spent_seconds)}
+                              {solveTimeStats[response.question_id] && (
+                                <span className="hidden sm:inline text-xs">
+                                  · Avg time to solve correctly:{" "}
+                                  {formatDuration(solveTimeStats[response.question_id].avg_seconds)}
+                                </span>
+                              )}
                             </div>
                           </div>
 

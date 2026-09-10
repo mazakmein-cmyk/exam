@@ -69,6 +69,7 @@ import {
   updateLiveExam,
   duplicateLiveExam,
   updateLiveQuestion,
+  syncLiveAnswerToTranslations,
   createLiveQuestion,
   deleteLiveQuestion,
   createLiveSection,
@@ -311,10 +312,26 @@ export default function LiveExamDetail() {
       const sortOrder = sections.reduce((m, s) => Math.max(m, s.sort_order + 1), 0);
       const sectionGroupId = crypto.randomUUID();
 
+      // Numbered, and the lowest FREE number: every live section used to be born
+      // "New Section", so two a creator never renamed were indistinguishable in
+      // this editor and merged into one row in the student's section breakdown.
+      // Scanned over allSections (every language) because one name is written
+      // to every twin below — a translated twin leaves no "New Section N" on its
+      // own tab, and scanning only that tab would restart at 1.
+      const usedNumbers = new Set(
+        allSections
+          .map(s => /^New Section (\d+)$/.exec((s.name || "").trim())?.[1])
+          .filter(Boolean)
+          .map(Number)
+      );
+      let nextNumber = 1;
+      while (usedNumbers.has(nextNumber)) nextNumber++;
+      const newSectionName = `New Section ${nextNumber}`;
+
       // Create section for each supported language
       const languages = exam?.supported_languages || ["en"];
       for (const lang of languages) {
-        await createLiveSection(liveExamId, "New Section", sortOrder, lang, sectionGroupId);
+        await createLiveSection(liveExamId, newSectionName, sortOrder, lang, sectionGroupId);
       }
 
       // Reload sections
@@ -876,6 +893,57 @@ export default function LiveExamDetail() {
       }
 
       await updateLiveQuestion(editingQuestionId, updates);
+
+      // Multi-language: carry the answer key onto the other languages' copies.
+      //
+      // Without this, a corrected key applied only to the row being edited, and
+      // every student sitting a translation went on being graded against the old
+      // one — right answer, marked wrong, on the leaderboard and in the report.
+      // Delete already fanned out across the question group; update did not.
+      //
+      // Gated on the PRIMARY language on purpose. The edit form loads whichever
+      // row it opened, so saving a translation would push that row's key — which
+      // may be the stale one — back over the primary. The editor already locks
+      // the answer fields outside the primary language for the same reason.
+      //
+      // Choice questions only: the key is option INDICES, identical in every
+      // language. A text or numeric answer can legitimately differ per language,
+      // so those are left alone rather than overwritten with a translation that
+      // was never made.
+      const editedQuestion = questions.find((q) => q.id === editingQuestionId);
+      const answerGroupId = editedQuestion?.question_group_id;
+      const multiLang = (exam?.supported_languages || []).length > 1;
+      const editingPrimary = !multiLang || activeLanguage === (exam?.primary_language || "en");
+
+      if (isChoice && editingPrimary && answerGroupId && activeSection.section_group_id) {
+        const siblingSectionIds = allSections
+          .filter(
+            (sec) =>
+              sec.section_group_id === activeSection.section_group_id &&
+              sec.id !== activeSection.id
+          )
+          .map((sec) => sec.id);
+
+        try {
+          await syncLiveAnswerToTranslations(
+            answerGroupId,
+            siblingSectionIds,
+            updates.correct_answer,
+            editingQuestionId
+          );
+        } catch {
+          // The primary row IS saved, so failing silently here would recreate
+          // exactly the split this code exists to prevent. Say which half
+          // landed; re-saving is idempotent and fixes it.
+          toast({
+            title: "Answer saved, but not copied to the other languages",
+            description:
+              "The other languages still hold the previous answer. Open this question again and save it once more.",
+            variant: "destructive",
+          });
+        }
+      }
+
       await loadQuestions(activeSection.id);
       setEditingQuestionId(null);
       resetQuestionForm();

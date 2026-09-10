@@ -639,6 +639,8 @@ export default function LiveExamControl() {
   rehearsalEndNowRef.current = rehearsal.endNow;
   /** Stable identity over a moving target, so a callback can drive the simulation. */
   const rehearsalEndNow = useCallback(() => rehearsalEndNowRef.current(), []);
+  const rehearsalAddTimeRef = useRef(rehearsal.addTime);
+  rehearsalAddTimeRef.current = rehearsal.addTime;
 
   // ─── Derived state ────────────────────────────────────────
 
@@ -657,7 +659,15 @@ export default function LiveExamControl() {
     : session.currentQuestionIndex;
   /** The open question's unlock instant, from whichever source is driving. */
   const deckUnlockedAt = rehearsal.active ? rehearsal.unlockedAt : session.unlockedAt;
-  const deckExtraSeconds = rehearsal.active ? 0 : session.extraSeconds;
+  /** What was GRANTED — the chip and the 300s cap read this, live and rehearsed. */
+  const deckExtraSeconds = rehearsal.active ? rehearsal.extraSeconds : session.extraSeconds;
+  /**
+   * What the CLOCK consumes. A rehearsal's speed compresses all simulated time,
+   * granted extensions included — the grant and the speed stay independent.
+   */
+  const deckClockExtraSeconds = rehearsal.active
+    ? rehearsal.scaledExtraSeconds
+    : session.extraSeconds;
   const currentQuestion = currentQuestionIndex >= 0 ? questions[currentQuestionIndex] : null;
   const isLive = status === "live";
   const isEnded = status === "ended";
@@ -670,12 +680,16 @@ export default function LiveExamControl() {
   useLiveTimerTarget({
     index: currentQuestionIndex,
     unlockedAt: deckUnlockedAt,
-    extraSeconds: deckExtraSeconds,
-    // A rehearsal at 10x compresses the clock, which is the whole point of a
-    // speed control: a twenty-question run rehearses in three minutes.
+    extraSeconds: deckClockExtraSeconds,
+    // A rehearsal at 10x compresses the REAL clock, which is the whole point
+    // of a speed control: a twenty-question run rehearses in three minutes.
     timeSeconds: rehearsal.active
       ? rehearsal.scaledSeconds
       : currentQuestion?.time_seconds ?? null,
+    // …but the DISPLAY shows the question's full simulated seconds ticking
+    // speed× fast, so a 130s question at 10x reads 02:10 racing down, and a
+    // +60s grant visibly adds 60 — not 6.
+    displayScale: rehearsal.active ? rehearsal.speed : 1,
     active: isLive,
   });
 
@@ -838,6 +852,14 @@ export default function LiveExamControl() {
 
   const handleAddTime = useCallback(
     async (seconds: 30 | 60) => {
+      // During a rehearsal the same button grows the simulated clock — the
+      // creator practises the control they will actually use, and nothing
+      // reaches the real exam row.
+      if (rehearsalActiveRef.current) {
+        rehearsalAddTimeRef.current(seconds);
+        toast({ title: `+${seconds}s added`, description: "The simulated class's timer just grew." });
+        return;
+      }
       if (!liveExamId || controlPending) return;
       setControlPending(true);
       try {
@@ -1145,8 +1167,14 @@ export default function LiveExamControl() {
       if (a?.fastest_user_name) {
         // Under privacy mode the stored name is a pseudonym, because that row is
         // broadcast to every student. The creator's own deck resolves the real
-        // name from the id — this screen is never on the projector.
-        const real = a.fastest_user_id ? participantNames.get(a.fastest_user_id) : undefined;
+        // name from the id — this screen is never on the projector. New rows
+        // carry the participant row id; rows older than 20260834000000 the raw
+        // user id, and the map answers to both.
+        const real =
+          (a.fastest_participant_id
+            ? participantNames.get(a.fastest_participant_id)
+            : undefined) ??
+          (a.fastest_user_id ? participantNames.get(a.fastest_user_id) : undefined);
         return { index: i, name: real || a.fastest_user_name, ms: a.fastest_time_ms };
       }
     }
@@ -1356,17 +1384,29 @@ export default function LiveExamControl() {
    * opted in, time reached, and not already starting.
    */
   const autoStartFiredRef = useRef(false);
+  const [autoStartHeld, setAutoStartHeld] = useState(false);
   useEffect(() => {
     if (autoStartFiredRef.current) return;
     if (!session.autoStart || !session.scheduledStartAt) return;
     if (session.status !== "published") return;
     if (session.serverNow() < new Date(session.scheduledStartAt).getTime()) return;
 
+    // A rehearsal already forces this screen to look live, so an auto-start
+    // here would begin the REAL exam with nothing on the host's screen
+    // changing — students enter a room nobody is driving. Hold the start and
+    // put up a banner instead; exiting the rehearsal re-runs this effect
+    // (rehearsal.active is a dependency) and the session goes live then.
+    if (rehearsal.active) {
+      setAutoStartHeld(true);
+      return;
+    }
+
     autoStartFiredRef.current = true;
+    setAutoStartHeld(false);
     void handleStartLive();
     // handleStartLive is stable enough for this one-shot; the ref is the real guard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.autoStart, session.scheduledStartAt, session.status, session.onlineCount]);
+  }, [session.autoStart, session.scheduledStartAt, session.status, session.onlineCount, rehearsal.active]);
 
   /**
    * Stable so the memoised rail is not re-rendered by the answered-count poll.
@@ -1443,6 +1483,13 @@ export default function LiveExamControl() {
   };
 
   const handleEndExam = async () => {
+    // The end dialog can only act on the real row. A rehearsal that reaches
+    // here ends the simulation — never the session students would sit.
+    if (rehearsal.active) {
+      rehearsal.stop();
+      setShowEndDialog(false);
+      return;
+    }
     if (!liveExamId) return;
     try {
       if (graceTimeoutRef.current) {
@@ -1784,6 +1831,17 @@ export default function LiveExamControl() {
     // as the default for every unmatched state once cost the whole class its
     // session when a second tab held a stale timer.
     if (hasStarted && isTimerExpired && currentQuestionIndex >= questions.length - 1) {
+      // A rehearsal that plays out the last question must not offer the real
+      // end control — "end exam" here would close the session for actual
+      // students once the exam is genuinely live underneath.
+      if (rehearsal.active) {
+        return (
+          <Button variant="outline" className="h-11 w-full" onClick={rehearsal.stop}>
+            <Square className="mr-2 h-4 w-4" />
+            Rehearsal done — exit
+          </Button>
+        );
+      }
       return (
         <Button variant="destructive" className="h-11 w-full" onClick={() => setShowEndDialog(true)}>
           <Square className="mr-2 h-4 w-4" />
@@ -1937,6 +1995,16 @@ export default function LiveExamControl() {
         <LiveTimerBar />
       </header>
 
+      {/* The auto-start that was held because a rehearsal was running. Without
+          this line the host has no way to know the scheduled time passed —
+          the screen already looks live, that's what a rehearsal is. */}
+      {rehearsal.active && autoStartHeld && (
+        <div className="shrink-0 border-b border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-center text-sm font-semibold text-rose-600">
+          Your scheduled start time has passed — the real exam has NOT started.
+          Exit the rehearsal and it will go live immediately.
+        </div>
+      )}
+
       {/* ─── Body: two columns, each pane scrolls independently ─── */}
       <div className="mx-auto w-full min-h-0 max-w-[1600px] flex-1 px-4 py-4 sm:px-6">
         <div className="grid h-full min-h-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -1984,7 +2052,7 @@ export default function LiveExamControl() {
                       unlock button, so "how long is left" stays one control. */}
                   <AddTimeControls
                     canAddTime={isTimerActive}
-                    extraSeconds={session.extraSeconds}
+                    extraSeconds={deckExtraSeconds}
                     onAddTime={handleAddTime}
                     onEndTime={handleEndTime}
                     pending={controlPending}
@@ -2281,9 +2349,12 @@ export default function LiveExamControl() {
                             <span className="font-semibold text-foreground">
                               {/* Privacy mode stores a pseudonym here because this
                                   row is broadcast to every student; the creator's
-                                  own deck resolves the real name from the id. */}
-                              {(previewAnalytics.fastest_user_id &&
-                                participantNames.get(previewAnalytics.fastest_user_id)) ||
+                                  own deck resolves the real name from the id —
+                                  participant row id on new rows, user id on old. */}
+                              {(previewAnalytics.fastest_participant_id &&
+                                participantNames.get(previewAnalytics.fastest_participant_id)) ||
+                                (previewAnalytics.fastest_user_id &&
+                                  participantNames.get(previewAnalytics.fastest_user_id)) ||
                                 previewAnalytics.fastest_user_name}
                             </span>
                             {previewAnalytics.fastest_time_ms

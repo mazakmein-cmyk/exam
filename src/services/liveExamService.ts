@@ -29,6 +29,16 @@ export type LiveExam = {
   current_question_unlocked_at: string | null;
   /** Seconds granted mid-question by the creator (A3). Reset on every unlock. */
   current_question_extra_seconds: number;
+  /**
+   * The open question in every language, so a student never spends a request
+   * per unlock. Maintained by a trigger; see 20260844000000.
+   *
+   * Optional for TWO reasons, both of which mean "unknown, keep what you have":
+   * the column may predate the migration, and Realtime caches its column list,
+   * so an echoed row can omit a freshly added column for a while (the same
+   * failure payloadBool exists to absorb). Absent is never "no question".
+   */
+  current_question_payload?: LiveQuestionPushed[] | null;
   scheduled_start_at: string | null;
   auto_start: boolean;
   privacy_mode: boolean;
@@ -106,6 +116,18 @@ export type LiveQuestion = {
   created_at: string;
 };
 
+/**
+ * One question as it rides the live_exams row — the shape of an entry in
+ * current_question_payload.
+ *
+ * Structurally a LiveQuestion with the language stamped on, because the payload
+ * carries every translation of the open question at once: switching language
+ * mid-session must not cost a request either. correct_answer is absent by
+ * construction, not by omission — the key is still released only by
+ * get_revealed_live_answers, on its own timer.
+ */
+export type LiveQuestionPushed = LiveQuestion & { language: string };
+
 export type LiveParticipant = {
   id: string;
   live_exam_id: string;
@@ -144,7 +166,12 @@ export type LiveQuestionAnalytics = {
   option_distribution: Record<string, number>;
   avg_time_correct_ms: number | null;
   fastest_time_ms: number | null;
+  /** Always NULL once 20260834000000 is applied — the row is broadcast to every
+   *  student, so it must not carry a real auth UUID. Kept for older rows. */
   fastest_user_id: string | null;
+  /** The fastest participant's ROW id — joins to nothing students can read.
+   *  Optional: absent until the migration lands and caches refresh. */
+  fastest_participant_id?: string | null;
   fastest_user_name: string | null;
   computed_at: string;
   // ─ B6 time profile, computed server-side with the rest of the analytics ─
@@ -521,6 +548,52 @@ export async function fetchLiveSections(examId: string, language?: string): Prom
   return (data || []) as unknown as LiveSection[];
 }
 
+/**
+ * Sections, without the link to the source question paper.
+ *
+ * fetchLiveSections above does `select("*")`, and one of those columns is
+ * pdf_url — a link to the PDF the whole exam was built from. Students were
+ * receiving it on join. Nothing on their side has ever read it; it was in the
+ * payload only because the query asked for everything.
+ *
+ * The file itself is not reachable: the exam-pdfs bucket is private, so the link
+ * 403s for anyone who is not its owner. Two reasons to stop sending it anyway.
+ * First, that single bucket setting is all that stands between a student's
+ * browser and the complete paper, and the project already runs a PUBLIC sibling
+ * bucket for question images — so the safety of this rests on nobody ever
+ * confusing the two. Second, the live upload path is
+ * `{creator user id}/{exam id}/{section id}/{timestamp}.pdf`, so the URL carries
+ * the creator's account UUID, which has no business being in a candidate's
+ * browser whatever the bucket is set to.
+ *
+ * Every other column the LiveSection type declares is still selected, so the
+ * returned rows satisfy it completely and no caller can be surprised by a
+ * missing field. pdf_url is the only omission, and it is optional on the type
+ * precisely because it is not always sent.
+ *
+ * fetchLiveSections is deliberately left alone: the creator's editor reads
+ * pdf_url for PDF snipping and the download button, and duplicateLiveExam
+ * copies it onto the new exam's sections.
+ */
+export async function fetchLiveSectionsStudent(
+  examId: string,
+  language?: string,
+): Promise<LiveSection[]> {
+  let query = supabase
+    .from("live_sections")
+    .select("id, live_exam_id, name, sort_order, language, section_group_id, created_at")
+    .eq("live_exam_id", examId)
+    .order("sort_order", { ascending: true });
+
+  if (language) {
+    query = query.eq("language", language);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []) as unknown as LiveSection[];
+}
+
 export async function createLiveSection(
   examId: string,
   name: string,
@@ -669,7 +742,9 @@ export async function fetchAllLiveQuestions(examId: string, language?: string): 
  * answers for questions whose timer has ended.
  */
 export async function fetchAllLiveQuestionsStudent(examId: string, language?: string): Promise<LiveQuestion[]> {
-  const sections = await fetchLiveSections(examId, language);
+  // Only the ids are used below, so the narrow fetch does everything the wide
+  // one did without putting the source-paper link on the wire.
+  const sections = await fetchLiveSectionsStudent(examId, language);
   const sectionIds = sections.map(s => s.id);
 
   if (sectionIds.length === 0) return [];
@@ -737,6 +812,47 @@ export async function updateLiveQuestion(
     .from("live_questions")
     .update(updates)
     .eq("id", questionId);
+
+  if (error) throw error;
+}
+
+/**
+ * Push a corrected answer key onto the same question in every other language.
+ *
+ * WHY THIS HAS TO EXIST
+ * Each translation stores its OWN correct_answer, and submit_live_response grades
+ * against the row the student actually answered — it never resolves back to the
+ * primary language. So an answer fixed in English left every Hindi student being
+ * marked against the old key: they pick the right option and are told they are
+ * wrong, on the leaderboard and in the report, with nothing on any screen
+ * suggesting the two languages disagree. There was no way to fix it from the
+ * translated view either, because the editor locks the answer fields there —
+ * correctly, since the primary language owns the key. Re-importing the whole
+ * question set was the only thing that worked.
+ *
+ * Safe to copy verbatim because a choice question's key is option INDICES, which
+ * mean the same thing in every language. Callers must not use this for text or
+ * numeric answers, where the correct value may genuinely differ per language.
+ *
+ * Scoped to the sibling sections of this section group rather than filtering on
+ * question_group_id alone: the group id is a UUID and collisions are not a real
+ * concern, but a stray write to another exam's answer key is not a failure worth
+ * risking to save a clause.
+ */
+export async function syncLiveAnswerToTranslations(
+  questionGroupId: string,
+  siblingSectionIds: string[],
+  correctAnswer: any,
+  excludeQuestionId: string,
+): Promise<void> {
+  if (!questionGroupId || siblingSectionIds.length === 0) return;
+
+  const { error } = await supabase
+    .from("live_questions")
+    .update({ correct_answer: correctAnswer })
+    .eq("question_group_id", questionGroupId)
+    .in("live_section_id", siblingSectionIds)
+    .neq("id", excludeQuestionId);
 
   if (error) throw error;
 }
@@ -898,6 +1014,15 @@ export type LiveSessionSync = {
    * row at the current position.
    */
   current_question_group_id?: string | null;
+  /**
+   * The open question, every language — the same value the exam row carries.
+   *
+   * Optional only because a database one migration behind omits the key. Unlike
+   * the push lane there is no column-cache to go stale here, so once the
+   * migration is applied this lane always carries it — which is what makes it
+   * the recovery path when Realtime drops an unlock.
+   */
+  current_question_payload?: LiveQuestionPushed[] | null;
   current_question_unlocked_at: string | null;
   current_question_extra_seconds: number;
   scheduled_start_at: string | null;
@@ -1131,6 +1256,27 @@ export async function setLiveReportSharing(
   return (data as string) ?? null;
 }
 
+/**
+ * The creator's current share state, from the token vault.
+ *
+ * Tokens moved off live_exams (20260835000000) — the exam row is readable by
+ * every student, which is exactly what made the old column enumerable. This
+ * table is creator-only. Returns null when sharing was never enabled, and
+ * throws when the migration has not been applied yet — the caller falls back
+ * to the legacy columns in that case.
+ */
+export async function fetchLiveReportShare(
+  examId: string
+): Promise<{ token: string; enabled: boolean } | null> {
+  const { data, error } = await supabase
+    .from("live_report_shares")
+    .select("token, enabled")
+    .eq("live_exam_id", examId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
 // ─── B14 — moments and celebration ───────────────────────────
 
 export type LiveMoment = {
@@ -1310,6 +1456,31 @@ export async function computeRankings(examId: string): Promise<void> {
 // ─── Participants (Student) ──────────────────────────────────
 
 /** Join a live exam as a participant */
+/**
+ * Thrown when someone opens a share link for a session that has already ended
+ * and they were never in the room.
+ *
+ * Its own type rather than a message the caller string-matches: the page renders
+ * a whole different screen for this, and "the link has expired" is not an error
+ * the student did anything to cause.
+ */
+export class LiveLinkExpiredError extends Error {
+  constructor() {
+    super("This live exam has already ended.");
+    this.name = "LiveLinkExpiredError";
+  }
+}
+
+/** The database's version of the same refusal, as it arrives over PostgREST. */
+function isJoinAfterEndError(error: { code?: string; message?: string }): boolean {
+  // 42501 is RLS refusing the row; PostgREST also reports policy violations as
+  // its own PGRST301. Matching the message keeps this working if either changes.
+  return (
+    error?.code === "42501" ||
+    /row-level security|policy/i.test(error?.message || "")
+  );
+}
+
 export async function joinLiveExam(examId: string): Promise<LiveParticipant> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
@@ -1323,10 +1494,11 @@ export async function joinLiveExam(examId: string): Promise<LiveParticipant> {
 
   const displayName = profile?.full_name || profile?.username || user.email?.split("@")[0] || "Anonymous";
 
-  // Check if the user is the creator of the exam
+  // status rides along with the ownership check — same request, so the expiry
+  // gate below costs nothing on a normal join.
   const { data: examData } = await supabase
     .from("live_exams")
-    .select("user_id")
+    .select("user_id, status")
     .eq("id", examId)
     .single();
 
@@ -1346,6 +1518,30 @@ export async function joinLiveExam(examId: string): Promise<LiveParticipant> {
     } as unknown as LiveParticipant;
   }
 
+  // The session is over. Anyone who was NOT in the room has missed it, and
+  // enrolling them now would file a real attendee who never sat the exam: a
+  // zero-score row in the standings the class can see, in the creator's
+  // participant list, and in the report's head count.
+  //
+  // Someone who WAS in the room still gets in — reopening the link to read your
+  // own result is the normal way this page is used after a session. They are
+  // returned their existing row without a write, which is also what keeps the
+  // tightened INSERT policy from locking them out: an upsert would still be
+  // checked against it even though the row already exists.
+  //
+  // The extra read happens only on this branch, so a live join is unchanged.
+  if (examData?.status === "ended") {
+    const { data: existing } = await supabase
+      .from("live_participants")
+      .select("*")
+      .eq("live_exam_id", examId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (existing) return existing as unknown as LiveParticipant;
+    throw new LiveLinkExpiredError();
+  }
+
   const { data, error } = await supabase
     .from("live_participants")
     .upsert({
@@ -1357,6 +1553,10 @@ export async function joinLiveExam(examId: string): Promise<LiveParticipant> {
     .select()
     .single();
 
+  // The same rule, enforced in the database. Reachable when a session ends
+  // between the status read above and this write, and by anything calling the
+  // API directly rather than through this page.
+  if (error && isJoinAfterEndError(error)) throw new LiveLinkExpiredError();
   if (error) throw error;
   return data as unknown as LiveParticipant;
 }
@@ -1431,13 +1631,18 @@ export async function fetchPublicLeaderboard(
 export async function fetchParticipantNames(examId: string): Promise<Map<string, string>> {
   const { data, error } = await supabase
     .from("live_participants")
-    .select("user_id, display_name")
+    .select("id, user_id, display_name")
     .eq("live_exam_id", examId);
 
   if (error) throw error;
   const map = new Map<string, string>();
-  ((data || []) as { user_id: string; display_name: string }[]).forEach((r) => {
+  // Keyed by BOTH ids: analytics rows written since 20260834000000 carry the
+  // participant ROW id (fastest_participant_id) instead of the auth UUID, and
+  // rows older than that migration still carry fastest_user_id. One map, both
+  // generations resolve.
+  ((data || []) as { id: string; user_id: string; display_name: string }[]).forEach((r) => {
     map.set(r.user_id, r.display_name);
+    map.set(r.id, r.display_name);
   });
   return map;
 }
