@@ -1520,6 +1520,17 @@ export default function Analytics() {
     0,
   );
 
+  /**
+   * What "View all" will actually paint: every row of every OPEN section. The
+   * label used to say questionStats.length, which counted rows inside collapsed
+   * sections the click leaves collapsed.
+   */
+  const viewableQuestionCount = questionSections.reduce(
+    (n, section) =>
+      collapsedSections.has(section.sectionKey) ? n : n + section.questions.length,
+    0,
+  );
+
   // Insights Data
   const mostSkipped = [...questionStats].sort((a, b) => b.unansweredCount - a.unansweredCount).slice(0, 5).filter(a => a.unansweredCount > 0);
   const mostReviewed = [...questionStats].sort((a, b) => ((b as any).reviewedCount || 0) - ((a as any).reviewedCount || 0)).slice(0, 5).filter(a => (a as any).reviewedCount > 0);
@@ -1999,7 +2010,7 @@ export default function Analytics() {
                   device with room to spare shows no control at all. */}
               {hiddenRowCount > 0 && (
                 <Button variant="outline" size="sm" onClick={() => setShowAllRows(true)}>
-                  View all {questionStats.length} questions
+                  View all {viewableQuestionCount} questions
                 </Button>
               )}
             </div>

@@ -99,10 +99,30 @@ export default function ManualFixEditor() {
       // same section in every other language; empty means nothing to mirror.
       const sectionLang = (section as any).language || "en";
       const primaryLang = (section as any).exam?.primary_language || "en";
-      setIsPrimarySection(sectionLang === primaryLang);
-      setSiblingSectionIds(
-        await fetchSiblingSectionIds(sectionId!, (section as any).section_group_id)
-      );
+      const primary = sectionLang === primaryLang;
+      try {
+        setSiblingSectionIds(
+          await fetchSiblingSectionIds(sectionId!, (section as any).section_group_id)
+        );
+        setIsPrimarySection(primary);
+      } catch (siblingErr) {
+        // If the siblings cannot be read, a structural change here could not be
+        // mirrored to them. Lock structure for this load rather than silently
+        // behaving like a single-language paper — that produced group-id-less
+        // rows and unmirrored excludes with a success toast. Content editing
+        // is unaffected.
+        console.warn("Section siblings unavailable; structure locked for this load", siblingErr);
+        setSiblingSectionIds([]);
+        setIsPrimarySection(false);
+        if (primary) {
+          toast({
+            title: "Section details couldn't be loaded",
+            description:
+              "Adding, reordering and excluding questions are disabled until you reload. Editing text still works.",
+            variant: "destructive",
+          });
+        }
+      }
       if (section.pdf_url) setShowPdf(true);
 
       const { data, error } = await supabase
@@ -166,7 +186,10 @@ export default function ManualFixEditor() {
       console.error("Error updating question:", error);
       toast({
         title: "Error",
-        description: "Failed to update question",
+        // The twin helpers throw messages that say which half landed
+        // ("changed in the primary, but mirroring failed"); a fixed string
+        // would hide that the papers now disagree.
+        description: (error as any)?.message || "Failed to update question",
         variant: "destructive",
       });
     }
@@ -279,6 +302,11 @@ export default function ManualFixEditor() {
           q_no: maxQNo + 1,
           text: "New question",
           answer_type: "single",
+          // Four blanks, the same shape "Initialize Options" produces. Without
+          // an options array the twin placeholder mirrored null against a
+          // primary that later got options, and the publish gate reported an
+          // option_count_mismatch no editor could repair from the translation.
+          options: ["", "", "", ""],
           requires_review: true,
           question_group_id: questionGroupId,
         } as any)
@@ -302,7 +330,7 @@ export default function ManualFixEditor() {
       console.error("Error adding question:", error);
       toast({
         title: "Error",
-        description: "Failed to add question",
+        description: (error as any)?.message || "Failed to add question",
         variant: "destructive",
       });
     }
@@ -354,7 +382,7 @@ export default function ManualFixEditor() {
       console.error("Error finalizing exam:", error);
       toast({
         title: "Error",
-        description: "Failed to finalize exam",
+        description: (error as any)?.message || "Failed to finalize exam",
         variant: "destructive",
       });
     } finally {
@@ -655,6 +683,9 @@ export default function ManualFixEditor() {
                       onValueChange={(value) =>
                         updateQuestion(question.id, { answer_type: value })
                       }
+                      // Answer type is structure: it decides how every language's
+                      // students answer. Decided on the primary paper only.
+                      disabled={!isPrimarySection}
                     >
                       <SelectTrigger id={`type-${question.id}`}>
                         <SelectValue />
@@ -718,6 +749,10 @@ export default function ManualFixEditor() {
                         }}
                         rows={5}
                         className="font-mono text-sm"
+                        // Option COUNT is structure (it must match every twin);
+                        // option TEXT is content, edited on the translation via
+                        // the form in ExamDetail, not this raw JSON.
+                        disabled={!isPrimarySection}
                       />
                     ) : (
                       <div className="mt-2">
@@ -729,6 +764,7 @@ export default function ManualFixEditor() {
                             const defaultOptions = ["Option A", "Option B", "Option C", "Option D"];
                             updateQuestion(question.id, { options: defaultOptions });
                           }}
+                          disabled={!isPrimarySection}
                         >
                           Initialize Options
                         </Button>
@@ -818,6 +854,10 @@ export default function ManualFixEditor() {
                     }}
                     placeholder={question.answer_type === 'multi' ? "Option A, Option B" : "Correct Answer"}
                     className="border-green-200 focus:border-green-500"
+                    // The key is language-independent and ExamDetail mirrors it
+                    // from the primary; editing it on a translation would let
+                    // the two papers grade differently.
+                    disabled={!isPrimarySection}
                   />
                 </div>
 

@@ -894,7 +894,10 @@ be the cheap Android this exists for than a workstation.
 A **total**, not a per-section cap, because eight sections of thirty clear any
 sane per-section cap and still paint 240 rows. It is spent section by section in
 display order; each truncated section gets its own `View N more`, and the header
-gets one `View all` while anything is hidden.
+gets one `View all` while the budget is hiding rows in an *open* section.
+Collapsed sections are left out of that count and out of the label: the click
+would lift the budget and still paint nothing there, so a header offering to
+reveal them would be lying.
 
 Two properties are pinned harder than the tier numbers, which are judgement:
 - **stable** — the budget is spent on a baseline pass that *ignores* what the

@@ -109,6 +109,11 @@ export default function LiveExamDetail() {
   const [questions, setQuestions] = useState<LiveQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Add Section reads allSections BEFORE the insert returns, so two clicks inside
+  // one round trip both minted the same "New Section N" and the same sort_order.
+  // The ref is the synchronous latch; the state only drives the buttons.
+  const addSectionInFlightRef = useRef(false);
+  const [addingSection, setAddingSection] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
 
   // Language
@@ -306,6 +311,9 @@ export default function LiveExamDetail() {
 
   const handleAddSection = async () => {
     if (!liveExamId) return;
+    if (addSectionInFlightRef.current) return;
+    addSectionInFlightRef.current = true;
+    setAddingSection(true);
     try {
       // Max-based, not count-based: deleting a middle section leaves gaps and
       // a count-derived order would collide with a survivor.
@@ -346,6 +354,9 @@ export default function LiveExamDetail() {
       toast({ title: "Section added" });
     } catch (error: any) {
       toast({ title: "Error adding section", description: error.message, variant: "destructive" });
+    } finally {
+      addSectionInFlightRef.current = false;
+      setAddingSection(false);
     }
   };
 
@@ -2066,6 +2077,7 @@ export default function LiveExamDetail() {
                     variant="outline"
                     className="w-full gap-2 rounded-xl border-dashed text-muted-foreground hover:text-emerald-700 hover:border-emerald-500/40 hover:bg-emerald-500/[0.04]"
                     onClick={handleAddSection}
+                    disabled={addingSection}
                   >
                     <Plus className="h-4 w-4" />
                     Add Section
@@ -2381,6 +2393,7 @@ export default function LiveExamDetail() {
                     variant="outline"
                     className="mt-2 rounded-lg gap-2"
                     onClick={handleAddSection}
+                    disabled={addingSection}
                   >
                     <Plus className="h-4 w-4" />
                     Add Section

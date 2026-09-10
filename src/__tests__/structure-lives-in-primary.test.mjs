@@ -125,7 +125,12 @@ test("ManualFixEditor knows whether its section is primary", () => {
     MANUAL.includes('.select("name, pdf_url, language, section_group_id, exam:exams(user_id, primary_language)")'),
     "the section fetch must carry language, group id and the exam's primary language"
   );
-  assert(MANUAL.includes("setIsPrimarySection(sectionLang === primaryLang);"), "primary is decided by comparing section language to exam primary");
+  // Computed once, then applied only after the sibling lookup succeeds — a
+  // failed lookup deliberately leaves the section locked (see the next tests).
+  assert(
+    MANUAL.includes("const primary = sectionLang === primaryLang;") && MANUAL.includes("setIsPrimarySection(primary);"),
+    "primary is decided by comparing section language to exam primary"
+  );
 });
 
 test("ManualFixEditor disables structure on a secondary section", () => {
@@ -178,6 +183,67 @@ test("collapsed sections do not count toward the header's View all", () => {
     ANALYTICS.includes("questionSections.map(s => expandedSections.has(s.sectionKey))"),
     "allocateRows must still receive expandedSections, not collapsedSections"
   );
+});
+
+// ─── Review round: what the adversarial pass found and what closed it ───────
+
+test("a placeholder mirrors the primary's option shape, never inventing two", () => {
+  // ["", ""] against an options-less primary was an option_count_mismatch the
+  // translation could not repair — its Add Option control is locked.
+  // Match the CODE form (`: ["", ""]`), not the doc comment that explains why it
+  // was removed.
+  assert(!TWINS.includes(': ["", ""]'), "the invented two-option fallback must be gone");
+  assert(
+    TWINS.includes("isChoice && Array.isArray(primary.options)") && TWINS.includes("      : null;"),
+    "a choice question with no options array must mirror null, not a guess"
+  );
+  assert(MANUAL.includes('options: ["", "", "", ""],'), "ManualFixEditor's add must insert an options array of its own");
+});
+
+test("a placeholder takes the sibling's next q_no, not its row count", () => {
+  // count+1 lands the pair at different positions the moment a gap exists.
+  assert(
+    TWINS.includes('.order("q_no", { ascending: false })') && TWINS.includes(".limit(1)"),
+    "the twin must be numbered max+1 on its own section"
+  );
+  assert(!TWINS.includes('{ count: "exact", head: true }'), "the count-based numbering must be gone");
+});
+
+test("the helpers surface database errors instead of reporting success", () => {
+  assert(TWINS.includes("if (error) throw error;"), "fetchSiblingSectionIds must not swallow a read failure");
+  assert(count(TWINS, "throw new Error(") >= 3, "placeholder creation and mirroring must each throw on failure");
+  assert(TWINS.includes("Saved in the primary language, but"), "the message must say which half landed");
+  assert(TWINS.includes("Changed in the primary language, but"), "the mirror message must say which half landed");
+  // ...and ManualFixEditor's catches must show that message rather than a fixed string.
+  for (const s of ["Failed to update question", "Failed to add question", "Failed to finalize exam"]) {
+    assert(MANUAL.includes(`(error as any)?.message || "${s}"`), `the "${s}" toast must surface the helper's message`);
+  }
+});
+
+test("a sibling lookup failure locks structure instead of pretending single-language", () => {
+  assert(
+    MANUAL.includes("setSiblingSectionIds([]);\n        setIsPrimarySection(false);"),
+    "on failure the page must lock structure, not proceed with no twins"
+  );
+  assert(MANUAL.includes("Section details couldn't be loaded"), "the creator must be told why structure is disabled");
+});
+
+test("every structure control in ManualFixEditor is disabled on a translation", () => {
+  // add, exclude, answer type, options JSON, Initialize Options, correct answer
+  assert(count(MANUAL, "disabled={!isPrimarySection}") >= 6, "answer type, options JSON, Initialize Options and the answer key must be locked too");
+});
+
+test("live Add Section is latched like the mock editor's", () => {
+  assert(LIVE_DETAIL.includes("if (addSectionInFlightRef.current) return;"), "the live handler must refuse while an add is in flight");
+  assert(LIVE_DETAIL.includes("addSectionInFlightRef.current = false;"), "the latch must release");
+  assert(count(LIVE_DETAIL, "disabled={addingSection}") === 2, "both live Add Section buttons must be disabled while in flight");
+});
+
+test("the View all label counts only what the click will paint", () => {
+  assert(ANALYTICS.includes("const viewableQuestionCount = questionSections.reduce("), "the label needs its own open-sections count");
+  assert(ANALYTICS.includes("View all {viewableQuestionCount} questions"), "the label must not count rows inside collapsed sections");
+  const DOCS = read("docs/open-issues.md");
+  assert(DOCS.includes("Collapsed sections are left out of that count"), "the open-issues note must describe the collapsed-skip");
 });
 
 console.log("\n" + "-".repeat(60));
