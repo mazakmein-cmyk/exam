@@ -16,7 +16,7 @@ import { toast } from "sonner";
 // here (both render roots below) rather than in App — keeping the library out
 // of the entry chunk every visitor downloads.
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
-import { Lock, Users, UserCheck, LogOut, Eye, EyeOff, Search, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, MoreVertical, Ban, TrendingUp, Activity, X, Filter, CalendarIcon, Plus, Tag, FileType } from "lucide-react";
+import { Lock, Users, UserCheck, LogOut, Eye, EyeOff, Search, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, MoreVertical, Ban, TrendingUp, Activity, X, Filter, CalendarIcon, Plus, Tag, FileType, Sparkles } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -362,6 +362,33 @@ const AdminDashboard = () => {
             const message = /does not exist|schema cache/i.test(error?.message || "")
                 ? "Apply 20260825000000_add_exam_paper_type.sql first"
                 : error?.message || "Failed to update paper type access";
+            toast.error(message);
+        }
+    };
+
+    /**
+     * Grant or revoke "Import from PDF" (Gemini extraction inside MockSetu) for
+     * one creator. Same shape as the paper-type grant: an explicit set, off for
+     * every account until switched on here. The edge function checks the same
+     * column on every call, so revoking here really does cut the creator off.
+     */
+    const handleSetAiImportAccess = async (user: any, allow: boolean) => {
+        try {
+            const { data, error } = await (supabase.rpc as any)('admin_set_ai_import_access', {
+                target_user_id: user.id,
+                allow,
+            });
+            if (error) throw error;
+            const who = user.username || user.email;
+            toast.success(data
+                ? `${who} can now import questions from PDF with Gemini`
+                : `AI PDF import removed from ${who}`);
+            setUsers(prev => prev.map(u => u.id === user.id ? { ...u, can_use_ai_import: data } : u));
+        } catch (error: any) {
+            console.error("Error updating AI import access:", error);
+            const message = /does not exist|schema cache/i.test(error?.message || "")
+                ? "Apply 20260912000000_ai_pdf_import.sql first"
+                : error?.message || "Failed to update AI import access";
             toast.error(message);
         }
     };
@@ -1156,6 +1183,15 @@ const AdminDashboard = () => {
                                                                 Paper type
                                                             </span>
                                                         )}
+                                                        {user.can_use_ai_import && (
+                                                            <span
+                                                                className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 ring-1 ring-inset ring-violet-600/20"
+                                                                title="Can import questions from a PDF with Gemini"
+                                                            >
+                                                                <Sparkles className="h-3 w-3" />
+                                                                AI import
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4 text-sm text-gray-500">
@@ -1215,6 +1251,14 @@ const AdminDashboard = () => {
                                                                     {user.can_set_paper_type
                                                                         ? 'Remove Paper Type Field'
                                                                         : 'Allow Paper Type Field'}
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuItem
+                                                                    onClick={() => handleSetAiImportAccess(user, !user.can_use_ai_import)}
+                                                                >
+                                                                    <Sparkles className="mr-2 h-4 w-4" />
+                                                                    {user.can_use_ai_import
+                                                                        ? 'Remove AI PDF Import'
+                                                                        : 'Allow AI PDF Import'}
                                                                 </DropdownMenuItem>
                                                                 <DropdownMenuItem disabled className="opacity-50">
                                                                     <Ban className="mr-2 h-4 w-4" />

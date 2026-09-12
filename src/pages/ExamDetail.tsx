@@ -31,6 +31,8 @@ import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
 import { mockExamJsonSource } from "@/components/jsonUploadSources";
+import AiPdfImportDialog from "@/components/AiPdfImportDialog";
+import { useAiImportAccess } from "@/hooks/use-ai-import-access";
 import type { ParseReport } from "@/services/jsonImportParser";
 import {
   upsertExamDefault,
@@ -234,6 +236,9 @@ export default function ExamDetail() {
   // (mock, for every exam made without the grant) and the save leaves it alone.
   const [paperType, setPaperType] = useState<string>(DEFAULT_PAPER_TYPE);
   const { canSetPaperType } = usePaperTypeAccess();
+  // Off for everyone until an admin grants it; the edge function re-checks the
+  // same grant, so this only decides whether the menu item renders.
+  const { canUseAiImport } = useAiImportAccess();
   const [examDescriptionTrans, setExamDescriptionTrans] = useState<Record<string, string>>({});
   const [generalInstructionTrans, setGeneralInstructionTrans] = useState<Record<string, string>>({});
   const [examSpecificInstructionTrans, setExamSpecificInstructionTrans] = useState<Record<string, string>>({});
@@ -245,6 +250,7 @@ export default function ExamDetail() {
 
   // JSON Upload Dialog State
   const [showJsonUploadDialog, setShowJsonUploadDialog] = useState(false);
+  const [showAiImportDialog, setShowAiImportDialog] = useState(false);
 
   // Add Question State
   const [newQuestionText, setNewQuestionText] = useState("");
@@ -3886,6 +3892,15 @@ export default function ExamDetail() {
                 <FileJson className="mr-2 h-4 w-4" />
                 Upload JSON
               </DropdownMenuItem>
+              {canUseAiImport && (
+                <DropdownMenuItem
+                  onClick={() => setShowAiImportDialog(true)}
+                  disabled={!!exam?.is_published || aiParsingStatus === "parsing"}
+                >
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Import from PDF
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={handleDeleteExam} className="text-destructive focus:text-destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
                 Delete Exam
@@ -5602,6 +5617,22 @@ export default function ExamDetail() {
           supportedLanguages={supportedLanguages}
           primaryLanguage={primaryLanguage}
           docsUrl="/json-upload-guide"
+          onSectionsChanged={refreshSectionsFromDb}
+          dataSource={mockExamJsonSource}
+          commitJson={commitJson}
+        />
+      )}
+
+      {/* Import from PDF — Gemini runs the extraction prompt, then the same
+          parse/section/snip/commit path as Upload JSON. Admin-gated. */}
+      {exam && examId && canUseAiImport && (
+        <AiPdfImportDialog
+          open={showAiImportDialog}
+          onOpenChange={setShowAiImportDialog}
+          examId={examId}
+          supportedLanguages={supportedLanguages}
+          primaryLanguage={primaryLanguage}
+          activeLanguage={activeLanguage}
           onSectionsChanged={refreshSectionsFromDb}
           dataSource={mockExamJsonSource}
           commitJson={commitJson}

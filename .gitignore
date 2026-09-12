@@ -32,3 +32,6 @@ vite.config.ts.timestamp-*.mjs
 # typecheck, and was previously committed by accident on every unrelated PR.
 *.tsbuildinfo
 
+
+# Supabase CLI cache (cli-latest etc.) — machine-local
+supabase/.temp/

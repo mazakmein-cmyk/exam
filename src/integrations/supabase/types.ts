@@ -14,6 +14,86 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_import_jobs: {
+        Row: {
+          api_key_slot: string
+          completed_at: string | null
+          created_at: string
+          engine: string
+          error: string | null
+          exam_id: string
+          id: string
+          imported_at: string | null
+          interaction_id: string | null
+          language: string
+          model: string
+          pdf_name: string | null
+          pdf_url: string | null
+          prompt_version: string
+          raw_output: string | null
+          section_names: string[]
+          status: string
+          storage_path: string
+          updated_at: string
+          usage: Json | null
+          user_id: string
+        }
+        Insert: {
+          api_key_slot?: string
+          completed_at?: string | null
+          created_at?: string
+          engine: string
+          error?: string | null
+          exam_id: string
+          id?: string
+          imported_at?: string | null
+          interaction_id?: string | null
+          language: string
+          model: string
+          pdf_name?: string | null
+          pdf_url?: string | null
+          prompt_version?: string
+          raw_output?: string | null
+          section_names?: string[]
+          status?: string
+          storage_path: string
+          updated_at?: string
+          usage?: Json | null
+          user_id: string
+        }
+        Update: {
+          api_key_slot?: string
+          completed_at?: string | null
+          created_at?: string
+          engine?: string
+          error?: string | null
+          exam_id?: string
+          id?: string
+          imported_at?: string | null
+          interaction_id?: string | null
+          language?: string
+          model?: string
+          pdf_name?: string | null
+          pdf_url?: string | null
+          prompt_version?: string
+          raw_output?: string | null
+          section_names?: string[]
+          status?: string
+          storage_path?: string
+          updated_at?: string
+          usage?: Json | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_import_jobs_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attempts: {
         Row: {
           accuracy_percentage: number | null
@@ -846,6 +926,7 @@ export type Database = {
       profiles: {
         Row: {
           can_set_paper_type: boolean
+          can_use_ai_import: boolean
           id: string
           updated_at: string | null
           username: string | null
@@ -856,6 +937,7 @@ export type Database = {
         }
         Insert: {
           can_set_paper_type?: boolean
+          can_use_ai_import?: boolean
           id: string
           updated_at?: string | null
           username?: string | null
@@ -866,6 +948,7 @@ export type Database = {
         }
         Update: {
           can_set_paper_type?: boolean
+          can_use_ai_import?: boolean
           id?: string
           updated_at?: string | null
           username?: string | null

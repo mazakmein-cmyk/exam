@@ -1,4 +1,13 @@
 project_id = "qduxyrfibiqcwrwxqsno"
 
+# Legacy prototype (CreateExamDialog / ExamDetail "Parse with AI"). Requires a
+# valid project JWT at the gateway; the function still trusts its caller for
+# sectionId, so keep it off the public surface until it is rewritten or removed.
 [functions.parse-pdf]
-verify_jwt = false
+verify_jwt = true
+
+# "Import from PDF". Gateway JWT check first, then the function itself verifies
+# the user with auth.getUser and checks profiles.can_use_ai_import — the gateway
+# check alone would let the anon key through.
+[functions.ai-pdf-import]
+verify_jwt = true
