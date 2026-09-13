@@ -72,7 +72,7 @@ const EmailVerificationModal = ({
                 },
                 body: JSON.stringify({
                     email,
-                    redirectTo: `${window.location.origin}/marketplace`,
+                    redirectTo: `${window.location.origin}/verified`,
                 }),
             });
 
@@ -108,6 +108,9 @@ const EmailVerificationModal = ({
                 const { error } = await supabase.auth.resend({
                     type: "signup",
                     email,
+                    // Without this the link falls back to the Supabase Site URL
+                    // (the homepage). Every confirmation link lands on /verified.
+                    options: { emailRedirectTo: `${window.location.origin}/verified` },
                 });
                 if (error) {
                     toast({

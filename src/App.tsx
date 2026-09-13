@@ -18,6 +18,7 @@ import NotFound from "./pages/NotFound";
 const Auth = lazy(() => import("./pages/Auth"));
 const StudentAuth = lazy(() => import("./pages/StudentAuth"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const EmailVerified = lazy(() => import("./pages/EmailVerified"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Marketplace = lazy(() => import("./pages/Marketplace"));
 const ExamDetail = lazy(() => import("./pages/ExamDetail"));
@@ -196,6 +197,9 @@ const router = createBrowserRouter([
       { path: "/auth", element: <Auth /> },
       { path: "/student-auth", element: <StudentAuth /> },
       { path: "/reset-password", element: <ResetPassword /> },
+      // Terminal landing for email-confirmation links. Says "verified" and stops
+      // there on purpose — see EmailVerified.tsx.
+      { path: "/verified", element: <EmailVerified /> },
       { path: "/dashboard", element: <Dashboard /> },
       { path: "/marketplace", element: <Marketplace /> },
       { path: "/exam/:examId", element: <ExamDetail /> },

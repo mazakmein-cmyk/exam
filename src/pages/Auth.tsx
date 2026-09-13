@@ -58,7 +58,7 @@ const Auth = () => {
     }
     const { data, error } = await supabase.auth.signUp({
       email, password,
-      options: { emailRedirectTo: `${window.location.origin}/dashboard`, data: { user_type: "creator" } },
+      options: { emailRedirectTo: `${window.location.origin}/verified`, data: { user_type: "creator" } },
     });
     if (error) {
       if (error.message.includes("already registered") || error.message.includes("User already exists")) {
@@ -71,7 +71,7 @@ const Auth = () => {
       if (!signInError && signInData.user) {
         toast({ title: "Account already exists", description: "Please log in to your account." });
       } else if (signInError && signInError.message.includes("Email not confirmed")) {
-        const { error: resendError } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/dashboard` } });
+        const { error: resendError } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/verified` } });
         if (resendError) {
           toast({ title: "Account already exists", description: "Please log in instead." });
         } else {

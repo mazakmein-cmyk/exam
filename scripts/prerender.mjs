@@ -707,6 +707,7 @@ function validateOutput(html, route, url) {
 const NOINDEX_ROUTES = [
   "/auth",
   "/student-auth",
+  "/verified",
   "/dashboard",
   "/analytics",
   "/barnwal3008/admin",

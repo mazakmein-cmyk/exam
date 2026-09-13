@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { isRecoveryLanding } from "@/lib/recoveryLanding";
+import { isVerificationLanding } from "@/lib/verificationLanding";
 import { hasPendingSubmissions } from "@/lib/pendingSubmissions.js";
 
 const AuthStateListener = () => {
@@ -44,6 +45,17 @@ const AuthStateListener = () => {
             // INITIAL_SESSION/SIGNED_IN. Route it to the reset page too.
             if (isRecoveryLanding && session && currentPath !== '/reset-password') {
                 navigate('/reset-password');
+                return;
+            }
+
+            // Sign-up confirmation links open in a fresh tab, so this tab has no
+            // journey to continue — the user's real destination is still open in
+            // the tab they signed up from. Show the terminal "you're verified"
+            // page and go no further. Also catches the Site-URL fallback, where
+            // Supabase drops the confirmation on the homepage because its
+            // Redirect URLs allowlist is missing /verified.
+            if (isVerificationLanding && session && currentPath !== '/verified') {
+                navigate('/verified');
                 return;
             }
 
