@@ -35,3 +35,9 @@ vite.config.ts.timestamp-*.mjs
 
 # Supabase CLI cache (cli-latest etc.) — machine-local
 supabase/.temp/
+
+# Added by `vercel link`.
+.vercel
+.env*
+# ...but .env.example carries no values and documents what a build needs.
+!.env.example
