@@ -169,26 +169,31 @@ test("the Gmail link carries the sender, encoded for the search fragment", () =>
     );
 });
 
-test("the Gmail link names the account, so a second signed-in Google account is skipped", () => {
+test("the Gmail link still carries the address as a hint", () => {
+    // Deliberately NOT claimed: that this switches accounts. It does not —
+    // a path index beats authuser, and /u/0/ is the first signed-in account.
+    // It is kept because it prefills the address when the user is signed out
+    // and costs nothing when they are not.
     const url = mailProviderForEmail("shivam+tag@gmail.com").url;
     const authuser = new URL(url).searchParams.get("authuser");
-    eq(authuser, "shivam+tag@gmail.com", "authuser disambiguates personal vs school accounts");
+    eq(authuser, "shivam+tag@gmail.com", "a hint, not a guarantee");
 });
 
-test("the Gmail link must NOT pin an account index in its path", () => {
-    // The bug this guards. Observed against Google, unauthenticated:
+test("the Gmail link points at a TERMINAL route, so the #search survives", () => {
+    // The regression this guards, and it is counter-intuitive. Observed
+    // against Google, unauthenticated:
     //
-    //   /mail/?authuser=X    301 -> /mail/u/0/?authuser=X    index pinned
-    //   /mail/u/?authuser=X  302 -> login, continue=/mail/u/   not pinned
+    //   /mail/      301 -> /mail/u/0/           path rewritten
+    //   /mail/u/    302 -> must resolve an index when authenticated
+    //   /mail/u/0/  302 -> continue=/mail/u/0/   rewritten by nothing
     //
-    // Google rewrites a bare /mail/ to /mail/u/0/ BEFORE authuser is read, and
-    // an index in the path beats the query parameter — so every multi-account
-    // user landed in account 0 regardless of who they signed up as. Any /u/<n>/
-    // creeping back into this URL reintroduces exactly that.
+    // The query rides in the fragment. Any form that makes Gmail resolve the
+    // URL to a concrete account first loses that fragment on the way, and the
+    // button opens a bare inbox with no filter — which is the entire feature
+    // gone. Only the already-resolved /u/0/ is safe.
     const url = mailProviderForEmail("shivam@gmail.com").url;
-    const path = new URL(url).pathname;
-    eq(path, "/mail/u/", "the index slot must stay empty for authuser to win");
-    assert(!/\/u\/\d/.test(url), `a pinned account index is the bug: ${url}`);
+    eq(new URL(url).pathname, "/mail/u/0/", "a non-terminal path drops #search");
+    assert(url.includes("#search/"), "the search fragment must be present");
 });
 
 test("Outlook names the account too, via login_hint", () => {

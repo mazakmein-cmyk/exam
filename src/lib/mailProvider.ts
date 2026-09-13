@@ -74,25 +74,37 @@ const buildUrl = (id: ProviderId, email: string, sender: string): MailProvider =
 
     switch (id) {
         case "gmail":
-            // The "/u/" with NO index is load-bearing. Observed behaviour:
+            // MUST be /mail/u/0/ — a TERMINAL route. Observed behaviour:
             //
-            //   /mail/?authuser=X    301 -> /mail/u/0/?authuser=X   index pinned
-            //   /mail/u/?authuser=X  302 -> login, continue=/mail/u/  not pinned
+            //   /mail/      301 -> /mail/u/0/          path rewritten
+            //   /mail/u/    302 -> must resolve an index when authenticated
+            //   /mail/u/0/  302 -> continue=/mail/u/0/  rewritten by nothing
             //
-            // Google rewrites a bare /mail/ to /mail/u/0/ before anything reads
-            // authuser, and an index in the PATH beats the query parameter — so
-            // anyone signed into more than one Google account always landed in
-            // whichever is account 0, not the one they signed up with. Leaving
-            // the index out is what lets authuser decide.
+            // The search rides in the #fragment, and a fragment only survives a
+            // redirect while the browser has somewhere to reapply it. Both of
+            // the first two forms make Gmail resolve the URL to a concrete
+            // account before it renders, and that resolution lands on an
+            // address of its own choosing — taking #search with it, so the
+            // button opened a plain inbox with no filter at all. Only the
+            // already-resolved /u/0/ is safe.
             //
-            // (/mail/u/<email>/ is not an alternative: it 404s.)
+            // The cost is real and there is no way around it: /u/0/ is the
+            // FIRST signed-in Google account, so someone signed into two will
+            // get the search applied in the wrong mailbox. Gmail offers no
+            // single URL that pins both the account and the query — authuser
+            // loses to a path index, /mail/u/<email>/ 404s, and dropping the
+            // index to let authuser win is what broke the search. authuser is
+            // kept below because it costs nothing and does prefill the address
+            // when the user is signed out, but it does NOT reliably switch
+            // accounts. The filter is the thing the button exists for, so the
+            // filter is what we guarantee.
             //
             // `in:anywhere` is the other half — it searches Spam and Trash,
             // which is where a missing verification email usually is.
             return {
                 id,
                 label: "Open Gmail",
-                url: `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(email)}#search/${gmailQuery(sender)}`,
+                url: `https://mail.google.com/mail/u/0/?authuser=${encodeURIComponent(email)}#search/${gmailQuery(sender)}`,
                 filtered: true,
             };
 
