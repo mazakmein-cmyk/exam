@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider, Outlet, useLocation } from "react-router-dom";
 import AuthStateListener from "./components/AuthStateListener";
 import GoogleAnalytics from "./components/GoogleAnalytics";
+import MicrosoftClarity from "./components/MicrosoftClarity";
 import { isAdminPath } from "./lib/adminRoute";
 
 // Eager: tiny + likely first hit
@@ -147,8 +148,11 @@ const Layout = () => (
   <>
     <AuthStateListener />
     {/* Deliberately not on PresentLayout: that route is a projector on a wall,
-        and counting it as a session would inflate every engagement metric. */}
+        and counting it as a session would inflate every engagement metric.
+        Clarity additionally excludes the admin console, which DOES render
+        through this layout — see the digest check in MicrosoftClarity.tsx. */}
     <GoogleAnalytics />
+    <MicrosoftClarity />
     <PrefetchLikelyRoutes />
     <Suspense fallback={<RouteFallback />}>
       <Outlet />
