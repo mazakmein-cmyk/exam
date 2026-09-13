@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowRight, FileText, Play } from "lucide-react";
 import SectionHeader from "@/components/home/SectionHeader";
 import Reveal from "@/components/home/Reveal";
@@ -30,8 +30,6 @@ const PapersCluster = ({
     selectedCategory: string | null;
     copy?: PapersCopy;
 }) => {
-    const navigate = useNavigate();
-
     const { papers, showingPyq } = useMemo(() => {
         const inCategory = selectedCategory
             ? exams.filter((e) => e.exam_category === selectedCategory)
@@ -48,9 +46,12 @@ const PapersCluster = ({
         ? `/marketplace?category=${encodeURIComponent(selectedCategory)}${showingPyq ? "&type=pyq" : ""}`
         : `/marketplace${showingPyq ? "?type=pyq" : ""}`;
 
-    const start = (exam: PublishedExam) => {
+    // The card IS the link now, so this is only the bookkeeping half of the old
+    // start(): react-router runs a <Link>'s onClick before it navigates, so the
+    // breadcrumb is still written — and on a Cmd+click it is written and the
+    // browser opens the paper in its own tab.
+    const remember = (exam: PublishedExam) => {
         rememberLastExam({ id: exam.id, name: exam.name, category: exam.exam_category });
-        navigate(`/exam/${exam.id}/intro?from=home`);
     };
 
     if (papers.length === 0) return null;
@@ -81,8 +82,9 @@ const PapersCluster = ({
                         const year = readExamYear(exam);
                         return (
                             <Reveal key={exam.id} delay={i * 90} className="h-full">
-                            <button
-                                onClick={() => start(exam)}
+                            <Link
+                                to={`/exam/${exam.id}/intro?from=home`}
+                                onClick={() => remember(exam)}
                                 className="group h-full w-full flex flex-col text-left rounded-2xl border border-border/60 bg-card p-5 hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 hover:border-[#6C3EF4]/30 transition-all duration-200"
                             >
                                 <div className="flex items-baseline justify-between mb-3">
@@ -104,7 +106,7 @@ const PapersCluster = ({
                                 <span className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-bold text-[#6C3EF4] group-hover:gap-2.5 transition-all duration-200">
                                     <Play className="h-3.5 w-3.5 fill-current" /> {copy.practiceAsMock}
                                 </span>
-                            </button>
+                            </Link>
                             </Reveal>
                         );
                     })}

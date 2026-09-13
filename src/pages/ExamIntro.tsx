@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -529,13 +529,11 @@ const ExamIntro = () => {
         }
     };
 
-    const handleBack = () => {
-        if (fromPage === "marketplace") {
-            navigate("/marketplace");
-        } else {
-            navigate("/dashboard");
-        }
-    };
+    // Where "back" goes, as a URL rather than a handler. Both destinations are
+    // real addresses a candidate might want in a second tab — keeping the exam
+    // instructions open while they check the library — so the control that
+    // reaches them renders as a link and lets the browser do that for free.
+    const backTo = fromPage === "marketplace" ? "/marketplace" : "/dashboard";
 
     if (loading) {
         return (
@@ -759,14 +757,14 @@ const ExamIntro = () => {
                 {/* Brand bar — its own strip across the top of the screen now,
                     not a caption floating above a card. */}
                 <div className="shrink-0 flex items-center justify-between border-b border-border/60 bg-card px-4 py-3 sm:px-6">
-                    <button
-                        onClick={handleBack}
+                    <Link
+                        to={backTo}
                         className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                     >
                         <ArrowLeft className="h-4 w-4" />
                         {fromPage === "marketplace" ? "Back to Exam Library" : "Back to Dashboard"}
-                    </button>
-                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate("/")}>
+                    </Link>
+                    <Link to="/" className="flex items-center gap-2 cursor-pointer">
                         <svg width="18" height="18" viewBox="0 0 28 28" fill="none">
                             <defs>
                                 <linearGradient id="intro-logo" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
@@ -779,7 +777,7 @@ const ExamIntro = () => {
                         <span className="text-sm font-bold text-foreground tracking-tight">
                             Mock<span className="bg-gradient-to-r from-[#6C3EF4] to-[#A855F7] bg-clip-text text-transparent">Setu</span>
                         </span>
-                    </div>
+                    </Link>
                 </div>
 
                 {/* The screen itself, not a card floating in it: header, scrolling

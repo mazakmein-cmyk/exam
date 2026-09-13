@@ -24,7 +24,6 @@ import { format } from "date-fns";
 import { DateRange } from "react-day-picker";
 import VerifiedBadge, { VerifiedSeal } from "@/components/VerifiedBadge";
 import { getVerificationTier } from "@/lib/verification";
-import { useNavigate } from "react-router-dom";
 import SEO from "@/components/SEO";
 // Compares SHA-256 digests, so no operator address ships in the bundle. The
 // check is cosmetic — every RPC re-authorises server-side. See lib/adminRoute.ts.
@@ -95,8 +94,6 @@ const AdminDashboard = () => {
     const [usersExpanded, setUsersExpanded] = useState(true);
     const [customDateType, setCustomDateType] = useState<'signup' | 'active'>('signup');
     const [customFilterOpen, setCustomFilterOpen] = useState(false);
-
-    const navigate = useNavigate();
 
     useEffect(() => {
         checkSession();

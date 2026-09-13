@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowRight, BookOpen } from "lucide-react";
 
 const CTA = () => {
-  const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
@@ -62,22 +61,22 @@ const CTA = () => {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={() => navigate("/student-auth")}
+              <Link
+                to="/student-auth"
                 className="group relative inline-flex items-center gap-2.5 px-8 py-4 rounded-xl text-[15px] font-semibold text-white overflow-hidden bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-[0_0_0_1px_rgba(108,62,244,0.5),0_8px_40px_rgba(108,62,244,0.4)] hover:shadow-[0_0_0_1px_rgba(108,62,244,0.6),0_16px_48px_rgba(108,62,244,0.55)] transition-all duration-200 hover:-translate-y-0.5"
               >
                 <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
                 <span className="relative">Create Free Account</span>
                 <ArrowRight className="relative h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-              </button>
+              </Link>
 
-              <button
-                onClick={() => navigate("/marketplace")}
+              <Link
+                to="/marketplace"
                 className="inline-flex items-center gap-2.5 px-8 py-4 rounded-xl text-[15px] font-semibold text-white/60 hover:text-white border border-white/10 hover:border-white/25 bg-white/[0.04] hover:bg-white/[0.08] transition-all duration-200"
               >
                 <BookOpen className="h-4 w-4" />
                 Browse Exams First
-              </button>
+              </Link>
             </div>
 
             <p className="mt-6 text-[12px] text-white/25 font-medium">

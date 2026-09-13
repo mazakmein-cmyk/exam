@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   ArrowRight,
   BarChart3,
@@ -93,7 +93,6 @@ const ForCreators = ({
   lang?: CreatorLang;
   copy?: CreatorPageCopy;
 }) => {
-  const navigate = useNavigate();
   const [mounted, setMounted] = useState(false);
   const seo = CREATOR_SEO_BY_LANG[lang];
   // Cross-language links stay inside their own language where a translated
@@ -210,15 +209,21 @@ const ForCreators = ({
             className={`mt-10 flex flex-col sm:flex-row items-center justify-center gap-3 transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"}`}
             style={{ transitionDelay: "480ms" }}
           >
-            <button
-              onClick={() => navigate("/auth")}
+            <Link
+              to="/auth"
               className="group relative inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-[15px] font-semibold text-white overflow-hidden bg-emerald-600 hover:bg-emerald-700 shadow-[0_0_0_1px_rgba(16,185,129,0.5),0_8px_32px_rgba(16,185,129,0.35)] hover:shadow-[0_0_0_1px_rgba(16,185,129,0.6),0_12px_40px_rgba(16,185,129,0.45)] transition-all duration-200 hover:-translate-y-0.5"
             >
               <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" />
               <span className="relative">{copy.ctaPrimary}</span>
               <ArrowRight className="relative h-4 w-4 group-hover:translate-x-0.5 transition-transform duration-200" />
-            </button>
+            </Link>
 
+            {/* Stays a <button>: this scrolls to a section on THIS page, so
+                there is no route for a Cmd+click to open in a tab. An
+                <a href="#how-it-works"> would in fact still scroll smoothly
+                (html carries scroll-behavior: smooth, and the target div already
+                has scroll-mt-16) — but it would push a hash entry onto history,
+                so Back would undo the scroll instead of leaving the page. */}
             <button
               onClick={() => {
                 const el = document.getElementById("how-it-works");
@@ -426,14 +431,14 @@ const ForCreators = ({
                 <p className="text-[16px] text-white/45 max-w-md leading-relaxed mb-10">{copy.finalSub}</p>
 
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <button
-                    onClick={() => navigate("/auth")}
+                  <Link
+                    to="/auth"
                     className="group relative inline-flex items-center gap-2.5 px-8 py-4 rounded-xl text-[15px] font-semibold text-white overflow-hidden bg-emerald-600 hover:bg-emerald-700 shadow-[0_0_0_1px_rgba(16,185,129,0.5),0_8px_40px_rgba(16,185,129,0.35)] hover:shadow-[0_0_0_1px_rgba(16,185,129,0.6),0_16px_48px_rgba(16,185,129,0.5)] transition-all duration-200 hover:-translate-y-0.5"
                   >
                     <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
                     <span className="relative">{copy.finalCta}</span>
                     <ArrowRight className="relative h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-                  </button>
+                  </Link>
 
                   <Link
                     to={studentHome}

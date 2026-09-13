@@ -29,10 +29,12 @@
 // The prompt is built HERE from the shared module — the client never supplies
 // prompt text, so the function cannot be used as a general Gemini proxy.
 //
-// Keys: GEMINI_API_KEY is primary, GEMINI_API_KEY_FALLBACK optional. A start
-// that is refused with 403/429/5xx on one key is retried on the other, and the
-// slot that served it is stored — a background interaction can only be polled
-// with the key that created it.
+// Keys: GEMINI_API_KEY is primary; GEMINI_API_KEY_FALLBACK,
+// GEMINI_API_KEY_FALLBACK2 and GEMINI_API_KEY_FALLBACK3 are optional extras.
+// A call refused with 403/429/5xx walks down that chain, skipping slots with
+// no secret set, and the slot that finally served it is stored — a background
+// interaction can only be polled with the key that created it, so a poll never
+// switches keys.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
@@ -50,7 +52,7 @@ const corsHeaders = {
 };
 
 type Engine = "background" | "live";
-type KeySlot = "primary" | "fallback";
+type KeySlot = "primary" | "fallback" | "fallback2" | "fallback3";
 
 /** Models the UI may ask for. Anything else is refused before Gemini is called. */
 const MODELS: Record<string, { engine: Engine }> = {
@@ -67,7 +69,7 @@ const LIVE_STALE_MS = 7 * 60 * 1000;
 const BACKGROUND_STALE_MS = 45 * 60 * 1000;
 const GEMINI = "https://generativelanguage.googleapis.com/v1beta";
 const API_REVISION = "2026-05-20";
-/** Gemini statuses worth retrying on the other key. 403 covers a suspended key. */
+/** Gemini statuses worth retrying on the next key. 403 covers a suspended key. */
 const RETRYABLE = new Set([403, 429, 500, 502, 503, 504]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -84,30 +86,108 @@ function fail(status: number, code: string, message: string): Response {
   return json({ error: { code, message } }, status);
 }
 
+/**
+ * The key chain, in the order it is walked. Each slot is meant to be a separate
+ * Gemini project: a key that is over its free-tier quota (429) or suspended
+ * (403) is out for the moment as a whole, so what the next slot buys is a
+ * different account — not a retry of the same one. A project may set one key or
+ * all four; slots with no secret are skipped.
+ */
+const KEY_SLOTS: KeySlot[] = ["primary", "fallback", "fallback2", "fallback3"];
+const KEY_ENV: Record<KeySlot, string> = {
+  primary: "GEMINI_API_KEY",
+  fallback: "GEMINI_API_KEY_FALLBACK",
+  fallback2: "GEMINI_API_KEY_FALLBACK2",
+  fallback3: "GEMINI_API_KEY_FALLBACK3",
+};
+
 function keyFor(slot: KeySlot): string | undefined {
-  return slot === "primary"
-    ? Deno.env.get("GEMINI_API_KEY")
-    : Deno.env.get("GEMINI_API_KEY_FALLBACK");
+  const key = Deno.env.get(KEY_ENV[slot])?.trim();
+  return key ? key : undefined;
+}
+
+/** How many slots actually hold a key. 0 means the feature is not configured. */
+function configuredSlotCount(): number {
+  return KEY_SLOTS.filter((slot) => keyFor(slot) !== undefined).length;
 }
 
 /**
- * Call Gemini with a key slot. When `allowFallback` is set and the response is
- * a retryable failure, the other configured key is tried once. Returns the slot
- * that produced the returned response.
+ * A slot name read back off a job row. Rows written before the chain grew hold
+ * only 'primary' or 'fallback'; an unrecognised name reads as 'primary' rather
+ * than throwing mid-poll. This checks the NAME only — whether that slot still
+ * holds a key is a separate question, and handleStatus asks it before polling.
+ */
+function asKeySlot(value: unknown): KeySlot {
+  return KEY_SLOTS.includes(value as KeySlot) ? (value as KeySlot) : "primary";
+}
+
+/** A Gemini error body, read once by gemini() so no caller re-reads the stream. */
+type GeminiError = { status: number; message: string; reason: string };
+
+/**
+ * Pull the error out of a failed Gemini response.
+ *
+ * Two shapes in the wild: /models/* returns `{error:{…}}` while /interactions
+ * wraps it in a ONE-ELEMENT ARRAY, `[{error:{…}}]`. Reading only the object
+ * shape is why a failed background start used to report a bare
+ * "Gemini error 400." with the actual reason — "API key not valid" — dropped.
+ */
+async function readGeminiError(res: Response): Promise<GeminiError> {
+  let message = "";
+  let reason = "";
+  try {
+    const parsed = JSON.parse(await res.text());
+    const err = (Array.isArray(parsed) ? parsed[0]?.error : parsed?.error) ?? {};
+    message = typeof err?.message === "string" ? err.message : "";
+    const detail = (err?.details ?? []).find((d: Json) => d?.reason)?.reason;
+    reason = String(detail ?? err?.status ?? "");
+  } catch {
+    /* body missing, empty, or not JSON */
+  }
+  return { status: res.status, message, reason };
+}
+
+/**
+ * Should the chain move to the next key? 403/429/5xx are the key's problem, so
+ * a different account is worth trying. A 400 is normally OUR bad request and
+ * repeating it on four keys is pointless — except API_KEY_INVALID, which is
+ * what Google returns for a deleted or rotated key. That one is precisely what
+ * the next slot exists for, and treating it as fatal would strand the chain on
+ * a dead key.
+ */
+function shouldTryNextKey(err: GeminiError): boolean {
+  if (RETRYABLE.has(err.status)) return true;
+  return (
+    err.status === 400 &&
+    (/API_KEY_INVALID/i.test(err.reason) || /api key not valid/i.test(err.message))
+  );
+}
+
+/**
+ * Call Gemini with a key slot. When `allowFallback` is set, a failure the chain
+ * can route around moves on to the next configured slot, starting from
+ * `preferred`; otherwise only `preferred` is used. Returns the slot that
+ * produced the response, `tried` — how many keys the chain burned getting there,
+ * since a caller writing an error sentence needs to know whether one key or
+ * every key said no — and, for a failure, the parsed error body.
  */
 async function gemini(
   path: string,
   init: { method?: string; body?: Json },
   preferred: KeySlot,
   allowFallback: boolean
-): Promise<{ res: Response; slot: KeySlot }> {
+): Promise<{ res: Response; slot: KeySlot; tried: number; error?: GeminiError }> {
   const order: KeySlot[] = allowFallback
-    ? preferred === "primary" ? ["primary", "fallback"] : ["fallback", "primary"]
+    ? [preferred, ...KEY_SLOTS.filter((slot) => slot !== preferred)]
     : [preferred];
-  let last: { res: Response; slot: KeySlot } | null = null;
-  for (const slot of order) {
-    const key = keyFor(slot);
-    if (!key) continue;
+  const chain = order
+    .map((slot) => ({ slot, key: keyFor(slot) }))
+    .filter((entry): entry is { slot: KeySlot; key: string } => entry.key !== undefined);
+  if (!chain.length) throw new Error("No Gemini key is configured on this project.");
+
+  let last!: { res: Response; slot: KeySlot; tried: number; error?: GeminiError };
+  for (let i = 0; i < chain.length; i++) {
+    const { slot, key } = chain[i];
     const res = await fetch(`${GEMINI}${path}`, {
       method: init.method ?? "GET",
       headers: {
@@ -117,28 +197,49 @@ async function gemini(
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
-    last = { res, slot };
-    if (res.ok || !RETRYABLE.has(res.status)) return last;
-    console.warn(`[ai-pdf-import] Gemini ${res.status} on ${slot} key for ${path}`);
+    // A success hands the body back untouched — only a failure is read here,
+    // and then it is read exactly once, so no caller can hit a consumed stream.
+    if (res.ok) return { res, slot, tried: i + 1 };
+    const error = await readGeminiError(res);
+    last = { res, slot, tried: i + 1, error };
+    if (!shouldTryNextKey(error)) return last;
+    console.warn(
+      `[ai-pdf-import] Gemini ${res.status}${error.reason ? ` (${error.reason})` : ""} on the ` +
+        `${slot} key for ${path} (slot ${i + 1} of ${chain.length})`
+    );
   }
-  if (!last) throw new Error("GEMINI_API_KEY is not configured on this project.");
   return last;
 }
 
-/** Turn a Gemini error body into one sentence a creator can act on. */
-async function geminiErrorMessage(res: Response): Promise<string> {
-  let detail = "";
-  try {
-    const j = await res.json();
-    detail = j?.error?.message ?? "";
-  } catch {
-    /* body not JSON */
+/**
+ * Turn a parsed Gemini error into one sentence a creator can act on. `tried` is
+ * how many keys gave this same answer: with a chain of four, "wait a minute and
+ * retry" is honest after one key and a lie after all of them.
+ */
+function geminiErrorMessage(err: GeminiError, tried = 1): string {
+  const { status, message } = err;
+  if (status === 429) {
+    return tried > 1
+      ? `Gemini is over its quota on all ${tried} platform keys. Wait a few minutes and retry, or ask the MockSetu admin to add another key.`
+      : "Gemini is over its quota right now. Wait a minute and retry.";
   }
-  if (res.status === 429) return "Gemini is over its quota right now. Wait a minute and retry.";
-  if (res.status === 503) return "Gemini is busy right now. Retry in a moment.";
-  if (res.status === 403) return "Gemini refused the platform key. Ask the MockSetu admin to check the key.";
-  if (res.status === 404) return "This Gemini model is not available to the platform key any more.";
-  return detail ? `Gemini error ${res.status}: ${detail}` : `Gemini error ${res.status}.`;
+  if (status === 503) {
+    return tried > 1
+      ? `Gemini is busy on all ${tried} platform keys. Retry in a few minutes.`
+      : "Gemini is busy right now. Retry in a moment.";
+  }
+  if (status === 403) {
+    return tried > 1
+      ? `Gemini refused all ${tried} platform keys. Ask the MockSetu admin to check them.`
+      : "Gemini refused the platform key. Ask the MockSetu admin to check the key.";
+  }
+  if (shouldTryNextKey(err) && status === 400) {
+    return tried > 1
+      ? `Gemini rejected all ${tried} platform keys as invalid. Ask the MockSetu admin to re-set them.`
+      : "Gemini rejected the platform key as invalid. Ask the MockSetu admin to re-set it.";
+  }
+  if (status === 404) return "This Gemini model is not available to the platform key any more.";
+  return message ? `Gemini error ${status}: ${message}` : `Gemini error ${status}.`;
 }
 
 /** Text of the model's reply from an Interactions API object — model_output steps only. */
@@ -217,9 +318,10 @@ async function runLiveJob(
     if (budget !== undefined && budget !== "" && Number.isFinite(Number(budget))) {
       body.generationConfig.thinkingConfig = { thinkingBudget: Number(budget) };
     }
-    const { res, slot } = await gemini(`/models/${model}:generateContent`, { method: "POST", body }, preferred, true);
+    const { res, slot, tried, error } = await gemini(`/models/${model}:generateContent`, { method: "POST", body }, preferred, true);
     if (!res.ok) {
-      await updateJob(service, jobId, { status: "failed", api_key_slot: slot, error: await geminiErrorMessage(res), completed_at: isoNow() });
+      const failure = error ?? await readGeminiError(res);
+      await updateJob(service, jobId, { status: "failed", api_key_slot: slot, error: geminiErrorMessage(failure, tried), completed_at: isoNow() });
       return;
     }
     const reply = await res.json();
@@ -347,7 +449,7 @@ async function handleStart(service: Client, userId: string, body: Json): Promise
   if (insErr || !job) return fail(500, "db_error", insErr?.message ?? "Could not record the job.");
 
   if (modelSpec.engine === "background") {
-    const { res, slot } = await gemini(
+    const { res, slot, tried, error: geminiError } = await gemini(
       "/interactions",
       {
         method: "POST",
@@ -365,7 +467,7 @@ async function handleStart(service: Client, userId: string, body: Json): Promise
       true
     );
     if (!res.ok) {
-      const message = await geminiErrorMessage(res);
+      const message = geminiErrorMessage(geminiError ?? await readGeminiError(res), tried);
       await updateJob(service, job.id, { status: "failed", api_key_slot: slot, error: message, completed_at: isoNow() });
       return fail(502, "gemini_error", message);
     }
@@ -426,7 +528,17 @@ async function handleStatus(service: Client, userId: string, body: Json): Promis
     await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow() });
     return json(publicJob({ ...job, status: "failed", error }, false));
   }
-  const { res: gres } = await gemini(`/interactions/${job.interaction_id}`, {}, job.api_key_slot as KeySlot, false);
+  // Polling is pinned to the slot that created the interaction — Gemini will
+  // not show it to any other key — so a slot whose secret has since been
+  // removed cannot be polled at all. Say that, instead of a bare 500 from the
+  // empty chain or a confusing 404 from guessing another key.
+  const slot = asKeySlot(job.api_key_slot);
+  if (!keyFor(slot)) {
+    const error = "The Gemini key that started this import is no longer configured. Start the import again.";
+    await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow() });
+    return json(publicJob({ ...job, status: "failed", error }, false));
+  }
+  const { res: gres } = await gemini(`/interactions/${job.interaction_id}`, {}, slot, false);
   if (!gres.ok) {
     // A transient poll failure is not a failed job; only 404 means it is gone.
     if (gres.status === 404) {
@@ -521,8 +633,8 @@ Deno.serve(async (req: Request) => {
     if (!profile || profile.can_use_ai_import !== true) {
       return fail(403, "not_enabled", "AI import is not enabled for this account.");
     }
-    if (!Deno.env.get("GEMINI_API_KEY") && !Deno.env.get("GEMINI_API_KEY_FALLBACK")) {
-      return fail(503, "not_configured", "The Gemini key is not configured on this project.");
+    if (configuredSlotCount() === 0) {
+      return fail(503, "not_configured", "No Gemini key is configured on this project.");
     }
 
     const body = await req.json().catch(() => null);

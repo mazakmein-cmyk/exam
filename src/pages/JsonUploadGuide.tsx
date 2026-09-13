@@ -19,6 +19,7 @@ const tocSections = [
   { id: "passage-questions", label: "Passage-based questions" },
   { id: "sample-json", label: "Sample JSON" },
   { id: "fixing-errors", label: "Fixing errors" },
+  { id: "fix-missing-answers", label: "→ Missing answers" },
   { id: "fix-invalid-json", label: "→ Invalid JSON syntax" },
   { id: "fix-schema-version", label: "→ Wrong schema version" },
   { id: "fix-language-mismatch", label: "→ Language mismatch" },
@@ -29,6 +30,55 @@ const tocSections = [
 ];
 
 
+
+const FIX_MISSING_ANSWERS_PROMPT = String.raw`The JSON you produced has "correct_answer": null on questions
+whose answers ARE printed in the PDF I gave you.
+
+Do this before re-emitting:
+
+1. Read the WHOLE PDF again, LAST PAGES FIRST. Exam papers print
+   the key at the end — a page headed ANSWER KEY / ANSWERS / KEY /
+   SOLUTIONS / HINTS & SOLUTIONS / उत्तर कुंजी, a bare grid of
+   numbers with no heading, "Ans.(b)" lines under the questions,
+   "S25. Ans.(d)" solution items, or one bold / ticked option per
+   question. Also check the cover for a Set / Series / Booklet Code
+   / Shift, and use ONLY that column of the key.
+
+2. Transcribe the key into _extraction_summary.answer_key.transcript
+   BEFORE re-emitting any question — one token per question,
+   "<printed q_no>:<answer exactly as printed>", e.g.
+   "1:3 2:1 3:(b) 21:7.00 30:Bonus". Copy the printed LABELS, not
+   indices. Pair each answer with the question NUMBER printed beside
+   it, never with its position in the text flow.
+
+3. Convert each label to a ZERO-BASED index: (1)/(a)/(A)/(क) → "0",
+   (2)/(b) → "1", (3)/(c) → "2", (4)/(d) → "3", (5)/(e) → "4".
+   A printed digit is a LABEL, not an index — a key of "(3)" is
+   "correct_answer": "2", never "3".
+
+4. Never solve a question to find its answer, and never answer from
+   your own knowledge. Only transcribe what the PDF states.
+
+5. LEAVE PLACEHOLDERS ALONE. A question whose options are
+   "[Manual entry needed — unsupported type in v1]" and
+   "[See PDF Q<n> for the actual answer]" is a numeric / TITA /
+   match question that this format cannot hold. Its correct_answer
+   stays null even though the PDF prints an answer — an index there
+   would tick one of those two placeholder strings. Put the printed
+   value in its needs_manual_review reason instead, as
+   "placeholder — numeric/TITA unsupported in v1 (key: 7.00)".
+
+6. Any other question you still cannot answer keeps
+   "correct_answer": null AND gets an entry in
+   _extraction_summary.needs_manual_review whose reason starts with
+   "answer key — " and quotes what the PDF printed.
+
+Do NOT change anything else — questions, options, section names,
+passages, marks and math must be preserved exactly.
+
+Re-emit the FULL JSON between <<<EXAM_JSON_START>>> and
+<<<EXAM_JSON_END>>>. Here is the JSON to fix — paste it below this
+prompt:`;
 
 const FIX_INVALID_JSON_PROMPT = String.raw`The JSON file you generated for me is structurally invalid —
 MockSetu's parser failed because of a syntax error somewhere in
@@ -153,13 +203,31 @@ const SAMPLE_JSON = String.raw`{
     "skipped": [],
     "needs_manual_review": [],
     "marks_source": "not_present",
-    "answers_source": "found_in_pdf"
+    "answers_source": "found_in_pdf",
+    "answer_key": {
+      "found": true,
+      "applied": true,
+      "format": "grid",
+      "pages": [12],
+      "label_style": "abcd",
+      "numbering": "restarts_per_section",
+      "sets_in_key": [],
+      "set_used": null,
+      "transcript": {
+        "Verbal": "1:b",
+        "Quantitative": "1:b 2:b"
+      },
+      "answered": 3,
+      "left_null": 0,
+      "note": ""
+    }
   },
   "sections": [
     {
       "name": "Verbal",
       "questions": [
         {
+          "q_no": 1,
           "text": "Passage:\n\nThe Indian Ocean world is a term used to describe the very long-lasting connections among the coasts of East Africa, the Arab coasts, and South and East Asia. These connections were made possible by the geography of the Indian Ocean — for much of history, travel by sea was much easier than by land.\n\nQuestion: According to the passage, what made the Indian Ocean connections possible?",
           "answer_type": "single",
           "options": [
@@ -176,12 +244,14 @@ const SAMPLE_JSON = String.raw`{
       "name": "Quantitative",
       "questions": [
         {
+          "q_no": 1,
           "text": "If $\\sqrt{5x+9} + \\sqrt{5x-9} = 3(2+\\sqrt{2})$, then $\\sqrt{10x+9}$ is equal to:",
           "answer_type": "single",
           "options": ["$3\\sqrt{7}$", "$4\\sqrt{5}$", "$3\\sqrt{31}$", "$2\\sqrt{7}$"],
           "correct_answer": "1"
         },
         {
+          "q_no": 2,
           "text": "A rectangle has length-to-width ratio 5:3. If twice the perimeter is 96 cm, find the area (in $\\text{cm}^2$).",
           "answer_type": "single",
           "options": ["225", "135", "196", "180", "154"],
@@ -376,9 +446,9 @@ const JsonUploadGuide = () => {
                   <strong>A PDF</strong> of your exam paper (the source you want to convert).
                 </>,
                 <>
-                  <strong>A frontier-AI account</strong>: ChatGPT (GPT-5), Claude (Opus 4 or
-                  newer), or Gemini (2.5 Pro). Older or smaller models will hallucinate answers
-                  — do not use them for this.
+                  <strong>A frontier-AI account</strong>: ChatGPT, Claude or Gemini, on their
+                  current top tier with a thinking / reasoning mode. Small or older models
+                  transcribe maths badly and lose answer keys — do not use them for this.
                 </>,
               ]}
             />
@@ -626,6 +696,38 @@ const JsonUploadGuide = () => {
               between <Code>&lt;&lt;&lt;EXAM_JSON_START&gt;&gt;&gt;</Code> and{" "}
               <Code>&lt;&lt;&lt;EXAM_JSON_END&gt;&gt;&gt;</Code> — save it as <Code>.json</Code>{" "}
               and re-upload.
+            </P>
+
+            {/* Fix: Missing answers */}
+            <SectionHeading id="fix-missing-answers" title="Missing answers" sub="Error type" />
+            <P>
+              The upload worked, but questions show{" "}
+              <strong>"No correct answer marked"</strong> even though the PDF prints an
+              answer key. This is the most common extraction failure: the key usually sits on
+              the last pages, and a model that reads the paper front to back reaches it only
+              after it has already written the questions.
+            </P>
+            <P>
+              The Step 1 prompt fixes this by making the AI read the last pages first and
+              write the key into <Code>_extraction_summary.answer_key.transcript</Code> before
+              any question. If you used an older prompt, re-run Step 1 with the current one.
+              If the AI still misses answers, copy this prompt into the same chat and paste
+              your JSON below it:
+            </P>
+            <CopyBlock text={FIX_MISSING_ANSWERS_PROMPT} label="Missing-answers fix prompt" />
+            <P>
+              Two things to check in the returned JSON. First,{" "}
+              <Code>answer_key.transcript</Code> should list one token per question — if it is
+              empty, the AI never found the key and the PDF may genuinely not contain one.
+              Second, watch for an <strong>off-by-one</strong>: a key that prints{" "}
+              <Code>(3)</Code> means the third option, which is{" "}
+              <Code>"correct_answer": "2"</Code>. Spot-check three questions against the
+              printed key before you publish.
+            </P>
+            <P>
+              Questions the AI could not answer carry a reason starting{" "}
+              <Code>answer key —</Code> in the preview's review list, naming what the PDF
+              printed, so you can finish them in the editor without reopening the file.
             </P>
 
             {/* Fix: Invalid JSON */}
@@ -971,15 +1073,35 @@ const JsonUploadGuide = () => {
                       Imported questions have no <Code>correct_answer</Code>
                     </td>
                     <td className="py-3 px-4">
-                      The AI couldn't find the answer in the PDF. Fill in the answers manually
-                      in the editor after upload.
+                      Usually the AI never reached the answer key — it lives on the last
+                      pages, after the questions. Check{" "}
+                      <Code>_extraction_summary.answer_key</Code> in your JSON: an empty{" "}
+                      <Code>transcript</Code> means it was not found.{" "}
+                      <a
+                        href="#fix-missing-answers"
+                        className="text-primary font-semibold hover:underline"
+                      >
+                        See full fix →
+                      </a>
+                    </td>
+                  </tr>
+                  <tr className="border-b border-border/30 align-top">
+                    <td className="py-3 px-4">
+                      Answers are marked, but on the <strong>wrong option</strong>
+                    </td>
+                    <td className="py-3 px-4">
+                      Almost always off by one, or the wrong booklet set. A key that prints{" "}
+                      <Code>(3)</Code> means the third option, which is index{" "}
+                      <Code>"2"</Code>. Check <Code>answer_key.set_used</Code> matches the
+                      Set / Series printed on your paper's cover, then re-run Step 1.
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">
                     <td className="py-3 px-4">AI's reply isn't wrapped in delimiters</td>
                     <td className="py-3 px-4">
-                      Older or weaker model. Switch to GPT-5, Claude Opus 4 (or newer), or
-                      Gemini 2.5 Pro.
+                      Older or weaker model, or it stopped to ask you a question instead of
+                      answering. Switch to a current frontier model and re-send the Step 1
+                      prompt unchanged.
                     </td>
                   </tr>
                   <tr className="align-top">

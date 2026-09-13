@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -87,13 +87,19 @@ const StudentAuth = () => {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isExamSubmit]);
 
-  const handleBackWithCheck = () => {
-    if (isExamSubmit) {
-      setShowExitDialog(true);
-    } else {
-      navigate(searchParams.get("from") === "marketplace" ? "/marketplace" : "/");
-    }
-  };
+  // "Back" is a real destination — except mid exam-submit, where it has to stop
+  // and ask before the unsaved responses are thrown away. So the safe case
+  // renders as a <Link> (Cmd+click opens the library in a new tab, the sign-in
+  // form stays put) and only the confirm-first case stays a <button>.
+  const cameFromMarketplace = searchParams.get("from") === "marketplace";
+  const backTo = cameFromMarketplace ? "/marketplace" : "/";
+  const backClassName = "absolute top-6 left-6 z-10 flex items-center gap-2 px-3 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/8 transition-all text-sm font-medium";
+  const backContent = (
+    <>
+      <ArrowLeft className="h-4 w-4" />
+      {(cameFromMarketplace || isExamSubmit) ? "Back to Exam Library" : "Back to Home"}
+    </>
+  );
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -269,10 +275,15 @@ const StudentAuth = () => {
       <OnboardingModal isOpen={showOnboardingModal} onComplete={handleOnboardingComplete} />
 
       {/* Back Button */}
-      <button onClick={handleBackWithCheck} className="absolute top-6 left-6 z-10 flex items-center gap-2 px-3 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/8 transition-all text-sm font-medium">
-        <ArrowLeft className="h-4 w-4" />
-        {(searchParams.get("from") === "marketplace" || isExamSubmit) ? "Back to Exam Library" : "Back to Home"}
-      </button>
+      {isExamSubmit ? (
+        <button onClick={() => setShowExitDialog(true)} className={backClassName}>
+          {backContent}
+        </button>
+      ) : (
+        <Link to={backTo} className={backClassName}>
+          {backContent}
+        </Link>
+      )}
 
       <AlertDialog open={showExitDialog} onOpenChange={setShowExitDialog}>
         <AlertDialogContent>
@@ -349,7 +360,7 @@ const StudentAuth = () => {
                   {searchParams.get("from") !== "marketplace" && !isExamSubmit && (
                     <p className="text-center text-[11px] text-white/25 pt-1">
                       Want to create exams?{" "}
-                      <span className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors" onClick={() => navigate("/auth")}>Creator login →</span>
+                      <Link to="/auth" className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors">Creator login →</Link>
                     </p>
                   )}
                 </form>
@@ -394,7 +405,7 @@ const StudentAuth = () => {
                   {searchParams.get("from") !== "marketplace" && !isExamSubmit && (
                     <p className="text-center text-[11px] text-white/25 pt-1">
                       Want to create exams?{" "}
-                      <span className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors" onClick={() => navigate("/auth")}>Creator sign-up →</span>
+                      <Link to="/auth" className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors">Creator sign-up →</Link>
                     </p>
                   )}
                 </form>
@@ -403,11 +414,14 @@ const StudentAuth = () => {
           </div>
         </div>
 
+        {/* These two pointed at "/terms" and "/privacy", which are not routes —
+            App.tsx declares "/terms-of-service" and "/privacy-policy", so both
+            links have been landing on the 404 page. Corrected while converting. */}
         <p className="text-center text-[11px] text-white/20 mt-5">
           By continuing you agree to our{" "}
-          <span className="text-white/35 hover:text-white/60 cursor-pointer transition-colors" onClick={() => navigate("/terms")}>Terms</span>
+          <Link to="/terms-of-service" className="text-white/35 hover:text-white/60 cursor-pointer transition-colors">Terms</Link>
           {" & "}
-          <span className="text-white/35 hover:text-white/60 cursor-pointer transition-colors" onClick={() => navigate("/privacy")}>Privacy Policy</span>
+          <Link to="/privacy-policy" className="text-white/35 hover:text-white/60 cursor-pointer transition-colors">Privacy Policy</Link>
         </p>
       </div>
     </div>

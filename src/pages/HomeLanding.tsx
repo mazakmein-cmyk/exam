@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Play } from "lucide-react";
 import Navbar from "@/components/Navbar";
@@ -92,8 +92,7 @@ const buildJsonLd = (lang: HomeLang) => {
  * keeps sonner and katex off the shared critical path.
  */
 const HomeLanding = ({ lang, copy }: { lang: HomeLang; copy: HomeCopy }) => {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const seo = HOME_SEO_BY_LANG[lang];
 
   // Same cache entry the marketplace reads — see publishedExams.ts.
@@ -121,21 +120,34 @@ const HomeLanding = ({ lang, copy }: { lang: HomeLang; copy: HomeCopy }) => {
   }, [categories, requestedSlug]);
 
   // Tapping the active chip deselects it — back to the generic view.
-  const handleSelectCategory = useCallback(
+  //
+  // ?exam=ssc-mts is a real, shareable address for this page, so the chips are
+  // LINKS rather than buttons: Cmd+click opens the home page already filtered
+  // to that exam, and the status bar previews where a chip goes. That makes the
+  // URL write the <Link>'s job — `replace` keeps Back leaving the page instead
+  // of replaying chip taps, and every OTHER param (utm_*, anything a campaign
+  // appended) is carried through exactly as the old setSearchParams did.
+  const categoryHref = useCallback(
     (category: string) => {
       const next = category === selectedCategory ? null : category;
-      rememberPreferredExam(next);
-      setSearchParams(
-        (prev) => {
-          const params = new URLSearchParams(prev);
-          if (next) params.set(EXAM_PARAM, slugifyCategory(next));
-          else params.delete(EXAM_PARAM);
-          return params;
-        },
-        { replace: true }
-      );
+      const params = new URLSearchParams(searchParams);
+      if (next) params.set(EXAM_PARAM, slugifyCategory(next));
+      else params.delete(EXAM_PARAM);
+      const query = params.toString();
+      return query ? `${HOME_PATHS[lang]}?${query}` : HOME_PATHS[lang];
     },
-    [selectedCategory, setSearchParams]
+    [lang, searchParams, selectedCategory]
+  );
+
+  // What is left of the old handler: the sticky half. The <Link> runs this
+  // before it navigates, so it fires on a Cmd+click too — which is right,
+  // "the exam I care about" is true whether the filtered page opened here or
+  // in a new tab.
+  const handleSelectCategory = useCallback(
+    (category: string) => {
+      rememberPreferredExam(category === selectedCategory ? null : category);
+    },
+    [selectedCategory]
   );
 
   // The hero button's pre-resolved target: the newest MOCK in the chosen
@@ -166,16 +178,20 @@ const HomeLanding = ({ lang, copy }: { lang: HomeLang; copy: HomeCopy }) => {
     return () => observer.disconnect();
   }, []);
 
-  const startPrimary = () => {
+  // The relay CTA's destination is resolved at render time, so it ships as a
+  // real link: Cmd+click, middle-click and "copy link address" all work, and
+  // the status bar previews the paper before the thumb commits. The breadcrumb
+  // write stays in onClick because <Link> runs it before it navigates — so it
+  // happens on a modified click too, which is what we want.
+  const primaryHref = primaryExam ? `/exam/${primaryExam.id}/intro?from=home` : "/marketplace";
+
+  const rememberPrimary = () => {
     if (primaryExam) {
       rememberLastExam({
         id: primaryExam.id,
         name: primaryExam.name,
         category: primaryExam.exam_category,
       });
-      navigate(`/exam/${primaryExam.id}/intro?from=home`);
-    } else {
-      navigate("/marketplace");
     }
   };
 
@@ -200,6 +216,7 @@ const HomeLanding = ({ lang, copy }: { lang: HomeLang; copy: HomeCopy }) => {
           loading={loading}
           categories={categories}
           selectedCategory={selectedCategory}
+          categoryHref={categoryHref}
           onSelectCategory={handleSelectCategory}
           primaryExam={primaryExam}
           copy={copy.hero}
@@ -226,8 +243,9 @@ const HomeLanding = ({ lang, copy }: { lang: HomeLang; copy: HomeCopy }) => {
         }`}
         aria-hidden={!heroGone}
       >
-        <button
-          onClick={startPrimary}
+        <Link
+          to={primaryHref}
+          onClick={rememberPrimary}
           className="w-full h-14 rounded-2xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white shadow-lg shadow-[#6C3EF4]/30 flex flex-col items-center justify-center transition-colors"
         >
           <span className="inline-flex items-center gap-2 text-[15.5px] font-extrabold tracking-tight">
@@ -240,7 +258,7 @@ const HomeLanding = ({ lang, copy }: { lang: HomeLang; copy: HomeCopy }) => {
                 ? copy.hero.browseCategory(selectedCategory)
                 : copy.hero.browseLibrary}
           </span>
-        </button>
+        </Link>
       </div>
     </div>
   );

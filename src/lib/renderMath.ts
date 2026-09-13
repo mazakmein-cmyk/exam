@@ -14,11 +14,18 @@
  *  - `renderMathInText` HTML-escapes all non-math content, so a plain-text
  *    option renders character-identical to the previous `{option}` JSX.
  *  - A `$...$` / `$$...$$` candidate is only treated as math when it carries
- *    a STRONG math signal (backslash command, ^ _ { }, a math symbol, or a
- *    compact letter-bearing token). Currency prose — "$5-$10 per unit",
- *    "Pay $500; $200 now", "Get $5 off when x = 2" — stays prose.
+ *    a math signal (backslash command, ^ _ { }, a math symbol, a compact
+ *    letter-bearing token, or — for spaced content that cannot be a price,
+ *    because it does not open with a digit — a relation, a function call or
+ *    absolute-value bars). Currency prose — "$5-$10 per unit", "Pay $500;
+ *    $200 now", "Get $5 off when x = 2" — stays prose. See mathSegments.js.
  *  - In HTML mode the scanner never looks inside tags, so a `$` in an
- *    attribute (image URLs etc.) can never be rewritten.
+ *    attribute (image URLs etc.) can never be rewritten. That is also what
+ *    makes it safe for a math body to contain `<` or `>`, so the inequality
+ *    a question actually asks about ("$(k > 0)$") can render at all.
+ *  - LaTeX escaped one level too many (`\\int` for `\int`) is collapsed, but
+ *    only where a `\\` cannot be a legitimate row separator, or after KaTeX
+ *    has already refused the segment. See latexEscapes.js.
  *  - Eaten-escape repair never touches newlines in display math, where a
  *    line break before `u`/`e`/`i` is legitimate formatting, not a broken
  *    `\nu`/`\neq`/`\ni`.
@@ -31,6 +38,12 @@ import katex from "katex";
 // module (or katex itself), so the style always arrives with the code that
 // needs it — and the exam library / landing pages stop downloading it.
 import "katex/dist/katex.min.css";
+import {
+  collapseDoubledBackslashes,
+  collapseIfSafelyOverEscaped,
+  hasOverEscapedCommand,
+} from "./latexEscapes.js";
+import { MATH_TOKEN_SOURCE, TAG_SOURCE, looksLikeMath } from "./mathSegments.js";
 import { looksLikeHtml, renderClozeBlanks } from "./richText";
 import { sanitizeStoredHtml } from "./sanitizeHtml";
 
@@ -112,29 +125,6 @@ function decodeBasicEntities(s: string): string {
     .replace(/&amp;/gi, "&");
 }
 
-// ─── Currency guard ────────────────────────────────────────────────────────
-// A `$...$` or `$$...$$` pair is only math if the content carries a STRONG
-// math signal. Weak signals are deliberately excluded: "=" / "<" / ">" appear
-// in ordinary prose between two prices ("Get $5 off when x = 2, so $p$..."),
-// and whitespace-free digit runs are price fragments ("$5-$10" → "5-").
-function looksLikeMath(content: string, isDisplay: boolean): boolean {
-  // LaTeX structural characters — a backslash command, grouping, or scripts.
-  if (/[\\^_{}]/.test(content)) return true;
-  // An eaten backslash-escape (TAB+"imes", FF+"rac", ...) about to be repaired.
-  if (/[\t\r\f\b\v][A-Za-z]/.test(content)) return true;
-  // Unicode math symbols.
-  if (/[×÷±≤≥≠√∑∏∫∞°πθΔαβγλμσΩ]/.test(content)) return true;
-  // "$$...$$" is a deliberate display-math authoring choice, so a bare "="
-  // is trusted there ($$v = u + at$$). It is NOT trusted for single-$ —
-  // "Get $5 off when x = 2, so $p$..." would swallow the prose between two
-  // ordinary prices.
-  if (isDisplay && content.includes("=")) return true;
-  // Compact token that contains at least one letter ($x$, $3x+2$, $a=b$).
-  // The letter requirement rejects digit/punctuation-only currency fragments
-  // like "5-", "500;", "5." that arise from "$5-$10" style prose.
-  return !/\s/.test(content) && /[A-Za-z]/.test(content);
-}
-
 // ─── KaTeX ─────────────────────────────────────────────────────────────────
 function tryKatex(latex: string, displayMode: boolean): string | null {
   try {
@@ -151,29 +141,33 @@ function tryKatex(latex: string, displayMode: boolean): string | null {
 }
 
 function renderSegment(inner: string, displayMode: boolean): string | null {
-  const decoded = decodeBasicEntities(inner);
+  // One level too many of backslash escaping (`\\int` where `\int` was meant)
+  // has to be undone BEFORE KaTeX, not after, because KaTeX does not object
+  // to it: `\\` is a row break, so `$\\int_0^k h(x)dx$` renders as a line
+  // break and the italic letters i-n-t, with no integral sign and no error.
+  // There is no failure to retry on, so the collapse happens up front — but
+  // only for segments with no environment machinery, where a `\\` cannot be a
+  // legitimate row separator. See collapseIfSafelyOverEscaped.
+  const decoded = collapseIfSafelyOverEscaped(decodeBasicEntities(inner));
   return (
     tryKatex(repairEatenEscapes(decoded, !displayMode), displayMode) ??
-    tryKatex(decoded, displayMode)
+    tryKatex(decoded, displayMode) ??
+    // Last resort, and only ever reached by content that is ALREADY going to
+    // be printed raw: over-escaping that DOES carry environment machinery
+    // (`$\\begin{cases} ... \\\\ ... \end{cases}$`) always throws, because the
+    // `\\` stops the environment from opening and strands the `&`. Collapsing
+    // one level turns it back into the formula the creator wrote. If this
+    // attempt fails too we are exactly where we were: the raw string.
+    (hasOverEscapedCommand(decoded)
+      ? tryKatex(collapseDoubledBackslashes(decoded), displayMode)
+      : null)
   );
 }
 
 // ─── Scanner ───────────────────────────────────────────────────────────────
-// Order matters: $$...$$ must be tried before $...$. Both dollar forms refuse
-// raw < / > in their bodies so a pair of dollars can never swallow HTML tags
-// or pair up across tag boundaries; inline $...$ additionally stays on a
-// single line. (Entity-encoded &lt;/&gt; still work — they are decoded before
-// the content reaches KaTeX.)
-const MATH_TOKEN_SOURCE =
-  "(?<!\\\\)\\$\\$([^$<>]+?)(?<!\\\\)\\$\\$" + // 1: $$display$$
-  "|\\\\\\[([\\s\\S]+?)\\\\\\]" + //              2: \[display\]
-  "|\\\\\\(([\\s\\S]+?)\\\\\\)" + //              3: \(inline\)
-  "|(?<!\\\\)\\$([^$\\n<>]+?)(?<!\\\\)\\$"; //    4: $inline$
-
-// HTML tags and comments — segments the HTML-mode scanner must never enter.
-// Requires a letter (or /) after "<" so a bare "x < 5" in text is not
-// mistaken for a tag.
-const TAG_SOURCE = "<\\/?[a-zA-Z][^>]*>|<!--[\\s\\S]*?-->";
+// The tokeniser and the currency guard live in mathSegments.js — pure string
+// rules the node tests can import, which this TypeScript module cannot offer
+// them (it pulls in KaTeX's stylesheet).
 
 function scanSegment(input: string, escapeText: boolean): string {
   const re = new RegExp(MATH_TOKEN_SOURCE, "g");

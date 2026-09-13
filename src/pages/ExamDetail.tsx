@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
-import { useParams, useNavigate, useBlocker, Blocker } from "react-router-dom";
+import { useParams, useNavigate, useBlocker, Blocker, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { createTwinPlaceholders } from "@/lib/questionTwins";
 import { renderMathInHtml, renderMathInText, renderMathInRichText } from "@/lib/renderMath";
 import { htmlToPlainText, isRichTextEmpty, isOptionFilled, countFilledOptions } from "@/lib/richText";
+import { buildQuestionPreview, previewFallbackLabel } from "@/lib/questionPreview.js";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { autoSnip } from "@/services/autoSnipper";
 import { tableHasColumn } from "@/lib/dbFeatures";
@@ -26,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, ArrowLeftRight, Save, Trash2, Upload, Download, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass, Ungroup } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Save, Trash2, Upload, Download, Image as ImageIcon, FileText, ChevronDown, ChevronUp, Edit, Plus, Sparkles, MoreVertical, Share2, Copy, Eye, BarChart, X, Check, Globe, Lock, AlertCircle, Scale, FileJson, Layers, ListChecks, Loader2, HelpCircle, Hourglass, Ungroup, Table2 as TableIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import PublishExamDialog from "@/components/PublishExamDialog";
 import JsonUploadDialog from "@/components/JsonUploadDialog";
@@ -44,6 +45,8 @@ import {
 } from "@/services/scoringService";
 const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
 import SnipOptionDialog from "@/components/SnipOptionDialog";
+import QuestionAssetDialog, { type QuestionAsset } from "@/components/QuestionAssetDialog";
+import QuestionPreviewDialog, { type PreviewQuestion } from "@/components/QuestionPreviewDialog";
 import { QuestionForm } from "@/components/QuestionForm";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
@@ -247,6 +250,11 @@ export default function ExamDetail() {
   // Publish Dialog States
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishAction, setPublishAction] = useState<{ isPublishing: boolean } | null>(null);
+
+  // What a question row's Table / Image chip is currently showing, if anything.
+  const [openAsset, setOpenAsset] = useState<QuestionAsset | null>(null);
+  // The row whose eye button is open — the whole question, assembled.
+  const [previewQuestion, setPreviewQuestion] = useState<{ q: PreviewQuestion; label: string } | null>(null);
 
   // JSON Upload Dialog State
   const [showJsonUploadDialog, setShowJsonUploadDialog] = useState(false);
@@ -3710,8 +3718,10 @@ export default function ExamDetail() {
       {/* Header */}
       <header className="sticky top-0 z-10 h-16 border-b border-border/70 bg-card/85 backdrop-blur-xl px-3 sm:px-6 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl shrink-0 text-muted-foreground hover:text-foreground" onClick={() => navigate("/dashboard?tab=mock")}>
-            <ArrowLeft className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl shrink-0 text-muted-foreground hover:text-foreground" asChild>
+            <Link to="/dashboard?tab=mock" aria-label="Back to dashboard">
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
           </Button>
           <div className="hidden sm:block h-8 w-px bg-border shrink-0" />
           <div className="min-w-0">
@@ -3748,18 +3758,22 @@ export default function ExamDetail() {
                 {supportedLanguages.map((lang) => {
                   const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === lang);
                   return (
-                    <DropdownMenuItem key={lang} onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${lang}`)}>
-                      <span className="mr-2">{langInfo?.flag || "🌐"}</span>
-                      {langInfo?.label || lang.toUpperCase()}
+                    <DropdownMenuItem key={lang} asChild>
+                      <Link to={`/exam/${examId}/intro?from=edit&lang=${lang}`}>
+                        <span className="mr-2">{langInfo?.flag || "🌐"}</span>
+                        {langInfo?.label || lang.toUpperCase()}
+                      </Link>
                     </DropdownMenuItem>
                   );
                 })}
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground" title="Sit your own paper the way a student will" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
-              <Eye className="mr-2 h-4 w-4" />
-              Student view
+            <Button variant="ghost" size="sm" className="hidden sm:flex h-9 rounded-lg text-muted-foreground hover:text-foreground" asChild>
+              <Link to={`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`} title="Sit your own paper the way a student will">
+                <Eye className="mr-2 h-4 w-4" />
+                Student view
+              </Link>
             </Button>
           )}
 
@@ -3774,17 +3788,21 @@ export default function ExamDetail() {
                 {supportedLanguages.map((lang) => {
                   const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === lang);
                   return (
-                    <DropdownMenuItem key={lang} onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${lang}`)}>
-                      <span className="mr-2">{langInfo?.flag || "🌐"}</span>
-                      {langInfo?.label || lang.toUpperCase()}
+                    <DropdownMenuItem key={lang} asChild>
+                      <Link to={`/exam/${examId}/intro?from=edit&lang=${lang}`}>
+                        <span className="mr-2">{langInfo?.flag || "🌐"}</span>
+                        {langInfo?.label || lang.toUpperCase()}
+                      </Link>
                     </DropdownMenuItem>
                   );
                 })}
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground" aria-label="Student view" title="Sit your own paper the way a student will" onClick={() => navigate(`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`)}>
-              <Eye className="h-4 w-4" />
+            <Button variant="ghost" size="icon" className="sm:hidden h-9 w-9 rounded-lg text-muted-foreground" asChild>
+              <Link to={`/exam/${examId}/intro?from=edit&lang=${supportedLanguages[0] || 'en'}`} aria-label="Student view" title="Sit your own paper the way a student will">
+                <Eye className="h-4 w-4" />
+              </Link>
             </Button>
           )}
 
@@ -3873,9 +3891,11 @@ export default function ExamDetail() {
                 <Globe className="mr-2 h-4 w-4" />
                 {exam?.is_published ? "Unpublish" : "Publish"}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate(`/analytics?examId=${examId}&from=edit`)}>
-                <BarChart className="mr-2 h-4 w-4" />
-                Analytics
+              <DropdownMenuItem asChild>
+                <Link to={`/analytics?examId=${examId}&from=edit`}>
+                  <BarChart className="mr-2 h-4 w-4" />
+                  Analytics
+                </Link>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleShare}>
                 <Share2 className="mr-2 h-4 w-4" />
@@ -4556,7 +4576,7 @@ export default function ExamDetail() {
                   value={section?.id}
                   onValueChange={(value) => handleSectionChange(value)}
                 >
-                  <SelectTrigger className="h-9 flex-1 sm:w-[220px] rounded-lg bg-card ml-1">
+                  <SelectTrigger className="h-9 flex-1 sm:w-[340px] rounded-lg bg-card ml-1">
                     <SelectValue placeholder="Select section" />
                   </SelectTrigger>
                   <SelectContent>
@@ -4606,6 +4626,13 @@ export default function ExamDetail() {
                         const isExpanded = expandedQuestionId === q.id;
                         const questionErrors = getQuestionErrors(q);
                         const hasError = questionErrors.length > 0;
+                        // A row is for RECOGNISING a question, not reading it: table
+                        // data and images become chips, the prose stays a clamped
+                        // line or two. See lib/questionPreview.js for why the old
+                        // inline strip printed "&nbsp;" at the reader.
+                        const preview = buildQuestionPreview(q.text);
+                        const hasQuestionImage =
+                          !!q.image_url || (Array.isArray(q.image_urls) && q.image_urls.length > 0) || preview.hasImage;
                         return (
                           <SortableQuestionItem key={q.id} id={q.id} disabled={isMultiLang && !isPrimaryLanguage}>
                             <div id={q.id} className={`border rounded-xl bg-card transition-all hover:shadow-sm ${hasError ? 'border-destructive/40 bg-destructive/[0.02]' : 'border-border/70 hover:border-primary/25'}`}>
@@ -4622,35 +4649,65 @@ export default function ExamDetail() {
                                   )}
                                 </div>
                                 <div className="flex-1 space-y-1.5 min-w-0">
-                                  {q.text ? (() => {
-                                    // Extract only question-section content for collapsed view, stripping passage-section and images
-                                    const questionSectionMatch = q.text.match(/<div class="question-section">([\s\S]*?)<\/div>/);
-                                    const displayText = questionSectionMatch
-                                      ? questionSectionMatch[1].replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim()
-                                      : q.text.replace(/<img[^>]*>/g, '').replace(/<[^>]+>/g, ' ').trim();
-                                    // Tags are stripped for a one-line preview, but the LaTeX
-                                    // inside survives that strip — printed raw it reads
-                                    // "$(Use~\pi=\frac{22}{7})$" while the expanded Question
-                                    // Text box right below shows it properly rendered.
-                                    return (
-                                      <p
-                                        className="text-sm font-medium leading-snug truncate [&_.katex-display]:inline [&_.katex-display]:m-0"
-                                        dangerouslySetInnerHTML={{ __html: renderMathInText(displayText || 'Question with passage') }}
-                                      />
-                                    );
-                                  })() : (
-                                    <p className="text-sm font-medium leading-snug">Question with image</p>
-                                  )}
+                                  {/* The WHOLE question, never truncated: a creator checking a
+                                      paper is reading the question, not identifying it, and a row
+                                      cut off at two lines hid the half that carried the numbers.
+                                      Rows are uneven as a result — that is the trade, made on
+                                      purpose. The LaTeX is rendered rather than printed, since
+                                      stripping tags leaves the source behind. */}
+                                  <p
+                                    className={`text-sm leading-snug break-words [&_.katex-display]:inline [&_.katex-display]:m-0 ${preview.isEmpty ? "font-medium italic text-muted-foreground" : "font-medium"}`}
+                                    dangerouslySetInnerHTML={{
+                                      __html: renderMathInText(preview.isEmpty ? previewFallbackLabel(preview) : preview.text),
+                                    }}
+                                  />
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{q.answer_type}</span>
-                                    {(q.image_url || (Array.isArray(q.image_urls) && q.image_urls.length > 0) || (typeof q.text === "string" && /<img\b/i.test(q.text))) && (
-                                      <span
-                                        className="inline-flex items-center gap-1 rounded-md bg-primary/[0.07] px-1.5 py-0.5 text-[10px] font-semibold text-primary ring-1 ring-inset ring-primary/15"
-                                        title="This question has an image"
+                                    {/* The chips are the way back to what the row had to
+                                        leave out. Buttons, not labels: naming a hidden table
+                                        without offering to show it is its own frustration.
+                                        stopPropagation keeps the click off the row behind. */}
+                                    {preview.hasTable && (
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground hover:bg-foreground/10 hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        title="Show this question's table"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setOpenAsset({
+                                            kind: "table",
+                                            label: `Question ${idx + 1} — Table`,
+                                            tables: preview.tables,
+                                            images: [],
+                                          });
+                                        }}
+                                      >
+                                        <TableIcon className="h-3 w-3" />
+                                        Table
+                                      </button>
+                                    )}
+                                    {hasQuestionImage && (
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-1 rounded-md bg-primary/[0.07] px-1.5 py-0.5 text-[10px] font-semibold text-primary ring-1 ring-inset ring-primary/15 hover:bg-primary/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        title="Show this question's image"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setOpenAsset({
+                                            kind: "image",
+                                            label: `Question ${idx + 1} — Image`,
+                                            tables: [],
+                                            images: [
+                                              q.image_url,
+                                              ...(Array.isArray(q.image_urls) ? q.image_urls : []),
+                                              ...preview.imageUrls,
+                                            ],
+                                          });
+                                        }}
                                       >
                                         <ImageIcon className="h-3 w-3" />
                                         Image
-                                      </span>
+                                      </button>
                                     )}
                                   </div>
                                   {hasError && (
@@ -4690,6 +4747,20 @@ export default function ExamDetail() {
                                   )}
                                 </div>
                                 <div className="flex gap-1">
+                                  {/* Always visible, unlike edit and delete: reading a
+                                      question is what a creator does most, and a control
+                                      that appears on hover is not there on a touch screen
+                                      at all. */}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                    title="Preview the whole question with its answer key"
+                                    aria-label={`Preview question ${idx + 1}`}
+                                    onClick={() => setPreviewQuestion({ q: q as PreviewQuestion, label: `Question ${idx + 1}` })}
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </Button>
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -5638,6 +5709,16 @@ export default function ExamDetail() {
           commitJson={commitJson}
         />
       )}
+
+      {/* What a Table / Image chip is showing. One mount for the whole list. */}
+      <QuestionAssetDialog asset={openAsset} onClose={() => setOpenAsset(null)} />
+
+      {/* The eye button's full-question preview. Also one mount for the list. */}
+      <QuestionPreviewDialog
+        question={previewQuestion?.q ?? null}
+        label={previewQuestion?.label ?? ""}
+        onClose={() => setPreviewQuestion(null)}
+      />
 
       {/* Publish Dialog Component */}
       {publishAction && exam && (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowRight, CalendarClock, History, MonitorPlay, Timer } from "lucide-react";
 import SectionHeader from "@/components/home/SectionHeader";
 import Reveal from "@/components/home/Reveal";
@@ -130,7 +130,6 @@ const MtsCycleCard = ({ copy }: { copy: CycleCopy }) => {
 
 /** For non-MTS contexts: the same slot holds that exam's shelf instead. */
 const ShelfCard = ({ category, copy }: { category: string; copy: CycleCopy }) => {
-    const navigate = useNavigate();
     return (
         <div className="relative overflow-hidden rounded-2xl bg-[#0A0D1E] border border-white/[0.08] p-6 flex flex-col justify-between min-h-[240px]">
             <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
@@ -143,18 +142,17 @@ const ShelfCard = ({ category, copy }: { category: string; copy: CycleCopy }) =>
                 </h3>
                 <p className="mt-1.5 text-[13px] text-white/45">{copy.shelfNote}</p>
             </div>
-            <button
-                onClick={() => navigate(`/marketplace?category=${encodeURIComponent(category)}`)}
+            <Link
+                to={`/marketplace?category=${encodeURIComponent(category)}`}
                 className="relative mt-6 inline-flex items-center gap-2 self-start px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.1] text-[13px] font-bold text-white transition-all duration-200"
             >
                 {copy.shelfButton(category)} <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+            </Link>
         </div>
     );
 };
 
 const ResumeCard = ({ memo, copy }: { memo: LastExamMemo; copy: CycleCopy }) => {
-    const navigate = useNavigate();
     return (
         <div className="rounded-2xl border border-[#6C3EF4]/25 bg-[#6C3EF4]/[0.04] p-6 flex flex-col justify-between min-h-[240px]">
             <div>
@@ -167,12 +165,12 @@ const ResumeCard = ({ memo, copy }: { memo: LastExamMemo; copy: CycleCopy }) => 
                 <h3 className="text-[19px] font-extrabold text-foreground tracking-tight leading-snug">{memo.name}</h3>
                 <p className="mt-1.5 text-[13px] text-muted-foreground">{copy.resumeNote(memo.category)}</p>
             </div>
-            <button
-                onClick={() => navigate(`/exam/${memo.id}/intro?from=home`)}
+            <Link
+                to={`/exam/${memo.id}/intro?from=home`}
                 className="mt-6 inline-flex items-center justify-center gap-2 self-start px-5 py-3 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white text-[14px] font-bold shadow-md shadow-[#6C3EF4]/25 hover:shadow-lg hover:shadow-[#6C3EF4]/30 hover:-translate-y-px transition-all duration-200"
             >
                 <MonitorPlay className="h-4 w-4" /> {copy.resumeButton}
-            </button>
+            </Link>
         </div>
     );
 };

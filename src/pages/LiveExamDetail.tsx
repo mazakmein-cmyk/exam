@@ -1,7 +1,10 @@
 import { useEffect, useState, useRef, useCallback, useMemo, lazy, Suspense } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInText, renderMathInRichText } from "@/lib/renderMath";
+import { buildQuestionPreview, previewFallbackLabel } from "@/lib/questionPreview.js";
+import QuestionAssetDialog, { type QuestionAsset } from "@/components/QuestionAssetDialog";
+import QuestionPreviewDialog, { type PreviewQuestion } from "@/components/QuestionPreviewDialog";
 import { isRichTextEmpty, countFilledOptions } from "@/lib/richText";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { tableHasColumn } from "@/lib/dbFeatures";
@@ -12,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import SortableQuestionRow from "@/components/live/SortableQuestionRow";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { ArrowLeft, Play, Save, Trash2, Edit, Plus, Clock, MoreVertical, Share2, Globe, Radio, Check, ChevronDown, ChevronUp, Eye, FileText, Sparkles, Copy, Layers, Lock, FileJson, ListChecks, HelpCircle, AlertCircle, Image as ImageIcon, Upload, Download, X, BarChart } from "lucide-react";
+import { ArrowLeft, Play, Save, Trash2, Edit, Plus, Clock, MoreVertical, Share2, Globe, Radio, Check, ChevronDown, ChevronUp, Eye, FileText, Sparkles, Copy, Layers, Lock, FileJson, ListChecks, HelpCircle, AlertCircle, Image as ImageIcon, Upload, Download, X, BarChart, Table2 as TableIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { TransliterateTextarea } from "@/components/TransliterateTextarea";
@@ -150,6 +153,10 @@ export default function LiveExamDetail() {
   // Edit states
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(null);
+  // What a question row's Table / Image chip is currently showing, if anything.
+  const [openAsset, setOpenAsset] = useState<QuestionAsset | null>(null);
+  // The row whose eye button is open — the whole question, assembled.
+  const [previewQuestion, setPreviewQuestion] = useState<{ q: PreviewQuestion; label: string } | null>(null);
 
   // Delete states
   const [showDeleteQuestionDialog, setShowDeleteQuestionDialog] = useState(false);
@@ -1726,7 +1733,9 @@ export default function LiveExamDetail() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4">
         <p className="text-muted-foreground">Live exam not found</p>
-        <Button onClick={() => navigate("/dashboard?tab=live")}>Back to Dashboard</Button>
+        <Button asChild>
+          <Link to="/dashboard?tab=live">Back to Dashboard</Link>
+        </Button>
       </div>
     );
   }
@@ -1754,8 +1763,10 @@ export default function LiveExamDetail() {
         {/* ─── Header — same shell as the mock exam editor ─── */}
         <header className="sticky top-0 z-10 h-16 border-b border-border/70 bg-card/85 backdrop-blur-xl px-3 sm:px-6 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
-            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl shrink-0 text-muted-foreground hover:text-foreground" onClick={() => navigate("/dashboard?tab=live")}>
-              <ArrowLeft className="h-5 w-5" />
+            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl shrink-0 text-muted-foreground hover:text-foreground" asChild>
+              <Link to="/dashboard?tab=live" aria-label="Back to dashboard">
+                <ArrowLeft className="h-5 w-5" />
+              </Link>
             </Button>
             <div className="hidden sm:block h-8 w-px bg-border shrink-0" />
             <div className="min-w-0">
@@ -1791,15 +1802,26 @@ export default function LiveExamDetail() {
               </Button>
             )}
 
-            {/* Go Live / back to the control room */}
+            {/* Go Live / back to the control room. Despite the label, this click
+                itself starts nothing — the control room owns the start, behind its
+                own confirm — so the destination is a real URL and this is a link.
+                One caveat to keep in mind before touching it: the control room also
+                runs C10 auto-start on mount, so if the creator scheduled this
+                session and opted into auto-start, opening it once the clock has
+                passed begins the real thing — including in a Cmd+clicked background
+                tab. That is auto-start honouring what the creator already asked
+                for, not this link firing an action. If /control ever gains a start
+                the creator did NOT opt into, this has to go back to a button. */}
             {(exam.status === "published" || exam.status === "live") && (
               <Button
-                onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}/control`)}
+                asChild
                 size="sm"
                 className="h-9 rounded-lg bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/25"
               >
-                {exam.status === "live" ? <Radio className="mr-1.5 h-4 w-4" /> : <Play className="mr-1.5 h-4 w-4" />}
-                {exam.status === "live" ? "Control Room" : "Go Live"}
+                <Link to={`/live-exam/${creatorId}/${liveExamId}/control`}>
+                  {exam.status === "live" ? <Radio className="mr-1.5 h-4 w-4" /> : <Play className="mr-1.5 h-4 w-4" />}
+                  {exam.status === "live" ? "Control Room" : "Go Live"}
+                </Link>
               </Button>
             )}
 
@@ -1915,12 +1937,14 @@ export default function LiveExamDetail() {
                   makes it the report's most important doorway. */}
               {exam.status === "ended" && (
                 <Button
+                  asChild
                   size="sm"
                   className="ml-auto h-9 shrink-0 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
-                  onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}/report`)}
                 >
-                  <BarChart className="mr-1.5 h-4 w-4" />
-                  View session report
+                  <Link to={`/live-exam/${creatorId}/${liveExamId}/report`}>
+                    <BarChart className="mr-1.5 h-4 w-4" />
+                    View session report
+                  </Link>
                 </Button>
               )}
             </div>
@@ -2109,7 +2133,7 @@ export default function LiveExamDetail() {
                   onValueChange={(value) => handleSwitchSection(value)}
                   disabled={sections.length === 0}
                 >
-                  <SelectTrigger className="h-9 flex-1 sm:w-[220px] rounded-lg bg-card ml-1">
+                  <SelectTrigger className="h-9 flex-1 sm:w-[340px] rounded-lg bg-card ml-1">
                     <SelectValue placeholder="Select section" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2163,8 +2187,12 @@ export default function LiveExamDetail() {
                     const questionImages = q.image_urls && q.image_urls.length > 0
                       ? q.image_urls
                       : q.image_url ? [q.image_url] : [];
-                    const hasImage = questionImages.length > 0 || /<img\b/i.test(q.text || "");
-                    const plainText = (q.text || "").replace(/<img[^>]*>/g, "").replace(/<[^>]+>/g, " ").trim();
+                    // Shared with the mock editor's question list: tables and
+                    // images become chips instead of being flattened into the
+                    // prose, and entities are decoded before the escaping
+                    // renderer can print them raw. See lib/questionPreview.js.
+                    const preview = buildQuestionPreview(q.text);
+                    const hasImage = questionImages.length > 0 || preview.hasImage;
                     return (
                       <SortableQuestionRow
                         key={q.id}
@@ -2191,22 +2219,56 @@ export default function LiveExamDetail() {
                             )}
                           </div>
                           <div className="flex-1 space-y-1.5 min-w-0">
-                            {/* Same as ExamDetail: stripping tags leaves the LaTeX behind,
-                                so the preview has to render rather than print. */}
+                            {/* Same as ExamDetail: the whole question, never truncated,
+                                and the LaTeX is rendered rather than printed, since
+                                stripping tags leaves the source behind. */}
                             <p
-                              className="text-sm font-medium leading-snug truncate [&_.katex-display]:inline [&_.katex-display]:m-0"
-                              dangerouslySetInnerHTML={{ __html: renderMathInText(plainText || "Question with image") }}
+                              className={`text-sm leading-snug break-words [&_.katex-display]:inline [&_.katex-display]:m-0 ${preview.isEmpty ? "font-medium italic text-muted-foreground" : "font-medium"}`}
+                              dangerouslySetInnerHTML={{
+                                __html: renderMathInText(preview.isEmpty ? previewFallbackLabel(preview) : preview.text),
+                              }}
                             />
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{q.answer_type}</span>
+                              {/* Same as the mock editor: a chip that names what the
+                                  row had to leave out also offers to show it. */}
+                              {preview.hasTable && (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground hover:bg-foreground/10 hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  title="Show this question's table"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenAsset({
+                                      kind: "table",
+                                      label: `Question ${q.q_no} — Table`,
+                                      tables: preview.tables,
+                                      images: [],
+                                    });
+                                  }}
+                                >
+                                  <TableIcon className="h-3 w-3" />
+                                  Table
+                                </button>
+                              )}
                               {hasImage && (
-                                <span
-                                  className="inline-flex items-center gap-1 rounded-md bg-emerald-500/[0.09] px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-500/15"
-                                  title="This question has an image"
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 rounded-md bg-emerald-500/[0.09] px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-500/15 hover:bg-emerald-500/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  title="Show this question's image"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenAsset({
+                                      kind: "image",
+                                      label: `Question ${q.q_no} — Image`,
+                                      tables: [],
+                                      images: [...questionImages, ...preview.imageUrls],
+                                    });
+                                  }}
                                 >
                                   <ImageIcon className="h-3 w-3" />
                                   Image
-                                </span>
+                                </button>
                               )}
                             </div>
                             {hasError && (
@@ -2222,6 +2284,18 @@ export default function LiveExamDetail() {
                             {q.time_seconds}s
                           </span>
                           <div className="flex gap-1">
+                            {/* Same as the mock editor: always visible, because
+                                reading a question is the commonest thing done here. */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-lg text-muted-foreground hover:text-emerald-700 hover:bg-emerald-500/10"
+                              title="Preview the whole question with its answer key"
+                              aria-label={`Preview question ${q.q_no}`}
+                              onClick={() => setPreviewQuestion({ q: q as PreviewQuestion, label: `Question ${q.q_no}` })}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -2746,6 +2820,16 @@ export default function LiveExamDetail() {
             commitJson={commitLiveJson}
           />
         )}
+
+        {/* What a Table / Image chip is showing. One mount for the whole list. */}
+        <QuestionAssetDialog asset={openAsset} onClose={() => setOpenAsset(null)} />
+
+        {/* The eye button's full-question preview. Also one mount for the list. */}
+        <QuestionPreviewDialog
+          question={previewQuestion?.q ?? null}
+          label={previewQuestion?.label ?? ""}
+          onClose={() => setPreviewQuestion(null)}
+        />
 
         {/* Student Preview Dialog */}
         <Dialog open={showPreviewDialog} onOpenChange={setShowPreviewDialog}>

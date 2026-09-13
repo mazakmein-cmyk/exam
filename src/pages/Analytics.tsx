@@ -1,5 +1,5 @@
 import { useEffect, useState, Fragment, useMemo, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
@@ -1571,11 +1571,13 @@ export default function Analytics() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate(getBackPath())}
+            asChild
             className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2"
           >
-            <ArrowLeft className="w-4 h-4" />
-            Back
+            <Link to={getBackPath()}>
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </Link>
           </Button>
           <div className="h-5 w-px bg-border" />
           <div>
@@ -2343,12 +2345,19 @@ export default function Analytics() {
                 };
 
                 return studentSessionsList.map((group: any, idx: number) => (
-                  <div
+                  // The whole row is one anchor rather than a stretched overlay
+                  // link: nothing inside it is interactive content. The only
+                  // candidate — the "Unranked" badge — is a Radix tooltip
+                  // trigger rendered `asChild` onto a plain <span>, so it is
+                  // hover/focus-described text, not a nested control. Clicking
+                  // it navigated before this change too. `flex` is kept on the
+                  // element so the anchor lays out exactly as the <div> did.
+                  <Link
                     key={group.firstAttemptId}
+                    to={`/exam/review/${group.firstAttemptId}`}
                     className={`flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-muted/50 transition-colors ${
                       idx !== 0 ? 'border-t border-border' : ''
                     }`}
-                    onClick={() => navigate(`/exam/review/${group.firstAttemptId}`)}
                   >
                     <div className="flex flex-col gap-0.5 min-w-0">
                       <p className="font-semibold text-[15px] leading-snug truncate">{group.examName}</p>
@@ -2415,7 +2424,7 @@ export default function Analytics() {
                         )}
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 ));
               })()}
             </div>

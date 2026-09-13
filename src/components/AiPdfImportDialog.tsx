@@ -62,7 +62,7 @@ import {
   defaultSectionMinutes,
   describeAiImportError,
   downloadAiImportPdf,
-  findResumableAiImportJob,
+  findLastAiImportJob,
   formatElapsed,
   getAiImportStatus,
   isTerminalAiImportStatus,
@@ -71,7 +71,7 @@ import {
   LIVE_WALL_CLOCK_MS,
   type AiImportEngine,
   type AiImportModelId,
-  type ResumableAiImportJob,
+  type LastAiImportJob,
   type UploadedPdf,
 } from "@/services/aiImportService";
 
@@ -133,9 +133,23 @@ type Summary = {
   figures: number;
   figuresFailed: number;
   labelsCleaned: number;
-  needsReview: { section: string; q_no: number; reason: string }[];
+  /**
+   * q_no is the number PRINTED in the PDF (what Gemini keys its notes on);
+   * examQNo is where that question actually landed in the editor, which the
+   * parser renumbers by position. They differ on any paper numbered straight
+   * through its sections, so both are shown.
+   */
+  needsReview: { section: string; q_no: number; examQNo: number | null; reason: string }[];
   skipped: { reason: string; q_no?: number; page?: number }[];
   placeholders: number;
+  /** Questions that came back with a correct answer — counted from the parse, not from Gemini. */
+  answersMarked: number;
+  /**
+   * What Gemini said about the paper's answer key. Null when it said nothing
+   * (an older prompt, or a reply that omitted the block) — then the summary
+   * stays quiet rather than guessing why answers are missing.
+   */
+  answerKey: { found: boolean | null; applied: boolean | null; note: string } | null;
   elapsedMs: number;
   /** False on a resumed job whose stored PDF url was lost — then nothing is attached. */
   pdfAttached: boolean;
@@ -162,6 +176,8 @@ type RunCtx = {
   startedAt: number;
   /** Automatic Gemini retries already spent in this attempt (see AUTO_RETRIES). */
   autoRetries: number;
+  /** The next Gemini start must be a fresh job even if one is still running (a redo). */
+  forceNewJob: boolean;
 };
 
 const STEP_LABELS: Record<StepId, string> = {
@@ -208,6 +224,12 @@ const SLOW_GEMINI_MS = 5 * 60 * 1000;
  * the creator sees the failure card and its Retry button.
  */
 const AUTO_RETRIES = 1;
+/**
+ * Steps a creator can run again by hand while the import is in progress. The
+ * PDF is not uploaded twice; a Gemini redo starts a fresh job and the steps
+ * after it run on their own. Upload has nothing to redo, save must never be.
+ */
+const REDOABLE = new Set<StepId>(["gemini", "parse", "sections", "figures"]);
 
 // Shell: pinned header and footer, only the middle scrolls (CreateExamDialog's chrome).
 const HEADER = "border-b px-6 pb-4 pr-12 pt-6 text-left";
@@ -247,7 +269,7 @@ export default function AiPdfImportDialog({
   const [mode, setMode] = useState<"append" | "replace">("append");
   const [dragging, setDragging] = useState(false);
 
-  const [resumable, setResumable] = useState<ResumableAiImportJob | null>(null);
+  const [lastJob, setLastJob] = useState<LastAiImportJob | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
 
   const [steps, setSteps] = useState<Step[]>(freshSteps());
@@ -296,10 +318,10 @@ export default function AiPdfImportDialog({
     setLanguage(
       activeLanguage && supportedLanguages.includes(activeLanguage) ? activeLanguage : primaryLanguage
     );
-    setResumable(null);
+    setLastJob(null);
     ctxRef.current = null;
     loadStatus();
-    findResumableAiImportJob(examId).then((job) => setResumable(job));
+    findLastAiImportJob(examId).then((job) => setLastJob(job));
   }, [open, activeLanguage, primaryLanguage, supportedLanguages, examId, loadStatus]);
 
   // Live timer while a step is active.
@@ -383,8 +405,10 @@ export default function AiPdfImportDialog({
         model: ctx.model,
         storagePath: ctx.uploaded.storagePath,
         pdfName: ctx.uploaded.pdfName,
+        force: ctx.forceNewJob,
       });
       ensureLive(ctx);
+      ctx.forceNewJob = false;
       ctx.jobId = started.jobId;
       ctx.jobStartedAt = new Date(started.createdAt).getTime() || Date.now();
       if (started.reused) {
@@ -604,6 +628,27 @@ export default function AiPdfImportDialog({
       (n, s) => n + s.accepted.filter((q) => /Manual entry needed/.test(JSON.stringify(q.options))).length,
       0
     );
+    // Counted from what actually parsed, never from Gemini's own tally.
+    const answersMarked = report.perSection
+      .filter((s) => s.matchedSectionId)
+      .reduce(
+        (n, s) =>
+          n +
+          s.accepted.filter(
+            (q) => q.correct_answer !== null && q.correct_answer !== undefined &&
+              (!Array.isArray(q.correct_answer) || q.correct_answer.length > 0)
+          ).length,
+        0
+      );
+    const rawKey = (report.extractionSummary as any)?.answer_key;
+    const answerKey =
+      rawKey && typeof rawKey === "object"
+        ? {
+            found: typeof rawKey.found === "boolean" ? rawKey.found : null,
+            applied: typeof rawKey.applied === "boolean" ? rawKey.applied : null,
+            note: typeof rawKey.note === "string" ? rawKey.note.slice(0, 300) : "",
+          }
+        : null;
     setSummary({
       language: ctx.language,
       model: ctx.model,
@@ -613,17 +658,27 @@ export default function AiPdfImportDialog({
       figures: ctx.figures,
       figuresFailed: ctx.figuresFailed,
       labelsCleaned: ctx.labelsCleaned,
-      needsReview: ((report.extractionSummary?.needs_manual_review as any[]) ?? []).map((r) => ({
-        section: String(r?.section ?? ""),
-        q_no: Number(r?.q_no ?? 0),
-        reason: String(r?.reason ?? ""),
-      })),
+      needsReview: ((report.extractionSummary?.needs_manual_review as any[]) ?? []).map((r) => {
+        const section = String(r?.section ?? "");
+        const printed = Number(r?.q_no ?? 0);
+        // Where did the question with that printed number actually land?
+        const sec = report.perSection.find((s) => s.jsonName === section && s.matchedSectionId);
+        const hit = sec?.accepted.find((q) => q.sourceQNo === printed);
+        return {
+          section,
+          q_no: printed,
+          examQNo: hit && hit.q_no !== printed ? hit.q_no : null,
+          reason: String(r?.reason ?? ""),
+        };
+      }),
       skipped: ((report.extractionSummary?.skipped as any[]) ?? []).map((r) => ({
         reason: String(r?.reason ?? ""),
         q_no: r?.q_no,
         page: r?.page,
       })),
       placeholders,
+      answersMarked,
+      answerKey,
       elapsedMs: Date.now() - ctx.startedAt,
       pdfAttached: !!ctx.uploaded?.publicUrl,
     });
@@ -736,6 +791,7 @@ export default function AiPdfImportDialog({
       figuresFailed: 0,
       startedAt: Date.now(),
       autoRetries: 0,
+      forceNewJob: false,
     };
     setSummary(null);
     setPhase("running");
@@ -743,25 +799,25 @@ export default function AiPdfImportDialog({
   };
 
   const resumeJob = async () => {
-    if (!resumable) return;
+    if (!lastJob) return;
     setResumeBusy(true);
     try {
-      const modelId = (AI_IMPORT_MODELS.some((m) => m.id === resumable.model) ? resumable.model : DEFAULT_AI_IMPORT_MODEL) as AiImportModelId;
+      const modelId = (AI_IMPORT_MODELS.some((m) => m.id === lastJob.model) ? lastJob.model : DEFAULT_AI_IMPORT_MODEL) as AiImportModelId;
       ctxRef.current = {
         token: 0,
-        language: resumable.language,
+        language: lastJob.language,
         model: modelId,
         mode: "append",
         pdfFile: null,
         uploaded: {
-          storagePath: resumable.storagePath,
-          publicUrl: resumable.pdfUrl ?? "",
-          pdfName: resumable.pdfName ?? "paper.pdf",
+          storagePath: lastJob.storagePath,
+          publicUrl: lastJob.pdfUrl ?? "",
+          pdfName: lastJob.pdfName ?? "paper.pdf",
           size: 0,
           file: null,
         },
-        jobId: resumable.id,
-        jobStartedAt: new Date(resumable.createdAt).getTime() || Date.now(),
+        jobId: lastJob.id,
+        jobStartedAt: new Date(lastJob.createdAt).getTime() || Date.now(),
         rawOutput: null,
         report: null,
         sectionsByLang,
@@ -772,10 +828,67 @@ export default function AiPdfImportDialog({
         figuresFailed: 0,
         startedAt: Date.now(),
         autoRetries: 0,
+        forceNewJob: false,
       };
-      setLanguage(resumable.language);
+      setLanguage(lastJob.language);
       setModel(modelId);
-      setSteps((prev) => prev.map((s) => (s.id === "upload" ? { ...s, status: "done", detail: `${resumable.pdfName ?? "PDF"} · uploaded earlier` } : s)));
+      setSteps((prev) => prev.map((s) => (s.id === "upload" ? { ...s, status: "done", detail: `${lastJob.pdfName ?? "PDF"} · uploaded earlier` } : s)));
+      setPhase("running");
+      void runFrom("gemini");
+    } finally {
+      setResumeBusy(false);
+    }
+  };
+
+  /**
+   * "Read again" from Setup: a fresh Gemini job on the PDF the last run already
+   * uploaded, with the choices currently on screen (language, model, add-or-
+   * replace), then the next steps. A still-running last job is cancelled and a
+   * finished-but-unsaved one marked consumed, so neither is offered again.
+   */
+  const readAgainFromLastJob = async () => {
+    if (!lastJob) return;
+    const job = lastJob;
+    setResumeBusy(true);
+    try {
+      if (job.status === "queued" || job.status === "running") {
+        try {
+          await cancelAiImport(job.id);
+        } catch {
+          /* the server ages it out; force below starts a new job regardless */
+        }
+      } else if (job.status === "completed" && !job.importedAt) {
+        void ackAiImport(job.id).catch(() => {});
+      }
+      ctxRef.current = {
+        token: 0,
+        language,
+        model,
+        mode: mode === "replace" && replaceBlockedReason ? "append" : mode,
+        pdfFile: null,
+        uploaded: {
+          storagePath: job.storagePath,
+          publicUrl: job.pdfUrl ?? "",
+          pdfName: job.pdfName ?? "paper.pdf",
+          size: 0,
+          file: null,
+        },
+        jobId: null,
+        jobStartedAt: null,
+        rawOutput: null,
+        report: null,
+        sectionsByLang,
+        createdSections: [],
+        labelsCleaned: 0,
+        snipUrls: new Map(),
+        figures: 0,
+        figuresFailed: 0,
+        startedAt: Date.now(),
+        autoRetries: 0,
+        forceNewJob: true,
+      };
+      setSummary(null);
+      setSteps((prev) => prev.map((s) => (s.id === "upload" ? { ...s, status: "done", detail: `${job.pdfName ?? "PDF"} · uploaded earlier` } : s)));
       setPhase("running");
       void runFrom("gemini");
     } finally {
@@ -784,18 +897,20 @@ export default function AiPdfImportDialog({
   };
 
   const discardResumable = async () => {
-    if (!resumable) return;
-    const job = resumable;
-    setResumable(null);
+    if (!lastJob) return;
+    const job = lastJob;
+    setLastJob(null);
     if (job.status === "running" || job.status === "queued") {
       try {
         await cancelAiImport(job.id);
       } catch {
         /* nothing to do — the server will age it out */
       }
-    } else {
+    } else if (job.status === "completed" && !job.importedAt) {
+      // Finished but never saved: mark it consumed so it is not offered again.
       void ackAiImport(job.id).catch(() => {});
     }
+    // Failed, cancelled or already imported: nothing to tell the server — just hide it.
   };
 
   // ─── Retry actions ───
@@ -812,6 +927,27 @@ export default function AiPdfImportDialog({
     }
     void runFrom(failure.stepId);
   };
+  /**
+   * "Do this step again": same PDF, and everything after the step runs on its
+   * own. A parse redo is a Gemini redo — re-reading the same reply would fail
+   * the same way. A Gemini redo abandons the current job (cancelled if it is
+   * still running, marked consumed if it finished) and forces a fresh one.
+   */
+  const redoFrom = (stepId: StepId) => {
+    const ctx = ctxRef.current;
+    if (!ctx || committing || !REDOABLE.has(stepId)) return;
+    const from: StepId = stepId === "parse" ? "gemini" : stepId;
+    if (from === "gemini") {
+      if (ctx.jobId && !ctx.rawOutput) void cancelAiImport(ctx.jobId).catch(() => {});
+      discardReply(ctx);
+      ctx.jobId = null;
+      ctx.jobStartedAt = null;
+      ctx.forceNewJob = true;
+    }
+    ctx.autoRetries = 0;
+    void runFrom(from);
+  };
+
   const retryWithRecommended = () => {
     const ctx = ctxRef.current;
     if (!ctx) return;
@@ -829,6 +965,20 @@ export default function AiPdfImportDialog({
     setSteps(freshSteps());
     setFailure(null);
   };
+  /**
+   * From the summary: run the whole import again with the same PDF. Setup keeps
+   * the chosen file and its upload, and shows the fresh question count so the
+   * creator decides add-or-replace with the numbers in front of them.
+   */
+  const runAgainSamePdf = () => {
+    tokenRef.current += 1;
+    setSteps(freshSteps());
+    setFailure(null);
+    setSummary(null);
+    setPhase("setup");
+    loadStatus();
+  };
+
   const importAnotherLanguage = () => {
     const other = supportedLanguages.find((l) => l !== summary?.language);
     tokenRef.current += 1;
@@ -921,37 +1071,66 @@ export default function AiPdfImportDialog({
             </DialogHeader>
 
             <div className={BODY}>
-              {resumable && (
-                <div className="flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3 sm:flex-row sm:items-start">
-                  <div className="flex min-w-0 flex-1 items-start gap-2">
-                    {resumable.status === "completed" ? (
-                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-                    ) : (
-                      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden="true" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">
-                        {resumable.status === "completed"
-                          ? `${langLabel(resumable.language)} import finished — not saved yet`
-                          : `${langLabel(resumable.language)} import is still running`}
-                      </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                        {aiImportModel(resumable.model).label} · {resumable.pdfName ?? "PDF"} · started{" "}
-                        {Math.max(1, Math.round((Date.now() - new Date(resumable.createdAt).getTime()) / 60000))} min ago
-                      </p>
+              {/* Last run — Continue when it can be resumed; Read again always: the PDF is
+                  already in storage, so a bad read is fixed without finding the file again. */}
+              {lastJob && (() => {
+                const running = lastJob.status === "queued" || lastJob.status === "running";
+                const ageMin = Math.max(1, Math.round((Date.now() - new Date(lastJob.createdAt).getTime()) / 60000));
+                const what = running
+                  ? lastJob.resumable
+                    ? "is still running"
+                    : "did not finish"
+                  : lastJob.status === "completed"
+                    ? lastJob.importedAt
+                      ? "was imported"
+                      : "finished — not saved yet"
+                    : lastJob.status === "cancelled"
+                      ? "was cancelled"
+                      : `failed${lastJob.error ? ` — ${lastJob.error}` : ""}`;
+                const icon = running && lastJob.resumable
+                  ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden="true" />
+                  : lastJob.status === "completed"
+                    ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                    : lastJob.status === "failed"
+                      ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
+                      : <Minus className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />;
+                return (
+                  <div className="flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3 sm:flex-row sm:items-start">
+                    <div className="flex min-w-0 flex-1 items-start gap-2">
+                      {icon}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium [overflow-wrap:anywhere]">
+                          Last run · {langLabel(lastJob.language)} import {what}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                          {aiImportModel(lastJob.model).label} · {lastJob.pdfName ?? "PDF"} · {ageMin} min ago
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2 pl-6 sm:pl-0">
+                      <Button size="sm" variant="ghost" onClick={discardResumable} disabled={resumeBusy}>
+                        {lastJob.resumable ? "Start fresh" : "Dismiss"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={lastJob.resumable ? "outline" : "default"}
+                        onClick={readAgainFromLastJob}
+                        disabled={resumeBusy || loadingStatus}
+                        title="Ask Gemini to read this PDF again with the choices below, then continue"
+                      >
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                        Read again
+                      </Button>
+                      {lastJob.resumable && (
+                        <Button size="sm" onClick={resumeJob} disabled={resumeBusy}>
+                          {resumeBusy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                          {lastJob.status === "completed" ? "Finish import" : "Continue"}
+                        </Button>
+                      )}
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-2 pl-6 sm:pl-0">
-                    <Button size="sm" variant="outline" onClick={discardResumable} disabled={resumeBusy}>
-                      Start fresh
-                    </Button>
-                    <Button size="sm" onClick={resumeJob} disabled={resumeBusy}>
-                      {resumeBusy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                      {resumable.status === "completed" ? "Finish import" : "Continue"}
-                    </Button>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* PDF — a real button, so Enter/Space and focus come free; the
                   remove control sits beside it in the DOM, not inside it. */}
@@ -1218,7 +1397,17 @@ export default function AiPdfImportDialog({
             <div className={BODY}>
               <ol className="divide-y overflow-hidden rounded-lg border" aria-label="Import steps">
                 {steps.map((s, i) => (
-                  <StepRow key={s.id} step={s} index={i} nowMs={nowMs} />
+                  <StepRow
+                    key={s.id}
+                    step={s}
+                    index={i}
+                    nowMs={nowMs}
+                    onRedo={
+                      !committing && !failure && REDOABLE.has(s.id) && (s.status === "active" || s.status === "done")
+                        ? () => redoFrom(s.id)
+                        : undefined
+                    }
+                  />
                 ))}
               </ol>
               {/* Announce step changes only — never the per-second clock. After the
@@ -1322,7 +1511,24 @@ export default function AiPdfImportDialog({
               </div>
 
               {(() => {
+                // Questions that should carry an answer: placeholders never do.
+                const answerable = Math.max(0, summary.totalQuestions - summary.placeholders);
                 const pills = [
+                  answerable > 0 && (
+                    summary.answersMarked === 0 ? (
+                      <Pill key="answers" tone="warn">
+                        No answers marked — {answerable} question{answerable === 1 ? "" : "s"} need one
+                      </Pill>
+                    ) : summary.answersMarked < answerable ? (
+                      <Pill key="answers" tone="warn">
+                        {summary.answersMarked} of {answerable} answers marked
+                      </Pill>
+                    ) : (
+                      <Pill key="answers" tone="good">
+                        All {answerable} answer{answerable === 1 ? "" : "s"} marked
+                      </Pill>
+                    )
+                  ),
                   summary.figures > 0 && (
                     <Pill key="figures" tone="good">
                       {summary.figures} figure{summary.figures === 1 ? "" : "s"} attached
@@ -1343,6 +1549,30 @@ export default function AiPdfImportDialog({
                   ),
                 ].filter(Boolean);
                 return pills.length > 0 ? <div className="flex flex-wrap gap-2">{pills}</div> : null;
+              })()}
+
+              {/* Why answers are missing — only when Gemini actually told us. */}
+              {(() => {
+                const k = summary.answerKey;
+                if (!k || summary.answersMarked >= summary.totalQuestions - summary.placeholders) return null;
+                const line =
+                  k.found === false
+                    ? "Gemini found no answer key in this PDF — mark the answers in the editor, or import a version of the paper that includes its key."
+                    : k.found === true && k.applied === false
+                      ? "Gemini found an answer key but could not match it to this paper, so it marked nothing rather than guess."
+                      : null;
+                if (!line && !k.note) return null;
+                return (
+                  <p className="text-xs text-muted-foreground">
+                    {line}
+                    {k.note && (
+                      <>
+                        {line ? " " : ""}
+                        <span className="italic">{k.note}</span>
+                      </>
+                    )}
+                  </p>
+                );
               })()}
 
               {reviewCount > 0 && (
@@ -1375,7 +1605,14 @@ export default function AiPdfImportDialog({
                             <span className="min-w-0 truncate" title={r.section}>
                               {r.section}
                             </span>
-                            <span className="shrink-0 tabular-nums text-foreground">Q{r.q_no}</span>
+                            {/* Gemini keys its notes on the PDF's printed number; the
+                                editor renumbers by position, so show where it landed. */}
+                            <span className="shrink-0 tabular-nums text-foreground">
+                              {r.examQNo ? `Q${r.examQNo}` : `Q${r.q_no}`}
+                              {r.examQNo && (
+                                <span className="ml-1 font-normal text-muted-foreground">(PDF Q{r.q_no})</span>
+                              )}
+                            </span>
                           </span>
                           <span className="min-w-0 flex-1 break-words">{r.reason}</span>
                         </li>
@@ -1390,7 +1627,7 @@ export default function AiPdfImportDialog({
                           <span className="flex gap-2 text-muted-foreground sm:w-40 sm:shrink-0">
                             <span className="rounded bg-muted px-1.5 text-[10px] font-semibold uppercase tracking-wider">skipped</span>
                             <span className="shrink-0 tabular-nums text-foreground">
-                              {r.q_no ? `Q${r.q_no}` : r.page ? `p.${r.page}` : ""}
+                              {r.q_no ? `PDF Q${r.q_no}` : r.page ? `p.${r.page}` : ""}
                             </span>
                           </span>
                           <span className="min-w-0 flex-1 break-words">{r.reason}</span>
@@ -1414,6 +1651,10 @@ export default function AiPdfImportDialog({
                   Import {langLabel(otherLanguage)} next
                 </Button>
               )}
+              <Button type="button" variant="outline" onClick={runAgainSamePdf}>
+                <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+                Run again with this PDF
+              </Button>
               <Button type="button" onClick={() => handleOpenChange(false)}>
                 Back to the exam
               </Button>
@@ -1576,7 +1817,18 @@ const STATUS_TEXT: Record<StepStatus, string> = {
   skipped: "Skipped",
 };
 
-function StepRow({ step, index, nowMs }: { step: Step; index: number; nowMs: number }) {
+function StepRow({
+  step,
+  index,
+  nowMs,
+  onRedo,
+}: {
+  step: Step;
+  index: number;
+  nowMs: number;
+  /** Present when this step can be run again right now (same PDF, then the next steps). */
+  onRedo?: () => void;
+}) {
   const icon = (() => {
     switch (step.status) {
       case "done":
@@ -1673,6 +1925,19 @@ function StepRow({ step, index, nowMs }: { step: Step; index: number; nowMs: num
           </div>
         ) : null}
       </div>
+      {onRedo && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="-my-1 h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+          title="Do this step again with the same PDF, then continue"
+          aria-label={`Do this step again: ${STEP_DOING[step.id]}`}
+          onClick={onRedo}
+        >
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
+      )}
     </li>
   );
 }

@@ -111,10 +111,47 @@ test("start is rate-limited and de-duplicated per exam+language", () => {
   has(fn, '"rate_limited"');
   has(fn, 'in("status", ["queued", "running"])');
 });
-test("a fallback key exists and a background job is polled with the key that made it", () => {
-  has(fn, 'Deno.env.get("GEMINI_API_KEY_FALLBACK")');
+test("the key chain has four slots and walks them in order", () => {
+  for (const env of [
+    '"GEMINI_API_KEY"',
+    '"GEMINI_API_KEY_FALLBACK"',
+    '"GEMINI_API_KEY_FALLBACK2"',
+    '"GEMINI_API_KEY_FALLBACK3"',
+  ]) {
+    has(fn, env);
+  }
+  has(fn, 'const KEY_SLOTS: KeySlot[] = ["primary", "fallback", "fallback2", "fallback3"]');
+  has(fn, "[preferred, ...KEY_SLOTS.filter((slot) => slot !== preferred)]");
+  has(fn, "keyFor(slot) }))", "unconfigured slots must be skipped, not called with undefined");
+});
+test("a background job is polled with the key that made it", () => {
   has(fn, "api_key_slot");
-  has(fn, "job.api_key_slot as KeySlot, false", "poll must not switch keys");
+  has(fn, "const slot = asKeySlot(job.api_key_slot);");
+  has(fn, "job.interaction_id}`, {}, slot, false)", "poll must not switch keys");
+  lacks(fn, "job.api_key_slot, true", "poll must not be allowed to fall back");
+  has(fn, "if (!keyFor(slot)) {", "a job whose key slot is gone must fail with a reason");
+});
+test("a dead key routes to the next slot, and a bad request does not", () => {
+  // Google answers a deleted or rotated key with 400 API_KEY_INVALID, which is
+  // not a 5xx and not 403 — without this the chain strands on a dead key.
+  has(fn, "function shouldTryNextKey(");
+  has(fn, "API_KEY_INVALID");
+  has(fn, "if (!shouldTryNextKey(error)) return last;");
+  lacks(fn, "RETRYABLE = new Set([400", "a plain 400 must not burn every key");
+});
+test("a Gemini error body is read once, in both of Gemini's shapes", () => {
+  // /interactions wraps its error in a one-element array; /models/* does not.
+  has(fn, "Array.isArray(parsed) ? parsed[0]?.error : parsed?.error");
+  has(fn, "if (res.ok) return { res, slot, tried: i + 1 };", "a success body must stay unread");
+  lacks(fn, "await geminiErrorMessage(", "geminiErrorMessage must be pure, not re-read the stream");
+});
+test("the migration accepts every slot name the function can write", () => {
+  for (const slot of ["primary", "fallback", "fallback2", "fallback3"]) {
+    has(migration, `'${slot}'`);
+  }
+  has(migration, "ai_import_jobs_api_key_slot_check");
+  has(migration, "DROP CONSTRAINT IF EXISTS ai_import_jobs_api_key_slot_check",
+    "an already-applied database must get the widened check too");
 });
 test("status only ever returns the creator's own job", () => {
   has(fn, "job.user_id !== userId");
@@ -186,7 +223,9 @@ test("a failed step offers a retry, and closing mid-write is blocked", () => {
   has(dialog, "beforeunload");
 });
 test("the dialog resumes an unfinished job on reopen", () => {
-  has(dialog, "findResumableAiImportJob(examId)");
+  has(dialog, "findLastAiImportJob(examId)", "one query fetches the last run; its resumable flag drives Continue");
+  has(dialog, "lastJob.resumable");
+  has(service, "export async function findLastAiImportJob");
   has(dialog, "downloadAiImportPdf(", "a resumed job cannot cut figures without fetching the PDF back");
   has(dialog, "ackAiImport(");
 });
@@ -224,6 +263,34 @@ test("the manual Retry asks Gemini again when the reply could not be read", () =
   has(dialog, "Retry this step");
   has(dialog, 'if (failure.stepId === "parse") {');
   has(dialog, "discardReply(ctx);\n      void runFrom(\"gemini\");", "re-parsing the same reply would fail the same way");
+});
+
+
+// ─── 8. A STEP CAN BE RUN AGAIN BY HAND, WITH THE SAME PDF ───────────────────
+// Gemini sometimes reads a paper badly. The creator can redo the Gemini step
+// (a fresh job, the PDF is not uploaded twice) and the following steps run on
+// their own; from the summary, the whole import can be run again.
+test("a redo re-reads the same PDF with a fresh Gemini job and continues", () => {
+  has(dialog, 'const REDOABLE = new Set<StepId>(["gemini", "parse", "sections", "figures"]);', "upload has nothing to redo, save must never be");
+  has(dialog, "force: ctx.forceNewJob,", "a redo must not be handed the job it is abandoning");
+  has(dialog, 'const from: StepId = stepId === "parse" ? "gemini" : stepId;', "a parse redo is a Gemini redo");
+  has(dialog, "if (ctx.jobId && !ctx.rawOutput) void cancelAiImport(ctx.jobId).catch(() => {});", "a still-running job is cancelled");
+  has(dialog, "if (!ctx || committing || !REDOABLE.has(stepId)) return;", "never while rows are being written");
+  has(dialog, "Run again with this PDF");
+});
+
+
+// ─── 9. THE LAST RUN CAN BE READ AGAIN FROM SETUP ─────────────────────────────
+// Close the dialog mid-run, reopen it: Setup shows the last run (any status,
+// up to a day old) and "Read again" starts a fresh Gemini job on the PDF that is
+// already in storage — no re-upload, no finding the file again — then continues.
+test("Setup offers to read the last run's PDF again without re-uploading", () => {
+  has(dialog, "const readAgainFromLastJob = async () => {");
+  has(dialog, "storagePath: job.storagePath,", "the stored PDF is reused");
+  has(dialog, "forceNewJob: true,", "a fresh Gemini job even if the old one is still running");
+  has(dialog, 'void runFrom("gemini");');
+  has(dialog, "Read again");
+  has(service, "const LAST_JOB_MAX_MS = 24 * 60 * 60 * 1000;");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

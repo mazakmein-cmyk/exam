@@ -334,10 +334,19 @@ test("creators are not offered a door they cannot walk through", () => {
   );
 });
 
-test("the rejoin path for rooms already joined is untouched", () => {
+test("the rejoin path for rooms already joined still opens the room in its own tab", () => {
+  // The card used to call window.open(..., '_blank') straight out of an onClick.
+  // It is a real anchor now, so a plain click behaves exactly as it did while
+  // Cmd+click, middle-click and "copy link address" finally work on it. What
+  // this test protects is the DESTINATION and the new tab, not the mechanism —
+  // so it pins both, and deliberately no longer pins window.open.
   assert(
-    /window\.open\(`\/live\/\$\{exam\.share_code\}`, '_blank'\)/.test(LIBRARY),
-    "the existing cards keep their own behaviour — this feature adds a door, it does not move one"
+    /to=\{`\/live\/\$\{exam\.share_code\}`\}/.test(LIBRARY),
+    "the existing cards keep their own destination — this feature adds a door, it does not move one"
+  );
+  assert(
+    /to=\{`\/live\/\$\{exam\.share_code\}`\}\s+target="_blank"\s+rel="noopener noreferrer"/.test(LIBRARY),
+    "rejoining opened its own tab before it was a link, and a link must not quietly take that away"
   );
   assert(
     /fetchMyParticipatedLiveExams/.test(LIBRARY),

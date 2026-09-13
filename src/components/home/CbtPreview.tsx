@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowRight, Monitor } from "lucide-react";
 import SectionHeader from "@/components/home/SectionHeader";
 import Reveal from "@/components/home/Reveal";
@@ -44,7 +44,6 @@ const CbtPreview = ({
     copy?: CbtCopy;
 }) => {
     const DEMO_QUESTIONS = copy.questions;
-    const navigate = useNavigate();
     const [current, setCurrent] = useState(0);
     const [answers, setAnswers] = useState<(number | null)[]>([null, null, null]);
     const [marked, setMarked] = useState<boolean[]>([false, false, false]);
@@ -84,12 +83,17 @@ const CbtPreview = ({
     const question = DEMO_QUESTIONS[current];
     const answeredCount = answers.filter((a) => a !== null).length;
 
-    const startFullMock = () => {
+    // The CTA's destination is fully known at render time, so it is a real link
+    // rather than a handler — which is what makes Cmd+click open the full paper
+    // in its own tab and leave the demo the visitor has been playing with here.
+    // The breadcrumb write stays in onClick: <Link> runs it before navigating,
+    // so it happens on a modified click too, which is correct — "the last paper
+    // I opened" is true whether it opened here or in a new tab.
+    const fullMockHref = primaryExam ? `/exam/${primaryExam.id}/intro?from=home` : "/marketplace";
+
+    const rememberPrimary = () => {
         if (primaryExam) {
             rememberLastExam({ id: primaryExam.id, name: primaryExam.name, category: primaryExam.exam_category });
-            navigate(`/exam/${primaryExam.id}/intro?from=home`);
-        } else {
-            navigate("/marketplace");
         }
     };
 
@@ -229,12 +233,13 @@ const CbtPreview = ({
 
             <Reveal delay={200}>
                 <div className="mt-6 text-center">
-                    <button
-                        onClick={startFullMock}
+                    <Link
+                        to={fullMockHref}
+                        onClick={rememberPrimary}
                         className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[14.5px] font-bold shadow-md shadow-emerald-600/20 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-px transition-all duration-200"
                     >
                         {copy.cta} <ArrowRight className="h-4 w-4" />
-                    </button>
+                    </Link>
                 </div>
             </Reveal>
         </section>

@@ -38,7 +38,7 @@
  */
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -1575,7 +1575,9 @@ export default function LiveExamControl() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4">
         <p className="text-muted-foreground">Live exam not found</p>
-        <Button onClick={() => navigate("/dashboard?tab=live")}>Back to Dashboard</Button>
+        <Button asChild>
+          <Link to="/dashboard?tab=live">Back to Dashboard</Link>
+        </Button>
       </div>
     );
   }
@@ -1602,9 +1604,11 @@ export default function LiveExamControl() {
 
         <div className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center gap-6 px-5 py-12">
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}>
-              <ArrowLeft className="mr-1.5 h-4 w-4" />
-              Back to editor
+            <Button variant="ghost" size="sm" asChild>
+              <Link to={`/live-exam/${creatorId}/${liveExamId}`}>
+                <ArrowLeft className="mr-1.5 h-4 w-4" />
+                Back to editor
+              </Link>
             </Button>
             {/*
               Available before going live on purpose: a creator plugs in HDMI and
@@ -1783,12 +1787,11 @@ export default function LiveExamControl() {
     if (!isLive && !isEnded) return null;
     if (isEnded) {
       return (
-        <Button
-          className="h-11 w-full"
-          onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}/report`)}
-        >
-          <FileBarChart className="mr-2 h-4 w-4" />
-          See the session report
+        <Button asChild className="h-11 w-full">
+          <Link to={`/live-exam/${creatorId}/${liveExamId}/report`}>
+            <FileBarChart className="mr-2 h-4 w-4" />
+            See the session report
+          </Link>
         </Button>
       );
     }
@@ -1878,10 +1881,11 @@ export default function LiveExamControl() {
               variant="ghost"
               size="icon"
               className="h-8 w-8 shrink-0"
-              onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}
-              aria-label="Back to exam editor"
+              asChild
             >
-              <ArrowLeft className="h-4 w-4" />
+              <Link to={`/live-exam/${creatorId}/${liveExamId}`} aria-label="Back to exam editor">
+                <ArrowLeft className="h-4 w-4" />
+              </Link>
             </Button>
             {rehearsal.active ? (
               /* Unmistakable, and permanent for the duration. A creator must never

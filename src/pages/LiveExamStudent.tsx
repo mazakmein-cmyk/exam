@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import confetti from "canvas-confetti";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -1343,8 +1343,8 @@ export default function LiveExamStudent() {
             host to share the results, or the link to their next session.
           </p>
         </div>
-        <Button variant="outline" onClick={() => navigate("/dashboard")}>
-          Back to dashboard
+        <Button variant="outline" asChild>
+          <Link to="/dashboard">Back to dashboard</Link>
         </Button>
       </div>
     );
@@ -1390,7 +1390,9 @@ export default function LiveExamStudent() {
           <h1 className="font-display text-xl font-bold">Live exam not found</h1>
           <p className="mt-1 text-sm text-muted-foreground">This link may have expired or been typed incorrectly.</p>
         </div>
-        <Button onClick={() => navigate("/")}>Go Home</Button>
+        <Button asChild>
+          <Link to="/">Go Home</Link>
+        </Button>
       </div>
     );
   }

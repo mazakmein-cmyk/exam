@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
-import { optionMatchKey, renderClozeBlanks } from "@/lib/richText";
+import { renderQuestionHtml } from "@/lib/questionContent";
+import { optionMatchKey } from "@/lib/richText";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +56,6 @@ interface AttemptStats {
 
 export default function ExamReview() {
   const { attemptId } = useParams();
-  const navigate = useNavigate();
   const [responses, setResponses] = useState<Response[]>([]);
   const [stats, setStats] = useState<AttemptStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -836,13 +836,11 @@ export default function ExamReview() {
     <div className="min-h-screen bg-background">
       <div className="max-w-4xl mx-auto p-6">
         <div className="flex items-center justify-between mb-6">
-          <Button
-            variant="ghost"
-            onClick={() => navigate("/analytics")}
-            className="gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Dashboard
+          <Button variant="ghost" asChild className="gap-2">
+            <Link to="/analytics">
+              <ArrowLeft className="w-4 h-4" />
+              Back to Dashboard
+            </Link>
           </Button>
 
           {isCreator && (
@@ -1270,12 +1268,7 @@ export default function ExamReview() {
                                           <div
                                             className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert"
                                             dangerouslySetInnerHTML={{
-                                              __html: renderMathInHtml(renderClozeBlanks(questionContent)
-                                                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
-                                                .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
-                                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                                                .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                                                .replace(/~~(.*?)~~/g, '<del>$1</del>'))
+                                              __html: renderQuestionHtml(questionContent)
                                             }}
                                           />
                                         )}
@@ -1319,12 +1312,7 @@ export default function ExamReview() {
                                     <div
                                       className="text-foreground whitespace-pre-wrap prose prose-sm max-w-none dark:prose-invert mb-4"
                                       dangerouslySetInnerHTML={{
-                                        __html: renderMathInHtml(renderClozeBlanks(response.question.text)
-                                          .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>')
-                                          .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
-                                          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                                          .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-                                          .replace(/~~(.*?)~~/g, '<del>$1</del>'))
+                                        __html: renderQuestionHtml(response.question.text)
                                       }}
                                     />
 

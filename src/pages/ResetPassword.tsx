@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
@@ -118,9 +118,9 @@ const ResetPassword = () => {
       <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[#6C3EF4]/20 rounded-full blur-3xl animate-pulse" />
       <div className="absolute bottom-1/4 right-1/4 w-72 h-72 bg-[#A855F7]/15 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1.2s' }} />
 
-      <button onClick={() => navigate("/")} className="absolute top-6 left-6 z-10 flex items-center gap-2 px-3 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/8 transition-all text-sm font-medium">
+      <Link to="/" className="absolute top-6 left-6 z-10 flex items-center gap-2 px-3 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/8 transition-all text-sm font-medium">
         <ArrowLeft className="h-4 w-4" />Back to Home
-      </button>
+      </Link>
 
       <div className="relative z-10 w-full max-w-[420px]">
         <div className="flex flex-col items-center mb-8 gap-2">
@@ -192,7 +192,7 @@ const ResetPassword = () => {
                 </button>
                 <p className="text-center text-[11px] text-white/25 pt-1">
                   Remembered your password?{" "}
-                  <span className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors" onClick={() => navigate("/student-auth?mode=signin")}>Log in →</span>
+                  <Link to="/student-auth?mode=signin" className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors">Log in →</Link>
                 </p>
               </form>
             )}

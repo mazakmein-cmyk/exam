@@ -107,16 +107,19 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
 
             {/* Desktop nav */}
             <div className="hidden md:flex items-center gap-1">
-              <Link to={navButtonLink}>
-                <button
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
-                    isHome && !scrolled
-                      ? "text-white/70 hover:text-white hover:bg-white/10"
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-                  }`}
-                >
-                  {navButtonLabel}
-                </button>
+              {/* The <button> that used to sit inside this <Link> was interactive
+                  content nested in interactive content — invalid, and it is the
+                  button, not the anchor, that a click lands on. The styling was
+                  always the button's; it moves up onto the link itself. */}
+              <Link
+                to={navButtonLink}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
+                  isHome && !scrolled
+                    ? "text-white/70 hover:text-white hover:bg-white/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+              >
+                {navButtonLabel}
               </Link>
 
               {session ? (
@@ -147,11 +150,10 @@ const Navbar = ({ navButtonLabel = "Exam Library", navButtonLink = "/marketplace
               ) : (
                 <Link
                   to={location.pathname === "/marketplace" ? "/student-auth?from=marketplace" : "/student-auth"}
+                  className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-semibold bg-[#6C3EF4] text-white hover:bg-[#5B2FE3] shadow-md shadow-[#6C3EF4]/25 hover:shadow-lg hover:shadow-[#6C3EF4]/30 hover:-translate-y-[1px] transition-all duration-200 btn-primary-glow ml-2"
                 >
-                  <button className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-semibold bg-[#6C3EF4] text-white hover:bg-[#5B2FE3] shadow-md shadow-[#6C3EF4]/25 hover:shadow-lg hover:shadow-[#6C3EF4]/30 hover:-translate-y-[1px] transition-all duration-200 btn-primary-glow ml-2">
-                    <LogIn className="h-3.5 w-3.5" />
-                    Login Free
-                  </button>
+                  <LogIn className="h-3.5 w-3.5" />
+                  Login Free
                 </Link>
               )}
             </div>

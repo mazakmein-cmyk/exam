@@ -1,5 +1,5 @@
 import { lazy, memo, useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -175,6 +175,15 @@ const fetchCreators = async (userIds: string[]): Promise<Map<string, CreatorInfo
 };
 
 /**
+ * Where a card goes. This used to be a `window.open(..., '_blank')` behind an
+ * onClick, which opened the tab but hid the destination from the browser: no
+ * status-bar preview, no "copy link address", no middle-click. As an href on a
+ * real anchor the plain click behaves exactly as before and everything the
+ * browser does with a link comes back for free.
+ */
+const examIntroPath = (examId: string) => `/exam/${examId}/intro?from=marketplace`;
+
+/**
  * One library card.
  *
  * Split out and memoized because the search box re-renders this page on every
@@ -187,10 +196,9 @@ type ExamCardProps = {
     creator?: CreatorInfo;
     creatorsPending: boolean;
     onShare: (examId: string) => void;
-    onTake: (examId: string) => void;
 };
 
-const ExamCard = memo(({ exam, creator, creatorsPending, onShare, onTake }: ExamCardProps) => {
+const ExamCard = memo(({ exam, creator, creatorsPending, onShare }: ExamCardProps) => {
     const tier = getVerificationTier({
         is_admin_gold: creator?.is_admin_gold,
         is_verified: creator?.is_verified,
@@ -226,7 +234,9 @@ const ExamCard = memo(({ exam, creator, creatorsPending, onShare, onTake }: Exam
                                 </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => onTake(exam.id)}>View Details</DropdownMenuItem>
+                                <DropdownMenuItem asChild>
+                                    <Link to={examIntroPath(exam.id)} target="_blank" rel="noopener noreferrer">View Details</Link>
+                                </DropdownMenuItem>
                             </DropdownMenuContent>
                         </DropdownMenu>
                     </div>
@@ -250,13 +260,15 @@ const ExamCard = memo(({ exam, creator, creatorsPending, onShare, onTake }: Exam
                 </div>
             </div>
             <div className="px-5 pb-5">
-                <button
-                    onClick={() => onTake(exam.id)}
+                <Link
+                    to={examIntroPath(exam.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="w-full h-9 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-sm shadow-md shadow-[#6C3EF4]/20 hover:shadow-[#6C3EF4]/30 hover:-translate-y-px transition-all duration-200 flex items-center justify-center gap-2"
                 >
                     <BookOpen className="h-4 w-4" />
                     Take Exam
-                </button>
+                </Link>
             </div>
         </div>
     );
@@ -282,7 +294,6 @@ const Marketplace = () => {
     const [showOnboardingModal, setShowOnboardingModal] = useState(false);
     const [activeTab, setActiveTab] = useState<"mock" | "live">("mock");
     const [joinOpen, setJoinOpen] = useState(false);
-    const navigate = useNavigate();
 
     // Joining by code is a student action. Creators are bounced off this page by
     // use-user-role anyway, and a creator account cannot sit an exam at all
@@ -419,11 +430,8 @@ const Marketplace = () => {
         );
     }, [setSearchParams]);
 
-    // Stable identities so the memoized cards actually stay memoized.
-    const handleTakeExam = useCallback((examId: string) => {
-        window.open(`/exam/${examId}/intro?from=marketplace`, '_blank');
-    }, []);
-
+    // Stable identity so the memoized cards actually stay memoized. (Opening an
+    // exam needs no callback at all any more — the card carries its own href.)
     const handleShare = useCallback((examId: string) => {
         const url = `${window.location.origin}/exam/${examId}/intro`;
         navigator.clipboard.writeText(url);
@@ -496,14 +504,18 @@ const Marketplace = () => {
             </LazyDialogHost>
 
             <main className="container mx-auto max-w-7xl px-6 py-8">
-                {/* Back Button */}
-                <button
-                    onClick={() => navigate("/")}
-                    className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                {/* Back Button. `w-fit` is the one class this gained on its way
+                    from <button> to <Link>: a button shrink-wraps its content
+                    even at display:flex, while a block-level anchor would stretch
+                    the full container and turn the whole empty line into a hit
+                    target. Same pixels drawn, same area clickable. */}
+                <Link
+                    to="/"
+                    className="mb-6 flex w-fit items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
                     <ArrowLeft className="h-4 w-4" />
                     Back to Home
-                </button>
+                </Link>
 
                 <div className="flex items-center justify-between mb-8">
                     <div>
@@ -643,7 +655,6 @@ const Marketplace = () => {
                                     creator={creators?.get(exam.user_id)}
                                     creatorsPending={creatorsPending}
                                     onShare={handleShare}
-                                    onTake={handleTakeExam}
                                 />
                             ))}
                         </div>
@@ -718,11 +729,16 @@ const Marketplace = () => {
                                                 </div>
                                             </div>
                                             <div className="p-5 pt-0 mt-auto">
+                                                {/* Already opened a new tab via window.open; as an
+                                                    anchor the plain click is unchanged and the room
+                                                    link can finally be copied or middle-clicked. */}
                                                 <Button
+                                                    asChild
                                                     className="w-full bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all duration-200 hover:-translate-y-px"
-                                                    onClick={() => window.open(`/live/${exam.share_code}`, '_blank')}
                                                 >
-                                                    {exam.status === "ended" ? "View Results" : "Rejoin Live Exam"}
+                                                    <Link to={`/live/${exam.share_code}`} target="_blank" rel="noopener noreferrer">
+                                                        {exam.status === "ended" ? "View Results" : "Rejoin Live Exam"}
+                                                    </Link>
                                                 </Button>
                                             </div>
                                         </div>

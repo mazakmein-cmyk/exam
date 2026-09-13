@@ -6,7 +6,7 @@
  * wording and the way out are identical wherever the block happens.
  */
 
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CREATOR_BLOCKED_MESSAGE, CREATOR_BLOCKED_TITLE } from "@/lib/examAccess";
@@ -18,8 +18,6 @@ type Props = {
 };
 
 const CreatorExamBlocked = ({ backTo = "/dashboard", backLabel = "Back to Dashboard" }: Props) => {
-    const navigate = useNavigate();
-
     return (
         <div className="min-h-screen flex items-center justify-center bg-background p-6">
             <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card shadow-xl overflow-hidden">
@@ -32,8 +30,8 @@ const CreatorExamBlocked = ({ backTo = "/dashboard", backLabel = "Back to Dashbo
                         <h1 className="text-xl font-bold text-foreground">{CREATOR_BLOCKED_TITLE}</h1>
                         <p className="text-sm text-muted-foreground leading-relaxed">{CREATOR_BLOCKED_MESSAGE}</p>
                     </div>
-                    <Button className="w-full" onClick={() => navigate(backTo)}>
-                        {backLabel}
+                    <Button className="w-full" asChild>
+                        <Link to={backTo}>{backLabel}</Link>
                     </Button>
                 </div>
             </div>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { type CreatorAct, type CreatorJourneyCopy } from "@/i18n/creatorCopy";
 import { CREATOR_COPY_EN } from "@/i18n/creatorCopy.en";
@@ -820,7 +820,6 @@ const useMediaQuery = (query: string) => {
 
 const ScrubJourney = ({ copy }: { copy: CreatorJourneyCopy }) => {
     const ACTS = copy.acts;
-    const navigate = useNavigate();
     const wrapRef = useRef<HTMLDivElement>(null);
     const [progress, setProgress] = useState(0);
     const targetRef = useRef(0);
@@ -898,13 +897,13 @@ const ScrubJourney = ({ copy }: { copy: CreatorJourneyCopy }) => {
                             {act.title}
                         </h3>
                         <p className="mt-4 text-[14.5px] text-muted-foreground leading-[1.7]">{act.copy}</p>
-                        <button
-                            onClick={() => navigate(act.cta.to)}
+                        <Link
+                            to={act.cta.to}
                             className="mt-6 inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[13.5px] font-bold shadow-md shadow-emerald-600/20 transition-all duration-500"
                             style={{ opacity: settled ? 1 : 0, transform: `translateY(${settled ? 0 : 8}px)`, pointerEvents: settled ? "auto" : "none" }}
                         >
                             {act.cta.label} <ArrowRight className="h-4 w-4" />
-                        </button>
+                        </Link>
 
                         {/* Act indicator — each dash is a door to its act */}
                         <div className="mt-10 flex items-center gap-2">
@@ -971,7 +970,6 @@ const ScrubJourney = ({ copy }: { copy: CreatorJourneyCopy }) => {
 /* ───────────── the posed fallback (mobile / reduced motion) ───────────── */
 
 const StaticJourney = ({ copy }: { copy: CreatorJourneyCopy }) => {
-    const navigate = useNavigate();
     return (
         <div className="container mx-auto max-w-6xl px-5 space-y-14">
             {copy.acts.map((act, i) => {
@@ -986,12 +984,12 @@ const StaticJourney = ({ copy }: { copy: CreatorJourneyCopy }) => {
                                 {act.title}
                             </h3>
                             <p className="mt-3 text-[14px] text-muted-foreground leading-[1.7]">{act.copy}</p>
-                            <button
-                                onClick={() => navigate(act.cta.to)}
+                            <Link
+                                to={act.cta.to}
                                 className="mt-5 inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[13.5px] font-bold shadow-md shadow-emerald-600/20 transition-all duration-200"
                             >
                                 {act.cta.label} <ArrowRight className="h-4 w-4" />
-                            </button>
+                            </Link>
                         </div>
                         <div className="relative h-[300px] sm:h-[360px]">
                             <StageShell>

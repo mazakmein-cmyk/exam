@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowRight, BookOpen, CheckCircle, ChevronDown, Clock, Target, TrendingUp, Zap } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -12,7 +12,6 @@ const PILL_STATS = [
 ];
 
 const Hero = () => {
-  const navigate = useNavigate();
   const [mounted, setMounted] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -111,24 +110,24 @@ const Hero = () => {
             style={{ transitionDelay: "480ms" }}
           >
             {/* Primary */}
-            <button
-              onClick={() => navigate("/student-auth")}
+            <Link
+              to="/student-auth"
               className="group relative inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-[15px] font-semibold text-white overflow-hidden bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-[0_0_0_1px_rgba(108,62,244,0.5),0_8px_32px_rgba(108,62,244,0.4)] hover:shadow-[0_0_0_1px_rgba(108,62,244,0.6),0_12px_40px_rgba(108,62,244,0.5)] transition-all duration-200 hover:-translate-y-0.5"
             >
               {/* Shimmer */}
               <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" />
               <span className="relative">Start Practising Free</span>
               <ArrowRight className="relative h-4 w-4 group-hover:translate-x-0.5 transition-transform duration-200" />
-            </button>
+            </Link>
 
             {/* Secondary */}
-            <button
-              onClick={() => navigate("/marketplace")}
+            <Link
+              to="/marketplace"
               className="inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-[15px] font-semibold text-white/70 hover:text-white border border-white/10 hover:border-white/20 bg-white/[0.04] hover:bg-white/[0.08] backdrop-blur-sm transition-all duration-200"
             >
               <BookOpen className="h-4 w-4" />
               Browse Exam Library
-            </button>
+            </Link>
           </div>
 
           {/* Trust pills */}

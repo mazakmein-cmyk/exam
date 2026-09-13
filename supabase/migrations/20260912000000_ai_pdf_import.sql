@@ -149,9 +149,11 @@ $$;
 --                 'live'       — the edge function itself waits on Gemini
 --                                (models that refuse background mode), bounded
 --                                by the function wall-clock limit.
---   api_key_slot  which configured key served the job. A background
---                 interaction can only be polled with the key that created it,
---                 so this is not just bookkeeping.
+--   api_key_slot  which configured key served the job — 'primary', 'fallback',
+--                 'fallback2' or 'fallback3', matching GEMINI_API_KEY and its
+--                 three optional fallbacks. A background interaction can only
+--                 be polled with the key that created it, so this is not just
+--                 bookkeeping.
 --   raw_output    Gemini's reply, verbatim. The client parses it with the same
 --                 parser the manual JSON upload uses. Cleared by ack once the
 --                 result has been imported.
@@ -169,7 +171,8 @@ CREATE TABLE IF NOT EXISTS public.ai_import_jobs (
   status         text NOT NULL DEFAULT 'queued'
                  CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
   interaction_id text,
-  api_key_slot   text NOT NULL DEFAULT 'primary' CHECK (api_key_slot IN ('primary', 'fallback')),
+  api_key_slot   text NOT NULL DEFAULT 'primary'
+                 CHECK (api_key_slot IN ('primary', 'fallback', 'fallback2', 'fallback3')),
   storage_path   text NOT NULL,
   pdf_name       text,
   pdf_url        text,
@@ -183,6 +186,17 @@ CREATE TABLE IF NOT EXISTS public.ai_import_jobs (
   completed_at   timestamptz,
   imported_at    timestamptz
 );
+
+-- The key chain grew from two slots to four after the table first shipped, and
+-- CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has
+-- it. Restate the constraint unconditionally so re-pasting this file widens an
+-- existing table too — without it the edge function's UPDATE fails with a check
+-- violation the moment a job is served by 'fallback2' or 'fallback3'.
+ALTER TABLE public.ai_import_jobs
+  DROP CONSTRAINT IF EXISTS ai_import_jobs_api_key_slot_check;
+ALTER TABLE public.ai_import_jobs
+  ADD CONSTRAINT ai_import_jobs_api_key_slot_check
+  CHECK (api_key_slot IN ('primary', 'fallback', 'fallback2', 'fallback3'));
 
 COMMENT ON TABLE public.ai_import_jobs IS
   'One row per in-app "Import from PDF" run. Written only by the ai-pdf-import edge function; creators may read their own rows to resume or reuse a job.';
@@ -233,5 +247,13 @@ BEGIN
       AND policyname = 'Creators read their own AI import jobs'
   ) THEN
     RAISE EXCEPTION 'ai_import_jobs SELECT policy missing after migration';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.ai_import_jobs'::regclass
+      AND conname = 'ai_import_jobs_api_key_slot_check'
+      AND pg_get_constraintdef(oid) LIKE '%fallback3%'
+  ) THEN
+    RAISE EXCEPTION 'ai_import_jobs.api_key_slot still rejects the extra fallback keys';
   END IF;
 END $$;

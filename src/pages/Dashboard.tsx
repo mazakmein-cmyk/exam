@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,10 @@ import { navigationCopyPatch } from "@/lib/examSettings";
 import { paperTypeCopyPatch } from "@/lib/paperTypeSettings";
 import { copyTimingGroups } from "@/lib/timingGroupSettings";
 import { EXAM_LIST_BASE_COLUMNS } from "@/lib/examListQuery";
+import { isModifiedClick } from "@/lib/navigation";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
+import { MultiSelectDropdown } from "@/components/MultiSelectDropdown";
+import { orderExamCategories } from "@/hooks/use-exam-categories";
 import LazyDialogHost from "@/components/LazyDialogHost";
 import SEO from "@/components/SEO";
 import {
@@ -80,6 +83,7 @@ const Dashboard = () => {
     searchParams.get("tab") === "live" ? "live" : "mock"
   );
   const [publishFilter, setPublishFilter] = useState<"all" | "published" | "unpublished">("all");
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [liveStatusFilter, setLiveStatusFilter] = useState<"all" | LiveExamStatus>("all");
   const [liveExams, setLiveExams] = useState<LiveExam[]>([]);
   const [liveParticipantCounts, setLiveParticipantCounts] = useState<Record<string, number>>({});
@@ -102,12 +106,31 @@ const Dashboard = () => {
 
   const publishedCount = useMemo(() => exams.filter((e) => e.is_published).length, [exams]);
   const unpublishedCount = exams.length - publishedCount;
+
+  // Only offer categories a current exam actually carries — no dead filter
+  // options for the curated list's other 20 entries. The exception is a
+  // category already selected: clearing the last exam tagged with it must
+  // not strand that option outside the list, unpickable.
+  const categoryOptions = useMemo(() => {
+    const names = Array.from(
+      new Set([
+        ...(exams.map((e) => e.exam_category).filter(Boolean) as string[]),
+        ...categoryFilter,
+      ])
+    );
+    return orderExamCategories(names).map((c) => ({ label: c, value: c }));
+  }, [exams, categoryFilter]);
+
   const filteredExams = useMemo(
     () =>
-      publishFilter === "all"
-        ? exams
-        : exams.filter((e) => (publishFilter === "published" ? e.is_published : !e.is_published)),
-    [exams, publishFilter]
+      exams.filter((e) => {
+        const publishMatch =
+          publishFilter === "all" || (publishFilter === "published" ? e.is_published : !e.is_published);
+        const categoryMatch =
+          categoryFilter.length === 0 || (!!e.exam_category && categoryFilter.includes(e.exam_category));
+        return publishMatch && categoryMatch;
+      }),
+    [exams, publishFilter, categoryFilter]
   );
 
   const liveStatusCounts = useMemo(
@@ -318,21 +341,6 @@ const Dashboard = () => {
     setSearchParams(tab === "live" ? { tab: "live" } : {}, { replace: true });
     if (tab === "live" && liveExams.length === 0) {
       fetchLiveExamsData();
-    }
-  };
-
-  // Creator accounts can't sit exams — the intro opens their own exam in
-  // preview (nothing scored, nothing saved). See src/lib/examAccess.ts.
-  const handleTakeExam = async (examId: string) => {
-    try {
-      // Navigate to the exam intro
-      navigate(`/exam/${examId}/intro`);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to open exam preview",
-        variant: "destructive",
-      });
     }
   };
 
@@ -641,9 +649,9 @@ const Dashboard = () => {
       <nav className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
         <div className="container mx-auto max-w-7xl px-6">
           <div className="flex h-16 items-center justify-between">
-            <div
+            <Link
+              to="/"
               className="flex items-center gap-2.5 cursor-pointer group"
-              onClick={() => navigate("/")}
             >
               <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#6C3EF4]/20 to-[#A855F7]/10 border border-[#6C3EF4]/20 flex items-center justify-center">
                 <svg width="18" height="18" viewBox="0 0 28 28" fill="none">
@@ -660,7 +668,7 @@ const Dashboard = () => {
               <span className="text-[17px] font-bold tracking-[-0.02em] text-foreground">
                 Mock<span className="bg-gradient-to-r from-[#6C3EF4] to-[#A855F7] bg-clip-text text-transparent">Setu</span>
               </span>
-            </div>
+            </Link>
             <div className="flex items-center gap-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -712,9 +720,26 @@ const Dashboard = () => {
 
         {/* Tab Toggle: Mock Exams | Live Exams */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        {/* These two are not local state pretending to be tabs — they write
+            `?tab=` into the URL, which makes each one a real, shareable address
+            for this page. So they render as links: a plain click still runs
+            handleTabChange (state + the live-exam fetch) and `replace` keeps
+            Back leaving the dashboard rather than replaying tab flips, while a
+            Cmd+click now opens the other tab in its own browser tab.
+
+            The isModifiedClick guard is what keeps those two cases apart:
+            <Link> runs our onClick BEFORE it decides whether to stand aside,
+            so without the guard a Cmd+click would open the new tab and still
+            flip the tab under the cursor — "open this somewhere else" would
+            have quietly changed things here as well. */}
         <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit border border-border/50">
-          <button
-            onClick={() => handleTabChange("mock")}
+          <Link
+            to="/dashboard"
+            replace
+            onClick={(e) => {
+              if (isModifiedClick(e)) return;
+              handleTabChange("mock");
+            }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
               activeTab === "mock"
                 ? "bg-background text-foreground shadow-sm border border-border/60"
@@ -723,9 +748,14 @@ const Dashboard = () => {
           >
             <FileText className="h-4 w-4" />
             Mock Exams
-          </button>
-          <button
-            onClick={() => handleTabChange("live")}
+          </Link>
+          <Link
+            to="/dashboard?tab=live"
+            replace
+            onClick={(e) => {
+              if (isModifiedClick(e)) return;
+              handleTabChange("live");
+            }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
               activeTab === "live"
                 ? "bg-background text-foreground shadow-sm border border-border/60"
@@ -734,31 +764,48 @@ const Dashboard = () => {
           >
             <Radio className="h-4 w-4" />
             Live Exams
-          </button>
+          </Link>
         </div>
 
-        {/* Publish status filter (mock exams only) */}
+        {/* Publish status + category filters (mock exams only). Grouped so
+            the pair wraps as one unit under the tab toggle on narrow screens,
+            rather than the category picker ending up on its own orphaned line. */}
         {activeTab === "mock" && exams.length > 0 && (
-          <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit border border-border/50">
-            {([
-              { key: "all", label: "All", count: exams.length },
-              { key: "published", label: "Published", count: publishedCount },
-              { key: "unpublished", label: "Unpublished", count: unpublishedCount },
-            ] as const).map(({ key, label, count }) => (
-              <button
-                key={key}
-                onClick={() => setPublishFilter(key)}
-                aria-pressed={publishFilter === key}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  publishFilter === key
-                    ? "bg-background text-foreground shadow-sm border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {label}
-                <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-xl w-fit border border-border/50">
+              {([
+                { key: "all", label: "All", count: exams.length },
+                { key: "published", label: "Published", count: publishedCount },
+                { key: "unpublished", label: "Unpublished", count: unpublishedCount },
+              ] as const).map(({ key, label, count }) => (
+                <button
+                  key={key}
+                  onClick={() => setPublishFilter(key)}
+                  aria-pressed={publishFilter === key}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    publishFilter === key
+                      ? "bg-background text-foreground shadow-sm border border-border/60"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                  <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Only worth showing once a category exists to filter by — an
+                empty picker is a control with nothing to say. */}
+            {categoryOptions.length > 0 && (
+              <div className="w-52">
+                <MultiSelectDropdown
+                  options={categoryOptions}
+                  selected={categoryFilter}
+                  onChange={setCategoryFilter}
+                  placeholder="Category"
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -815,13 +862,26 @@ const Dashboard = () => {
                   <FileText className="h-8 w-8 text-[#A855F7]/70" />
                 </div>
                 <h3 className="text-lg font-semibold mb-2 text-foreground">
-                  No {publishFilter} exams
+                  {categoryFilter.length > 0 ? "No matching exams" : `No ${publishFilter} exams`}
                 </h3>
                 <p className="text-muted-foreground text-sm mb-6 max-w-xs">
-                  You have {exams.length} exam{exams.length === 1 ? "" : "s"}, but none are {publishFilter}.
+                  You have {exams.length} exam{exams.length === 1 ? "" : "s"}, but none match{" "}
+                  {[
+                    publishFilter !== "all" ? publishFilter : null,
+                    ...categoryFilter,
+                  ]
+                    .filter(Boolean)
+                    .join(" + ")}
+                  .
                 </p>
-                <Button variant="outline" onClick={() => setPublishFilter("all")}>
-                  Show all exams
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setPublishFilter("all");
+                    setCategoryFilter([]);
+                  }}
+                >
+                  Clear filters
                 </Button>
               </div>
             ) : (
@@ -864,20 +924,24 @@ const Dashboard = () => {
                     <CardContent className="mt-4">
                       <div className="flex flex-wrap gap-3">
                         <Button
+                          asChild
                           className="flex-1 min-w-[100px] bg-blue-600 hover:bg-blue-700"
-                          onClick={() => navigate(`/exam/${exam.id}`)}
                         >
-                          <FileText className="mr-2 h-4 w-4" />
-                          <span className="hidden sm:inline">Edit</span>
-                          <span className="sm:hidden">Edit</span>
+                          <Link to={`/exam/${exam.id}`}>
+                            <FileText className="mr-2 h-4 w-4" />
+                            <span className="hidden sm:inline">Edit</span>
+                            <span className="sm:hidden">Edit</span>
+                          </Link>
                         </Button>
                         <Button
+                          asChild
                           variant="outline"
                           className="flex-1"
-                          onClick={() => navigate(`/analytics?examId=${exam.id}&from=dashboard`)}
                         >
-                          <BarChart className="mr-2 h-4 w-4" />
-                          Analytics
+                          <Link to={`/analytics?examId=${exam.id}&from=dashboard`}>
+                            <BarChart className="mr-2 h-4 w-4" />
+                            Analytics
+                          </Link>
                         </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -894,9 +958,17 @@ const Dashboard = () => {
                               <Share2 className="mr-2 h-4 w-4" />
                               Share
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleTakeExam(exam.id)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              Sit it as a student
+                            {/* Creator accounts can't sit exams — the intro opens
+                                their own exam in preview (nothing scored, nothing
+                                saved). See src/lib/examAccess.ts. It is a plain
+                                destination, so it is a link: previewing your own
+                                paper in a second tab while the editor stays open
+                                in the first is exactly what a creator wants. */}
+                            <DropdownMenuItem asChild>
+                              <Link to={`/exam/${exam.id}/intro`}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                Sit it as a student
+                              </Link>
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleDuplicateExam(exam)}>
                               <Copy className="mr-2 h-4 w-4" />
@@ -1002,28 +1074,34 @@ const Dashboard = () => {
                         {exam.status === "ended" ? (
                           <>
                             <Button
+                              asChild
                               className="flex-1 min-w-[100px] bg-emerald-600 hover:bg-emerald-700"
-                              onClick={() => navigate(`/live-exam/${user.id}/${exam.id}/report`)}
                             >
-                              <BarChart className="mr-2 h-4 w-4" />
-                              Report
+                              <Link to={`/live-exam/${user.id}/${exam.id}/report`}>
+                                <BarChart className="mr-2 h-4 w-4" />
+                                Report
+                              </Link>
                             </Button>
                             <Button
+                              asChild
                               variant="outline"
                               className="flex-1 min-w-[100px]"
-                              onClick={() => navigate(`/live-exam/${user.id}/${exam.id}`)}
                             >
-                              <FileText className="mr-2 h-4 w-4" />
-                              Edit
+                              <Link to={`/live-exam/${user.id}/${exam.id}`}>
+                                <FileText className="mr-2 h-4 w-4" />
+                                Edit
+                              </Link>
                             </Button>
                           </>
                         ) : (
                           <Button
+                            asChild
                             className="flex-1 min-w-[100px] bg-emerald-600 hover:bg-emerald-700"
-                            onClick={() => navigate(`/live-exam/${user.id}/${exam.id}`)}
                           >
-                            <FileText className="mr-2 h-4 w-4" />
-                            Edit
+                            <Link to={`/live-exam/${user.id}/${exam.id}`}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              Edit
+                            </Link>
                           </Button>
                         )}
                         <DropdownMenu>

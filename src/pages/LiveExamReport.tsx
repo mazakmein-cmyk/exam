@@ -27,7 +27,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   Activity,
   ArrowLeft,
@@ -138,7 +138,6 @@ function questionLabel(ordinal: number | null | undefined): string {
 
 export default function LiveExamReport() {
   const { creatorId, liveExamId, token } = useParams();
-  const navigate = useNavigate();
   const { toast } = useToast();
 
   const isPublic = !!token;
@@ -299,8 +298,8 @@ export default function LiveExamReport() {
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
         <p className="text-muted-foreground">{error || "Nothing to display."}</p>
         {!isPublic && (
-          <Button variant="outline" onClick={() => navigate("/dashboard?tab=live")}>
-            Back to dashboard
+          <Button variant="outline" asChild>
+            <Link to="/dashboard?tab=live">Back to dashboard</Link>
           </Button>
         )}
       </div>
@@ -554,10 +553,12 @@ export default function LiveExamReport() {
             variant="ghost"
             size="sm"
             className="mb-4"
-            onClick={() => navigate(`/live-exam/${creatorId}/${liveExamId}`)}
+            asChild
           >
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
-            Back to editor
+            <Link to={`/live-exam/${creatorId}/${liveExamId}`}>
+              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              Back to editor
+            </Link>
           </Button>
         )}
 

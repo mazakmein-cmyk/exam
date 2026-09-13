@@ -1,4 +1,4 @@
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import SEO from "@/components/SEO";
 
@@ -20,14 +20,18 @@ const NotFound = () => {
       <div className="text-center">
         <h1 className="mb-4 text-4xl font-bold">404</h1>
         <p className="mb-4 text-xl text-gray-600">Oops! Page not found</p>
-        <a href="/" className="text-blue-500 underline hover:text-blue-700">
+        {/* Router links, not raw <a href>: these are internal routes, so a plain
+            click should not throw away the loaded app and reload the whole
+            bundle. They stay real anchors, so Cmd/Ctrl+click, middle-click and
+            "Open link in new tab" keep working exactly as before. */}
+        <Link to="/" className="text-blue-500 underline hover:text-blue-700">
           Return to MockSetu Home
-        </a>
+        </Link>
         <p className="mt-6 text-sm text-gray-500">
           Looking for free mock tests on Mockset?{" "}
-          <a href="/marketplace" className="text-blue-500 underline hover:text-blue-700">
+          <Link to="/marketplace" className="text-blue-500 underline hover:text-blue-700">
             Browse the MockSetu exam library
-          </a>
+          </Link>
           .
         </p>
       </div>

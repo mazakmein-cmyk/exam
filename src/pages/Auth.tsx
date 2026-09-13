@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -162,9 +162,9 @@ const Auth = () => {
       <OnboardingModal isOpen={showOnboardingModal} onComplete={handleOnboardingComplete} />
 
       {/* Back Button */}
-      <button onClick={() => navigate("/")} className="absolute top-6 left-6 z-10 flex items-center gap-2 px-3 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/8 transition-all text-sm font-medium">
+      <Link to="/" className="absolute top-6 left-6 z-10 flex items-center gap-2 px-3 py-2 rounded-xl text-white/60 hover:text-white hover:bg-white/8 transition-all text-sm font-medium">
         <ArrowLeft className="h-4 w-4" />Back to Home
-      </button>
+      </Link>
 
       <div className="relative z-10 w-full max-w-[420px]">
         {/* Brand identity */}
@@ -226,7 +226,7 @@ const Auth = () => {
                   </button>
                   <p className="text-center text-[11px] text-white/25 pt-1">
                     Taking exams?{" "}
-                    <span className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors" onClick={() => navigate("/student-auth?mode=signin")}>Student login →</span>
+                    <Link to="/student-auth?mode=signin" className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors">Student login →</Link>
                   </p>
                 </form>
               </TabsContent>
@@ -269,7 +269,7 @@ const Auth = () => {
                   </button>
                   <p className="text-center text-[11px] text-white/25 pt-1">
                     Taking exams?{" "}
-                    <span className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors" onClick={() => navigate("/student-auth?mode=signup")}>Student sign-up →</span>
+                    <Link to="/student-auth?mode=signup" className="text-[#A855F7]/70 hover:text-[#A855F7] cursor-pointer transition-colors">Student sign-up →</Link>
                   </p>
                 </form>
               </TabsContent>
@@ -277,11 +277,14 @@ const Auth = () => {
           </div>
         </div>
 
+        {/* These two pointed at "/terms" and "/privacy", which are not routes —
+            App.tsx declares "/terms-of-service" and "/privacy-policy", so both
+            links have been landing on the 404 page. Corrected while converting. */}
         <p className="text-center text-[11px] text-white/20 mt-5">
           By continuing you agree to our{" "}
-          <span className="text-white/35 hover:text-white/60 cursor-pointer transition-colors" onClick={() => navigate("/terms")}>Terms</span>
+          <Link to="/terms-of-service" className="text-white/35 hover:text-white/60 cursor-pointer transition-colors">Terms</Link>
           {" & "}
-          <span className="text-white/35 hover:text-white/60 cursor-pointer transition-colors" onClick={() => navigate("/privacy")}>Privacy Policy</span>
+          <Link to="/privacy-policy" className="text-white/35 hover:text-white/60 cursor-pointer transition-colors">Privacy Policy</Link>
         </p>
       </div>
     </div>

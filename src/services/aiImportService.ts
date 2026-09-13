@@ -260,6 +260,64 @@ export async function findResumableAiImportJob(examId: string): Promise<Resumabl
   }
 }
 
+/** The most recent job for an exam, whatever became of it. */
+export type LastAiImportJob = ResumableAiImportJob & {
+  completedAt: string | null;
+  importedAt: string | null;
+  error: string | null;
+  /**
+   * True when Continue / Finish import makes sense: still running (≤ 45 min) or
+   * finished and not yet saved (≤ 2 h). Everything else can only be read again.
+   */
+  resumable: boolean;
+};
+
+/** Older than this, a last run is history — Setup does not mention it. */
+const LAST_JOB_MAX_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The exam's last import job, any status, so Setup can offer "Read again" on the
+ * PDF that is already in storage — Gemini sometimes reads a paper badly and the
+ * creator should not have to find the file again. Read through RLS (own rows);
+ * any failure → null and Setup is simply empty.
+ */
+export async function findLastAiImportJob(examId: string): Promise<LastAiImportJob | null> {
+  try {
+    const { data, error } = await supabase
+      .from("ai_import_jobs")
+      .select("id, language, model, engine, status, created_at, completed_at, pdf_name, storage_path, pdf_url, imported_at, error")
+      .eq("exam_id", examId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    const row = data as any;
+    const age = Date.now() - new Date(row.created_at).getTime();
+    if (age > LAST_JOB_MAX_MS) return null;
+    const running = row.status === "queued" || row.status === "running";
+    const resumable =
+      (running && age <= RESUME_RUNNING_MAX_MS) ||
+      (row.status === "completed" && !row.imported_at && age <= RESUME_COMPLETED_MAX_MS);
+    return {
+      id: row.id,
+      language: row.language,
+      model: row.model,
+      engine: row.engine,
+      status: row.status,
+      createdAt: row.created_at,
+      completedAt: row.completed_at ?? null,
+      pdfName: row.pdf_name ?? null,
+      storagePath: row.storage_path,
+      pdfUrl: row.pdf_url ?? null,
+      importedAt: row.imported_at ?? null,
+      error: row.error ?? null,
+      resumable,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Time given to a section the import creates. One minute per question is the
  * common banking/SSC norm; clamped so a 3-question section is not a 3-minute

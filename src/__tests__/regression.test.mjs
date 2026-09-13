@@ -695,23 +695,117 @@ test("renderMath: renderMathInRichText routes HTML vs plain text", () => {
   );
 });
 
-test("renderMath: collapsed question previews render math instead of printing source", () => {
-  // A one-line preview strips HTML tags to flatten the row — but the LaTeX in
-  // the text survives that strip. Printed raw, the collapsed row read
-  // "$(Use~\\pi=\\frac{22}{7})$" while the expanded Question Text box directly
-  // below it showed the same string properly rendered.
-  const cases = [
-    ["pages/ExamDetail.tsx", "renderMathInText(displayText || 'Question with passage')"],
-    ["pages/LiveExamDetail.tsx", 'renderMathInText(plainText || "Question with image")'],
-  ];
-  for (const [file, expected] of cases) {
+test("renderMath: collapsed question previews are shaped, not raw-stripped", () => {
+  // A list row is for RECOGNISING a question. Two things used to break that:
+  //
+  //   1. The row stripped tags with an inline regex and handed the result to
+  //      renderMathInText, which HTML-ESCAPES everything that is not math — so
+  //      a surviving "&nbsp;" printed on screen as those six characters.
+  //   2. A table was flattened into the prose, turning a distribution table
+  //      into "District Percentage of teachers A 20% B 25%" mid-sentence.
+  //
+  // Both are now shaped by lib/questionPreview.js, and the LaTeX still has to
+  // be RENDERED rather than printed — raw it reads "$(Use~\\pi=\\frac{22}{7})$"
+  // while the editor below shows the same string properly.
+  const cases = ["pages/ExamDetail.tsx", "pages/LiveExamDetail.tsx"];
+  for (const file of cases) {
     const src = readSrc(file);
-    assertContains(src, expected, `${file}: the collapsed preview must render its text, not print it`);
+    assertContains(src, "buildQuestionPreview(q.text)", `${file}: the row must use the shared preview builder`);
+    assertContains(
+      src,
+      "renderMathInText(preview.isEmpty ? previewFallbackLabel(preview) : preview.text)",
+      `${file}: the collapsed preview must render its text, not print it`
+    );
+    // Truncation was tried and rejected: two lines cut the half of a numeric
+    // question that carried the numbers, so the row shows all of it and the
+    // list has uneven rows on purpose.
+    assertNotContains(
+      src,
+      "line-clamp",
+      `${file}: the question row must not truncate — the creator reads it here`
+    );
+    assertNotContains(
+      src,
+      ".replace(/<[^>]+>/g, ' ')",
+      `${file}: an inline tag strip leaves entities for the escaper to print`
+    );
     assert(
       !/truncate">\{(plainText|displayText)/.test(src),
       `${file}: a raw {text} dump in the collapsed row shows LaTeX source`
     );
   }
+});
+
+test("question rows: the Table and Image chips open what the row hid", () => {
+  // The row shows prose only; a table or a figure is reduced to a chip. A chip
+  // that merely NAMES what it hides trades one frustration for another, so both
+  // are buttons that open the asset itself — and the click must not fall
+  // through to the row behind them.
+  for (const file of ["pages/ExamDetail.tsx", "pages/LiveExamDetail.tsx"]) {
+    const src = readSrc(file);
+    assertContains(src, "<QuestionAssetDialog", `${file}: the chip popup is never mounted`);
+    assertContains(src, "setOpenAsset({", `${file}: nothing opens the chip popup`);
+    assertContains(src, "e.stopPropagation();", `${file}: a chip click would hit the row behind it`);
+    assertContains(src, "tables: preview.tables", `${file}: the popup must get the tables the row cut out`);
+    assert(
+      /kind: "image"[\s\S]{0,900}preview\.imageUrls/.test(src),
+      `${file}: an image chip must offer the pictures written into the text, not only the image columns`
+    );
+  }
+});
+
+test("question rows: an eye button previews the whole question, key included", () => {
+  for (const file of ["pages/ExamDetail.tsx", "pages/LiveExamDetail.tsx"]) {
+    const src = readSrc(file);
+    assertContains(src, "<QuestionPreviewDialog", `${file}: the full-question preview is never mounted`);
+    assertContains(src, "setPreviewQuestion({", `${file}: nothing opens the full-question preview`);
+    // Edit and delete hide until hover; this one must not. Reading a question
+    // is the commonest thing done in this list, and a hover-only control does
+    // not exist at all on a touch screen.
+    const at = src.indexOf("setPreviewQuestion({");
+    const button = src.slice(Math.max(0, at - 800), at);
+    assert(
+      !button.includes("lg:opacity-0"),
+      `${file}: the preview button must not be hover-gated`
+    );
+  }
+});
+
+test("question preview: the creator sees the SAME rendering a candidate gets", () => {
+  // A second rendering path is free to drift from the real one — which is the
+  // exact failure this dialog exists to catch. It must go through the shared
+  // helpers the simulator uses, not a private strip of its own.
+  const src = readSrc("components/QuestionPreviewDialog.tsx");
+  assertContains(src, "renderQuestionHtml(", "the question body must render through the shared helper");
+  assertContains(src, "splitPassageContent(", "a passage question must be split the way the simulator splits it");
+  assertContains(src, "renderMathInRichText(", "options must render the way the simulator renders them");
+  assert(
+    !/replace\(\/<\[\^>\]/.test(src),
+    "the preview must not strip tags on its own — that is what the row does, and why it is not enough"
+  );
+});
+
+test("question preview: a missing answer key and a broken one read differently", () => {
+  // An out-of-range or stale key is a DIFFERENT problem from an unset one, and
+  // collapsing the two sends the creator hunting in the wrong place.
+  const src = readSrc("components/QuestionPreviewDialog.tsx");
+  assertContains(src, "hasAnswerKey(", "the preview must distinguish an unset key from a broken one");
+  assertContains(src, "keyIsDangling", "a key that matches no option needs its own message");
+  assertContains(src, "No correct answer marked", "an unset key must say so in the same words as the row");
+});
+
+test("question rows: the chip popup renders stored HTML through the sanitizer", () => {
+  // The popup injects creator-authored markup. renderMathInHtml is the one
+  // sanitization boundary (see its header in lib/renderMath.ts); injecting the
+  // stored string directly would reopen the hole this dialog sits behind.
+  const src = readSrc("components/QuestionAssetDialog.tsx");
+  assertContains(src, "renderMathInHtml(html)", "table markup must go through the sanitizing renderer");
+  const injections = src.match(/__html:\s*[A-Za-z_$][\w$]*/g) || [];
+  assert(injections.length > 0, "expected the popup to inject stored markup somewhere");
+  assert(
+    injections.every((site) => site.endsWith("renderMathInHtml")),
+    `every dangerouslySetInnerHTML in the popup must pass through renderMathInHtml, found: ${injections.join(", ")}`
+  );
 });
 
 test("renderMath: the Question Text detail box shows the stored source, not rendered output", () => {
@@ -829,9 +923,11 @@ test("cloze markers are handled before math and markdown passes", () => {
   assertContains(renderMath, "renderClozeBlanks(text == null",
     "renderMathInText no longer normalizes cloze markers — options show raw ***1***");
   // The markdown-lite bold pass would mangle ***1*** into broken <strong>
-  // nesting, so raw text must go through renderClozeBlanks first. The
-  // simulator (and its All Questions overview) share that ordering via
-  // renderQuestionHtml; ExamReview still inlines the same pipeline.
+  // nesting, so raw text must go through renderClozeBlanks first. Every screen
+  // that shows question text — the simulator, its All Questions overview and
+  // the review page — shares that ordering through renderQuestionHtml, so the
+  // asterisk rules can never drift between what a student sits and what they
+  // read afterwards (see inline-markdown-asterisks.test.mjs).
   const questionContent = readSrc("lib/questionContent.ts");
   assertContains(questionContent, "renderMathInHtml(applyInlineMarkdown(renderClozeBlanks(",
     "lib/questionContent.ts: renderQuestionHtml runs the bold/italic pass before cloze markers are normalized");
@@ -839,8 +935,8 @@ test("cloze markers are handled before math and markdown passes", () => {
     "pages/ExamSimulator.tsx: question text no longer goes through the shared cloze-safe renderer");
   assertContains(readSrc("components/exam/AllQuestionsDialog.tsx"), "renderQuestionHtml(",
     "AllQuestionsDialog: question text no longer goes through the shared cloze-safe renderer");
-  assertContains(readSrc("pages/ExamReview.tsx"), "renderMathInHtml(renderClozeBlanks(",
-    "pages/ExamReview.tsx: question text hits the bold/italic pass before cloze markers are normalized");
+  assertContains(readSrc("pages/ExamReview.tsx"), "renderQuestionHtml(",
+    "pages/ExamReview.tsx: question text no longer goes through the shared cloze-safe renderer");
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

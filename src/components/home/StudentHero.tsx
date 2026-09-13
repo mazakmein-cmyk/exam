@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronDown, FileText, Play, Search, Sparkles } from "lucide-react";
 import type { PublishedExam } from "@/lib/publishedExams";
 import { readExamYear } from "@/lib/publishedExams";
@@ -25,6 +25,9 @@ type StudentHeroProps = {
     /** Ranked category chips (rankHomeCategories). */
     categories: string[];
     selectedCategory: string | null;
+    /** Where a chip tap leads — the same ?exam= URL the page reads on load. */
+    categoryHref: (category: string) => string;
+    /** The sticky-preference write; the <Link> owns the URL itself. */
     onSelectCategory: (category: string) => void;
     /** The exam the big button starts. Null while loading / empty library. */
     primaryExam: PublishedExam | null;
@@ -40,6 +43,16 @@ const TRUSTED_BY = ["SSC", "JEE", "NEET", "CAT", "GATE", "UPSC"];
 
 const startExamPath = (exam: PublishedExam) => `/exam/${exam.id}/intro?from=home`;
 
+/**
+ * The breadcrumb every "start this paper" click owes, split out from the
+ * navigation itself: the links below hand this to <Link onClick>, which
+ * react-router runs BEFORE it navigates — so the memo is written on a plain
+ * click and on a Cmd+click alike. "The last paper I opened" is true whether it
+ * opened here or in a new tab.
+ */
+const rememberExam = (exam: PublishedExam) =>
+    rememberLastExam({ id: exam.id, name: exam.name, category: exam.exam_category });
+
 /* ─────────────────────────────────────────────
    Predictive search: type "mts 2024" → live rows
    with the start action embedded in the row.
@@ -50,10 +63,10 @@ const HeroSearch = ({
     copy,
 }: {
     exams: PublishedExam[];
+    /** Used by the Enter key, which has no anchor to click — the rows are links. */
     onPick: (exam: PublishedExam) => void;
     copy: HeroCopy;
 }) => {
-    const navigate = useNavigate();
     const [value, setValue] = useState("");
     const [query, setQuery] = useState("");
     const [open, setOpen] = useState(false);
@@ -114,11 +127,12 @@ const HeroSearch = ({
                                 const year = readExamYear(exam);
                                 const isPyq = readPaperType(exam) === PAPER_TYPE_PYQ;
                                 return (
-                                    <button
+                                    <Link
                                         key={exam.id}
+                                        to={startExamPath(exam)}
                                         role="option"
                                         aria-selected="false"
-                                        onClick={() => onPick(exam)}
+                                        onClick={() => rememberExam(exam)}
                                         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/[0.06] transition-colors text-left border-b border-white/[0.05] last:border-b-0"
                                     >
                                         <div className="shrink-0 w-9 h-9 rounded-xl bg-[#6C3EF4]/15 border border-[#6C3EF4]/25 flex items-center justify-center">
@@ -147,15 +161,18 @@ const HeroSearch = ({
                                         <span className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#6C3EF4] text-white text-[12px] font-bold">
                                             <Play className="h-3 w-3 fill-current" /> {copy.start}
                                         </span>
-                                    </button>
+                                    </Link>
                                 );
                             })}
-                            <button
-                                onClick={() => navigate("/marketplace")}
-                                className="w-full px-4 py-2.5 text-[12px] font-semibold text-[#A78BFA] hover:bg-white/[0.05] transition-colors text-center"
+                            {/* `block` replaces the <button>'s inline-block box:
+                                w-full and the vertical padding would do nothing
+                                on a default-inline anchor. */}
+                            <Link
+                                to="/marketplace"
+                                className="block w-full px-4 py-2.5 text-[12px] font-semibold text-[#A78BFA] hover:bg-white/[0.05] transition-colors text-center"
                             >
                                 {copy.browseFull}
-                            </button>
+                            </Link>
                         </>
                     ) : (
                         <div className="px-4 py-4 text-[13px] text-white/50">
@@ -167,9 +184,14 @@ const HeroSearch = ({
                                 SSC MTS
                             </button>
                             {" · "}
-                            <button className="font-semibold text-[#A78BFA]" onClick={() => navigate("/marketplace")}>
+                            {/* `inline-block` is the <button> box this replaced:
+                                its sibling in the same sentence is still one, and
+                                a default-inline anchor would align on a different
+                                baseline and break mid-phrase when the line wraps
+                                (a real risk with the longer Hindi string). */}
+                            <Link to="/marketplace" className="inline-block font-semibold text-[#A78BFA]">
                                 {copy.noMatchBrowse}
-                            </button>
+                            </Link>
                         </div>
                     )}
                 </div>
@@ -183,6 +205,7 @@ const StudentHero = ({
     loading,
     categories,
     selectedCategory,
+    categoryHref,
     onSelectCategory,
     primaryExam,
     copy = HOME_COPY_EN.hero,
@@ -218,16 +241,42 @@ const StudentHero = ({
         };
     }, []);
 
+    // Still programmatic, and deliberately so: this is what the search box's
+    // Enter key runs, and a keystroke has no anchor for the browser to follow.
     const startExam = (exam: PublishedExam) => {
-        rememberLastExam({ id: exam.id, name: exam.name, category: exam.exam_category });
+        rememberExam(exam);
         navigate(startExamPath(exam));
     };
 
-    const startPrimary = () => {
-        if (primaryExam) startExam(primaryExam);
-        else if (selectedCategory) navigate(`/marketplace?category=${encodeURIComponent(selectedCategory)}`);
-        else navigate("/marketplace");
-    };
+    // THE button's destination is known before anyone clicks it, so its normal
+    // state is a real link — Cmd+click opens the paper in a new tab, the status
+    // bar previews it, "copy link address" works. The loading state has to stay
+    // a <button>: an <a> ignores `disabled` and would stay clickable while the
+    // library is still resolving and the target is still unknown.
+    const ctaDisabled = loading && !primaryExam;
+    const ctaHref = primaryExam
+        ? startExamPath(primaryExam)
+        : selectedCategory
+          ? `/marketplace?category=${encodeURIComponent(selectedCategory)}`
+          : "/marketplace";
+    const ctaClassName =
+        "group relative w-full sm:w-auto sm:min-w-[340px] inline-flex flex-col items-center justify-center px-8 py-4 rounded-2xl bg-[#6C3EF4] hover:bg-[#5B2FE3] disabled:opacity-60 text-white overflow-hidden shadow-[0_0_0_1px_rgba(108,62,244,0.5),0_12px_44px_rgba(108,62,244,0.45)] hover:shadow-[0_0_0_1px_rgba(108,62,244,0.6),0_16px_56px_rgba(108,62,244,0.55)] transition-all duration-200 hover:-translate-y-0.5";
+    const ctaInner = (
+        <>
+            <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" aria-hidden="true" />
+            <span className="relative inline-flex items-center gap-2.5 text-[17px] font-extrabold tracking-tight">
+                <Play className="h-[18px] w-[18px] fill-current" />
+                {copy.ctaTitle}
+            </span>
+            <span className="relative mt-0.5 text-[12px] font-medium text-white/70 truncate max-w-[300px]">
+                {primaryExam
+                    ? primaryExam.name
+                    : selectedCategory
+                      ? copy.browseCategory(selectedCategory)
+                      : copy.browseLibrary}
+            </span>
+        </>
+    );
 
     const visibleChips = chipsExpanded ? categories : categories.slice(0, VISIBLE_CHIPS);
     const hiddenCount = categories.length - VISIBLE_CHIPS;
@@ -321,7 +370,13 @@ const StudentHero = ({
                     <HeroSearch exams={exams} onPick={startExam} copy={copy} />
                 </div>
 
-                {/* Exam context chips — a page-level switch, not a link. */}
+                {/* Exam context chips. They ARE addresses — each one is the
+                    page at ?exam=<slug> — so they render as links and a
+                    Cmd+click opens that filtered home page in its own tab.
+                    `inline-flex items-center` replaces the <button>'s own
+                    box: an anchor would otherwise sit its text at the top of
+                    the h-10 chip. aria-current takes over from aria-pressed,
+                    which only belongs on something with a button role. */}
                 <div className={`mt-8 ${reveal}`} style={{ transitionDelay: "400ms" }}>
                     <p className="text-[13px] font-semibold text-white/45 mb-3">{copy.chipsQuestion}</p>
                     <div className="flex flex-wrap items-center justify-center gap-2 max-w-xl mx-auto">
@@ -334,18 +389,20 @@ const StudentHero = ({
                                 {visibleChips.map((category) => {
                                     const active = category === selectedCategory;
                                     return (
-                                        <button
+                                        <Link
                                             key={category}
+                                            to={categoryHref(category)}
+                                            replace
                                             onClick={() => onSelectCategory(category)}
-                                            aria-pressed={active}
-                                            className={`h-10 px-4 rounded-xl text-[13.5px] font-bold tracking-tight transition-all duration-200 border ${
+                                            aria-current={active ? "true" : undefined}
+                                            className={`h-10 px-4 inline-flex items-center rounded-xl text-[13.5px] font-bold tracking-tight transition-all duration-200 border ${
                                                 active
                                                     ? "bg-[#6C3EF4] border-[#6C3EF4] text-white shadow-[0_4px_20px_rgba(108,62,244,0.4)]"
                                                     : "bg-white/[0.05] border-white/[0.12] text-white/70 hover:bg-white/[0.1] hover:text-white"
                                             }`}
                                         >
                                             {category}
-                                        </button>
+                                        </Link>
                                     );
                                 })}
                                 {hiddenCount > 0 && !chipsExpanded && (
@@ -365,24 +422,21 @@ const StudentHero = ({
                     ambiguity about what it starts). Pre-resolved to a real paper
                     so the first tap of the visit already delivers value. */}
                 <div className={`mt-10 ${reveal}`} style={{ transitionDelay: "500ms" }}>
-                    <button
-                        onClick={startPrimary}
-                        disabled={loading && !primaryExam}
-                        className="group relative w-full sm:w-auto sm:min-w-[340px] inline-flex flex-col items-center justify-center px-8 py-4 rounded-2xl bg-[#6C3EF4] hover:bg-[#5B2FE3] disabled:opacity-60 text-white overflow-hidden shadow-[0_0_0_1px_rgba(108,62,244,0.5),0_12px_44px_rgba(108,62,244,0.45)] hover:shadow-[0_0_0_1px_rgba(108,62,244,0.6),0_16px_56px_rgba(108,62,244,0.55)] transition-all duration-200 hover:-translate-y-0.5"
-                    >
-                        <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" aria-hidden="true" />
-                        <span className="relative inline-flex items-center gap-2.5 text-[17px] font-extrabold tracking-tight">
-                            <Play className="h-[18px] w-[18px] fill-current" />
-                            {copy.ctaTitle}
-                        </span>
-                        <span className="relative mt-0.5 text-[12px] font-medium text-white/70 truncate max-w-[300px]">
-                            {primaryExam
-                                ? primaryExam.name
-                                : selectedCategory
-                                  ? copy.browseCategory(selectedCategory)
-                                  : copy.browseLibrary}
-                        </span>
-                    </button>
+                    {ctaDisabled ? (
+                        <button disabled className={ctaClassName}>
+                            {ctaInner}
+                        </button>
+                    ) : (
+                        <Link
+                            to={ctaHref}
+                            onClick={() => {
+                                if (primaryExam) rememberExam(primaryExam);
+                            }}
+                            className={ctaClassName}
+                        >
+                            {ctaInner}
+                        </Link>
+                    )}
                     <div className="mt-4 flex items-center justify-center gap-2 text-[12px] text-white/35 font-medium">
                         <Sparkles className="h-3 w-3" aria-hidden="true" />
                         {copy.trustLine}

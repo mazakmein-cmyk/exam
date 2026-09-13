@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { Button } from "@/components/ui/button";
@@ -1624,9 +1624,15 @@ const ExamSimulator = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="absolute top-6 left-6">
-          <Button variant="ghost" onClick={() => navigate(isPreview ? `/exam/${examId}` : "/analytics")}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            {isPreview ? "Back to editing" : "Back to Dashboard"}
+          {/* The way out, before the clock starts. Nothing has been staked yet
+              on this screen, so it is pure navigation — a link, which also
+              means a creator checking a preview can Cmd+click back to the
+              editor and keep the student's view open beside it. */}
+          <Button variant="ghost" asChild>
+            <Link to={isPreview ? `/exam/${examId}` : "/analytics"}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              {isPreview ? "Back to editing" : "Back to Dashboard"}
+            </Link>
           </Button>
         </div>
         <Card className="max-w-md w-full">
@@ -1940,7 +1946,7 @@ const ExamSimulator = () => {
                       questionsBySection={questionsBySection}
                       questionStates={questionStates}
                       onSelect={handleSectionSwitch}
-                      className="w-[22rem]"
+                      className="w-[28rem]"
                     />
                   </div>
                 ) : (

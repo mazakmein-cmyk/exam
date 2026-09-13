@@ -130,7 +130,7 @@ export default function SectionPicker({
       <PopoverContent
         align="start"
         sideOffset={6}
-        className="w-[min(23rem,calc(100vw-1.5rem))] p-2"
+        className="w-[min(28rem,calc(100vw-1.5rem))] p-2"
       >
         <div className="mb-2 flex items-center justify-between gap-2 px-1">
           <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">

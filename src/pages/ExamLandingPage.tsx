@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { ArrowRight, BookOpen, CheckCircle, ChevronDown, Sparkles } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -39,7 +39,6 @@ const FaqItem = ({ q, a, idx }: { q: string; a: string; idx: number }) => {
 
 const ExamLandingPage = () => {
   const { examSlug } = useParams<{ examSlug: string }>();
-  const navigate = useNavigate();
   const exam = examSlug ? EXAM_LANDING_PAGES[examSlug] : undefined;
 
   if (!exam) {
@@ -98,13 +97,13 @@ const ExamLandingPage = () => {
 
           {/* CTAs */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-10">
-            <button
-              onClick={() => navigate("/student-auth")}
+            <Link
+              to="/student-auth"
               className="group inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-[15px] font-semibold text-white bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-[0_0_0_1px_rgba(108,62,244,0.5),0_8px_32px_rgba(108,62,244,0.4)] transition-all duration-200 hover:-translate-y-0.5"
             >
               Start Free {exam.examShort} Mock
               <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-            </button>
+            </Link>
             <Link
               to="/marketplace"
               className="inline-flex items-center gap-2.5 px-7 py-3.5 rounded-xl text-[15px] font-semibold text-white/70 hover:text-white border border-white/10 hover:border-white/20 bg-white/[0.04] hover:bg-white/[0.08] backdrop-blur-sm transition-all duration-200"
@@ -315,13 +314,13 @@ const ExamLandingPage = () => {
           <p className="text-[15px] text-white/55 mb-8 leading-[1.7]">
             Unlimited attempts. Real exam-day conditions. Deep analytics. 100% free, forever.
           </p>
-          <button
-            onClick={() => navigate("/student-auth")}
+          <Link
+            to="/student-auth"
             className="inline-flex items-center gap-2.5 px-8 py-4 rounded-xl text-[15px] font-semibold text-white bg-[#6C3EF4] hover:bg-[#5B2FE3] shadow-[0_0_0_1px_rgba(108,62,244,0.5),0_8px_32px_rgba(108,62,244,0.4)] transition-all duration-200 hover:-translate-y-0.5"
           >
             Sign Up Free
             <ArrowRight className="h-4 w-4" />
-          </button>
+          </Link>
         </div>
       </section>
 

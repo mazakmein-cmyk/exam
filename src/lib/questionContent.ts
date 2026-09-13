@@ -7,27 +7,20 @@
  * items — a passage wrapped in `<div class="passage-section">` ahead of
  * `<div class="question-section">`.
  *
- * The simulator's one-question-at-a-time view and the all-questions overview
- * both render through here, so the two can never drift apart.
+ * The simulator's one-question-at-a-time view, the all-questions overview and
+ * the post-exam review all render through here, so what a student sits and what
+ * they read afterwards can never drift apart. (The review page used to inline
+ * its own copy of the markdown pass; an asterisk fix applied here would have
+ * missed it.)
  */
+import { applyInlineMarkdown } from "./inlineMarkdown.js";
 import { renderMathInHtml } from "./renderMath";
 import { renderClozeBlanks } from "./richText";
 
-/**
- * Inline markdown that import leaves behind, plus link hardening. Applied to
- * HTML, so it must stay conservative: only the four inline forms are touched.
- */
-export function applyInlineMarkdown(html: string): string {
-  return html
-    .replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary underline hover:text-primary/80">$1</a>',
-    )
-    .replace(/<a href/g, '<a class="text-primary underline hover:text-primary/80" href')
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>")
-    .replace(/~~(.*?)~~/g, "<del>$1</del>");
-}
+// The markdown pass itself lives in a plain-JS module so the node tests can
+// import it directly — an asterisk is a reasoning paper's subject matter as
+// often as it is emphasis, and the rules that tell those apart need cases.
+export { applyInlineMarkdown };
 
 /**
  * Stored question text → HTML ready for `dangerouslySetInnerHTML`: cloze

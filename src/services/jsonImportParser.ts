@@ -12,6 +12,7 @@
  * the report so the user can still import what's good.
  */
 import { jsonrepair } from "jsonrepair";
+import { collapseDoubledBackslashes, documentIsOverEscaped } from "@/lib/latexEscapes.js";
 import type { ScoringConfig } from "./scoringEngine";
 
 export const SCHEMA_VERSION = "1.0";
@@ -34,6 +35,13 @@ const END_DELIM = "<<<EXAM_JSON_END>>>";
 
 export type NormalisedQuestion = {
   q_no: number;
+  /**
+   * The number the SOURCE printed for this question, kept because q_no is
+   * overwritten with the question's position below. The AI extraction keys its
+   * needs_manual_review entries on the printed number, so the import summary
+   * needs both to point a creator at the right row.
+   */
+  sourceQNo?: number;
   text: string;
   answer_type: "single" | "multi";
   options: string[];
@@ -81,7 +89,8 @@ export type RepairCategory =
   | "data_wrapper"
   | "auto_repaired"
   | "mojibake_fixed"
-  | "latex_escapes_fixed";
+  | "latex_escapes_fixed"
+  | "latex_over_escaped_fixed";
 
 export type ParseReport = {
   ok: boolean;
@@ -214,6 +223,15 @@ export function parseExamJson(rawText: string, ctx: ParseContext): ParseReport {
       errorCode: "invalid_json",
       fatalReason: "Top-level JSON must be an object.",
     };
+  }
+
+  // [4b] Undo one level too many of backslash escaping, document-wide.
+  //      Runs on the PARSED values, not the source text, because that is
+  //      where the evidence is: a paper the model double-escaped has every
+  //      command spelled `\\frac`, and none spelled `\frac`.
+  if (normaliseOverEscapedLatex(json)) {
+    repairCategoriesSet.add("latex_over_escaped_fixed");
+    repairApplied = true;
   }
 
   // Update baseReport so subsequent returns inherit repair info.
@@ -388,7 +406,9 @@ export function parseExamJson(rawText: string, ctx: ParseContext): ParseReport {
     if (renumbered) {
       sec.warnings.push("Duplicate q_no in JSON — renumbered by position.");
     }
-    // Always renumber by position so downstream commit doesn't have to think
+    // Always renumber by position so downstream commit doesn't have to think.
+    // sourceQNo keeps the printed number so the summary can still say which
+    // question in the PDF a warning refers to.
     sec.accepted.forEach((q, idx) => {
       q.q_no = idx + 1;
     });
@@ -599,6 +619,48 @@ function autoFixLatexEscapes(input: string, categories: RepairCategory[]): strin
   return out;
 }
 
+// ─── Over-escaped LaTeX (one backslash too many) ──────────────────────
+
+/**
+ * autoFixLatexEscapes above repairs text with too FEW backslashes. This is the
+ * opposite failure, and it is the one that reaches readers: the model applies
+ * the JSON doubling rule to LaTeX it had already doubled, so `\frac` is typed
+ * `"\\\\frac"` and parses to `\\frac` — a LaTeX row break followed by the bare
+ * letters f, r, a, c.
+ *
+ * Half of that damage is silent. `$\\int_0^k h(x)dx$` does not fail to render;
+ * it renders as a line break and three italic letters, with no integral sign,
+ * so nothing downstream can flag it. The only reliable place to catch it is
+ * here, where the whole document is in hand and the ratio gives it away.
+ *
+ * Mutates `json` in place and reports whether anything changed.
+ */
+function normaliseOverEscapedLatex(json: any): boolean {
+  const found: { holder: any; key: string; text: string }[] = [];
+  const seen = new Set<any>();
+
+  const walk = (node: any): void => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    for (const key of Object.keys(node)) {
+      const v = node[key];
+      if (typeof v === "string") {
+        if (v.includes("\\")) found.push({ holder: node, key, text: v });
+      } else if (v && typeof v === "object") {
+        walk(v);
+      }
+    }
+  };
+  walk(json);
+
+  if (!found.length) return false;
+  // One `\\begin` proves nothing — it could be a row separator that happens to
+  // precede a letter. Judge the paper as a whole instead.
+  if (!documentIsOverEscaped(found.map((f) => f.text).join("\n"))) return false;
+  for (const f of found) f.holder[f.key] = collapseDoubledBackslashes(f.text);
+  return true;
+}
+
 // ─── Categorise what kinds of repairs the input needed ───────────────────
 
 function detectRepairCategories(input: string): RepairCategory[] {
@@ -791,6 +853,12 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
       } else {
         reasons.push("correct_answer must be a string, number, or array");
       }
+      if (value !== null && value.trim() === "") {
+        // Number("") is 0, so a blank answer would silently mark the FIRST
+        // option correct. A blank means "not marked" — same as null.
+        value = null;
+        warnings.push("correct_answer was blank — treated as not marked.");
+      }
       if (value !== null) {
         const idx = Number(value);
         if (!Number.isInteger(idx) || idx < 0 || idx >= optionsOut.length) {
@@ -813,6 +881,11 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
             bad = true;
             break;
           }
+          if (typeof item === "string" && item.trim() === "") {
+            // Number("") is 0 — a blank entry would silently add option A.
+            warnings.push("correct_answer contained a blank entry — dropped.");
+            continue;
+          }
           const idx = Number(item);
           if (!Number.isInteger(idx) || idx < 0 || idx >= optionsOut.length) {
             reasons.push(`correct_answer index "${item}" out of range (0 - ${optionsOut.length - 1})`);
@@ -823,7 +896,8 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
         }
         if (!bad) {
           const deduped = Array.from(new Set(out));
-          correct_answer = deduped;
+          // All entries blank → nothing was marked, not "option A".
+          correct_answer = deduped.length > 0 ? deduped : null;
         }
       }
     }
@@ -964,6 +1038,9 @@ function validateQuestion(raw: any, index: number, isPrimary: boolean): QResult 
     warnings,
     value: {
       q_no,
+      // Only when the source actually printed one — a fabricated position is
+      // worse than nothing for cross-referencing against the PDF.
+      sourceQNo: Number.isInteger(rawQNo) && rawQNo > 0 ? rawQNo : undefined,
       text: finalText,
       answer_type: finalAnswerType,
       options: optionsOut,

@@ -1,5 +1,5 @@
 import { useEffect, useState, lazy, Suspense } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadQuestionImage } from "@/lib/questionImageUpload";
 import { createTwinPlaceholders, fetchSiblingSectionIds, mirrorToTwins } from "@/lib/questionTwins";
@@ -451,10 +451,12 @@ export default function ManualFixEditor() {
         <div className="flex gap-2">
           <Button
             variant="ghost"
-            onClick={() => navigate(`/exam/${examId}`)}
+            asChild
           >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Exam
+            <Link to={`/exam/${examId}`}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Exam
+            </Link>
           </Button>
           <Button
             onClick={addNewQuestion}
@@ -886,11 +888,16 @@ export default function ManualFixEditor() {
       </div>
 
       <div className="flex justify-end gap-4 mt-6">
+        {/* "Cancel" here means "leave without finalising" — it undoes nothing
+            and has a real destination (the exam editor), so it is a link. The
+            neighbouring "Finalize Exam" writes rows first and stays a button. */}
         <Button
           variant="outline"
-          onClick={() => navigate(`/exam/${examId}`)}
+          asChild
         >
-          Cancel
+          <Link to={`/exam/${examId}`}>
+            Cancel
+          </Link>
         </Button>
         <Button
           onClick={finalizeExam}

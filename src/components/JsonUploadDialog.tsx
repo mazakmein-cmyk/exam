@@ -84,6 +84,7 @@ const repairCategoryLabel: Record<RepairCategory, string> = {
   auto_repaired: "syntax auto-fixed",
   mojibake_fixed: "UTF-8 encoding (mojibake) auto-repaired",
   latex_escapes_fixed: "LaTeX backslashes auto-doubled",
+  latex_over_escaped_fixed: "double-escaped LaTeX backslashes auto-collapsed",
 };
 
 const AVAILABLE_LANGUAGES: Record<string, { label: string; nativeLabel?: string }> = {

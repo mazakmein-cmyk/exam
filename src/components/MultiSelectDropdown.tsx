@@ -47,23 +47,22 @@ export function MultiSelectDropdown({ options, selected, onChange, placeholder =
                     variant="outline"
                     role="combobox"
                     aria-expanded={open}
-                    className="w-full justify-between min-w-[200px]"
+                    className="w-full justify-between min-w-[200px] font-normal"
                 >
-                    <div className="flex gap-1 flex-wrap">
-                        {selected.length === 0 && <span className="text-muted-foreground">{placeholder}</span>}
-                        {selected.length > 0 && selected.length <= 2 && (
-                            selected.map((val) => (
-                                <Badge variant="secondary" key={val} className="mr-1">
-                                    {options.find((opt) => opt.value === val)?.label || val}
-                                </Badge>
-                            ))
-                        )}
-                        {selected.length > 2 && (
-                            <Badge variant="secondary">
-                                {selected.length} selected
-                            </Badge>
-                        )}
-                    </div>
+                    {/* One line, always — two option pills wrapping inside a pill-shaped
+                        trigger is what made this look cluttered. A single label reads as
+                        a value; two or more collapse to a count, same as the placeholder. */}
+                    {selected.length === 0 ? (
+                        <span className="truncate text-muted-foreground">{placeholder}</span>
+                    ) : selected.length === 1 ? (
+                        <span className="truncate">
+                            {options.find((opt) => opt.value === selected[0])?.label || selected[0]}
+                        </span>
+                    ) : (
+                        <Badge variant="secondary" className="font-normal">
+                            {selected.length} selected
+                        </Badge>
+                    )}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
