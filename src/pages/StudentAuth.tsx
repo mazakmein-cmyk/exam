@@ -42,6 +42,8 @@ const StudentAuth = () => {
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const defaultTab = searchParams.get("mode") === "signup" ? "signup" : "signin";
+  const [authTab, setAuthTab] = useState(defaultTab);
+  const signupEmailRef = useRef<HTMLInputElement>(null);
   const isExamSubmit = searchParams.get("trigger") === "exam_submit";
   // Same-origin relative paths only ("/x" but not "//host") — guards against open redirects.
   const rawReturnTo = searchParams.get("returnTo");
@@ -138,6 +140,20 @@ const StudentAuth = () => {
       setShowVerificationModal(true);
     }
     setLoading(false);
+  };
+
+  // "Try a different email". The unverified account stays in Supabase, which is
+  // harmless — the user can still come back and confirm it later — so this only
+  // has to hand the form back, emptied and focused.
+  const handleUseDifferentEmail = () => {
+    setShowVerificationModal(false);
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setAuthTab("signup");
+    // The signup panel is unmounted while the sign-in tab is showing, so the
+    // input does not exist until the tab switch has rendered.
+    requestAnimationFrame(() => signupEmailRef.current?.focus());
   };
 
   const handleVerificationComplete = async () => {
@@ -265,6 +281,7 @@ const StudentAuth = () => {
 
       {/* Modals */}
       <EmailVerificationModal isOpen={showVerificationModal} onOpenChange={setShowVerificationModal} email={email} onVerified={handleVerificationComplete}
+        onUseDifferentEmail={handleUseDifferentEmail}
         verifyCredentials={async () => {
           if (!password) return false;
           const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -323,7 +340,7 @@ const StudentAuth = () => {
           <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-[#0EA5E9]/40 to-transparent" />
 
           <div className="p-7">
-            <Tabs defaultValue={defaultTab} className="w-full">
+            <Tabs value={authTab} onValueChange={setAuthTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2 bg-white/[0.04] border border-white/[0.07] rounded-xl p-1 mb-6 h-10">
                 <TabsTrigger value="signin" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#0EA5E9] data-[state=active]:text-white transition-all duration-200 h-8">Log In</TabsTrigger>
                 <TabsTrigger value="signup" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#0EA5E9] data-[state=active]:text-white transition-all duration-200 h-8">Create Account</TabsTrigger>
@@ -371,7 +388,7 @@ const StudentAuth = () => {
                 <form onSubmit={handleSignUp} className="space-y-4">
                   <div className="space-y-1.5">
                     <Label htmlFor="signup-email" className="text-white/60 text-xs font-semibold tracking-wide uppercase">Email</Label>
-                    <Input id="signup-email" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required
+                    <Input id="signup-email" ref={signupEmailRef} type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required
                       className="bg-white/[0.05] border-white/[0.09] text-white placeholder:text-white/20 focus-visible:border-[#0EA5E9]/60 focus-visible:ring-[#0EA5E9]/10 rounded-xl h-11" />
                   </div>
                   <div className="space-y-1.5">

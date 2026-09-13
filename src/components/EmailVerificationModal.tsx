@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
     Dialog,
     DialogContent,
@@ -6,10 +6,16 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { Mail, CheckCircle2, RefreshCw, AlertTriangle } from "lucide-react";
+import { Mail, CheckCircle2, RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import {
+    lookupMailProvider,
+    mailProviderForEmail,
+    VERIFICATION_SENDER,
+    type MailProvider,
+} from "@/lib/mailProvider";
 
 interface EmailVerificationModalProps {
     isOpen: boolean;
@@ -17,6 +23,12 @@ interface EmailVerificationModalProps {
     email: string;
     onVerified: () => void;
     verifyCredentials?: () => Promise<boolean>;
+    /**
+     * Wrong address typed at signup — the most common reason this modal never
+     * resolves. Optional: the button only renders where a caller can actually
+     * take the user back to the form.
+     */
+    onUseDifferentEmail?: () => void;
 }
 
 const RESEND_COOLDOWN_SECONDS = 30;
@@ -28,6 +40,7 @@ const EmailVerificationModal = ({
     email,
     onVerified,
     verifyCredentials,
+    onUseDifferentEmail,
 }: EmailVerificationModalProps) => {
     const [isVerified, setIsVerified] = useState(false);
     const [checking, setChecking] = useState(false);
@@ -36,6 +49,34 @@ const EmailVerificationModal = ({
     const [resendCount, setResendCount] = useState(0);
     const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const { toast } = useToast();
+
+    // "Open mail". Known domains resolve synchronously with no network at all,
+    // so the button is on screen in the first paint for almost every user; only
+    // a custom domain falls through to the MX lookup below.
+    const knownProvider = useMemo(() => mailProviderForEmail(email), [email]);
+    const [resolvedProvider, setResolvedProvider] = useState<MailProvider | null>(null);
+    const mailProvider = knownProvider ?? resolvedProvider;
+
+    useEffect(() => {
+        // Resolving here rather than in the click handler is deliberate: an
+        // await between the click and window.open loses the user-gesture and
+        // gets popup-blocked. With the URL ready up front the button can be a
+        // plain <a>, which no blocker touches and Cmd+click opens in a tab.
+        if (!isOpen || isVerified || knownProvider) {
+            // A previous email's answer must not survive an edit.
+            setResolvedProvider(null);
+            return;
+        }
+
+        let cancelled = false;
+        lookupMailProvider(email).then((provider) => {
+            if (!cancelled) setResolvedProvider(provider);
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, isVerified, knownProvider, email]);
 
     // Cleanup cooldown timer on unmount
     useEffect(() => {
@@ -291,7 +332,33 @@ const EmailVerificationModal = ({
                 </DialogHeader>
                 {!isVerified && (
                     <div className="flex flex-col gap-3 mt-4">
+                        {mailProvider && (
+                            /* A real anchor rather than a button that calls
+                               window.open: popup blockers leave a plain new-tab
+                               link alone, and Cmd/Ctrl+click keeps the signup tab
+                               open — which matters, because that tab is the one
+                               polling for the verification and showing the
+                               success state. */
+                            <Button asChild className="w-full">
+                                <a
+                                    href={mailProvider.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title={
+                                        mailProvider.filtered
+                                            ? `Opens your mailbox with a search for ${VERIFICATION_SENDER}, including Spam`
+                                            : "Opens your mailbox in a new tab"
+                                    }
+                                >
+                                    <Mail className="h-4 w-4" />
+                                    {mailProvider.label}
+                                    <ExternalLink className="h-4 w-4 opacity-70" />
+                                </a>
+                            </Button>
+                        )}
+
                         <Button
+                            variant={mailProvider ? "secondary" : "default"}
                             className="w-full"
                             onClick={handleManualCheck}
                             disabled={checking}
@@ -328,14 +395,29 @@ const EmailVerificationModal = ({
                             </div>
                         )}
 
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onOpenChange(false)}
-                            className="text-muted-foreground w-full"
-                        >
-                            Close
-                        </Button>
+                        <div className="flex items-center justify-center gap-1">
+                            {onUseDifferentEmail && (
+                                <>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={onUseDifferentEmail}
+                                        className="text-muted-foreground"
+                                    >
+                                        Try a different email
+                                    </Button>
+                                    <span aria-hidden className="text-muted-foreground/40">·</span>
+                                </>
+                            )}
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onOpenChange(false)}
+                                className={`text-muted-foreground ${onUseDifferentEmail ? "" : "w-full"}`}
+                            >
+                                Close
+                            </Button>
+                        </div>
                     </div>
                 )}
             </DialogContent>

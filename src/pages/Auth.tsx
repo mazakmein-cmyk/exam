@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +23,8 @@ const Auth = () => {
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+  const [authTab, setAuthTab] = useState("signin");
+  const signupEmailRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -85,6 +87,20 @@ const Auth = () => {
       setShowVerificationModal(true);
     }
     setLoading(false);
+  };
+
+  // "Try a different email". The unverified account stays in Supabase, which is
+  // harmless — the user can still come back and confirm it later — so this only
+  // has to hand the form back, emptied and focused.
+  const handleUseDifferentEmail = () => {
+    setShowVerificationModal(false);
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setAuthTab("signup");
+    // The signup panel is unmounted while the sign-in tab is showing, so the
+    // input does not exist until the tab switch has rendered.
+    requestAnimationFrame(() => signupEmailRef.current?.focus());
   };
 
   const handleVerificationComplete = () => {
@@ -152,6 +168,7 @@ const Auth = () => {
 
       {/* Modals */}
       <EmailVerificationModal isOpen={showVerificationModal} onOpenChange={setShowVerificationModal} email={email} onVerified={handleVerificationComplete}
+        onUseDifferentEmail={handleUseDifferentEmail}
         verifyCredentials={async () => {
           if (!password) return false;
           const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -190,7 +207,7 @@ const Auth = () => {
         <div className="relative rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl shadow-2xl shadow-black/60 overflow-hidden">
           <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-[#6C3EF4]/50 to-transparent" />
           <div className="p-7">
-            <Tabs defaultValue="signin" className="w-full">
+            <Tabs value={authTab} onValueChange={setAuthTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2 bg-white/[0.04] border border-white/[0.07] rounded-xl p-1 mb-6 h-10">
                 <TabsTrigger value="signin" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#6C3EF4] data-[state=active]:text-white transition-all duration-200 h-8">Log In</TabsTrigger>
                 <TabsTrigger value="signup" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#6C3EF4] data-[state=active]:text-white transition-all duration-200 h-8">Create Account</TabsTrigger>
@@ -236,7 +253,7 @@ const Auth = () => {
                 <form onSubmit={handleSignUp} className="space-y-4">
                   <div className="space-y-1.5">
                     <Label htmlFor="signup-email" className="text-white/60 text-xs font-semibold tracking-wide uppercase">Email</Label>
-                    <Input id="signup-email" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required
+                    <Input id="signup-email" ref={signupEmailRef} type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required
                       className="bg-white/[0.05] border-white/[0.09] text-white placeholder:text-white/20 focus-visible:border-[#6C3EF4]/60 focus-visible:ring-[#6C3EF4]/15 rounded-xl h-11" />
                   </div>
                   <div className="space-y-1.5">
