@@ -163,6 +163,17 @@
     letter-spacing: -0.02em;
   }
 
+  /*
+    Edge and IE inject their own reveal/clear controls into every
+    <input type="password"> (and search field), which lands a SECOND eye
+    icon next to our own toggle as soon as the field is focused and
+    non-empty. Hide theirs; ours is the one wired to component state.
+  */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+
   blockquote {
     @apply border-l-4 border-primary pl-4 italic text-muted-foreground my-4;
   }
