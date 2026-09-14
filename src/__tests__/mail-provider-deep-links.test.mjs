@@ -23,6 +23,11 @@
  *  5. ONE SENDER CONSTANT. The From address lives in the Supabase dashboard,
  *     which this repo cannot read. If it ever disagrees with the constant the
  *     search lands empty — so there must be exactly one place to fix it.
+ *  6. A PHONE GETS THE APP, AND NEVER GETS NOWHERE. Mobile points the same
+ *     button at the mail app — Android through an intent that carries its own
+ *     browser_fallback_url, iOS through a published scheme with a timed
+ *     fallback. A missing app must cost exactly nothing, and desktop must come
+ *     out byte-for-byte unchanged.
  */
 
 import { readFileSync } from "fs";
@@ -37,6 +42,12 @@ import {
     parseMxHosts,
     lookupMailProvider,
 } from "../lib/mailProvider.ts";
+import {
+    detectMobilePlatform,
+    supportsAndroidIntent,
+    androidIntentUrl,
+    mailLinkTarget,
+} from "../lib/mailAppLink.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
@@ -403,6 +414,173 @@ await netTest(
     }
 );
 
+console.log("\n  On a phone, the app");
+
+// Real user agents. The iPad one is a real Mac string — that is the point of it.
+const UA = {
+    androidChrome:
+        "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+    androidSamsung:
+        "Mozilla/5.0 (Linux; Android 13; SAMSUNG SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+    androidFirefox: "Mozilla/5.0 (Android 14; Mobile; rv:127.0) Gecko/127.0 Firefox/127.0",
+    iphone:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    ipad:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    windows:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+};
+
+// One address per provider the static table knows.
+const SAMPLES = [
+    ["shivam@gmail.com", "gmail"],
+    ["shivam@outlook.com", "outlook"],
+    ["shivam@yahoo.com", "yahoo"],
+    ["shivam@proton.me", "proton"],
+    ["shivam@icloud.com", "icloud"],
+    ["shivam@zoho.com", "zoho"],
+    ["shivam@zoho.in", "zohoIn"],
+    ["shivam@zoho.eu", "zohoEu"],
+    ["shivam@yandex.ru", "yandex"],
+    ["shivam@rediffmail.com", "rediff"],
+    ["shivam@aol.com", "aol"],
+];
+
+const fallbackOf = (href) => {
+    const value = href.split("S.browser_fallback_url=")[1];
+    return value === undefined ? null : value.replace(/;end$/, "");
+};
+
+test("the platform is read off the user agent, iPad included", () => {
+    eq(detectMobilePlatform(UA.androidChrome, 5), "android", "Android Chrome");
+    eq(detectMobilePlatform(UA.androidFirefox, 5), "android", "Android Firefox is still Android");
+    eq(detectMobilePlatform(UA.iphone, 5), "ios", "iPhone");
+    eq(detectMobilePlatform(UA.ipad, 5), "ios", "iPadOS 13+ claims to be a Mac; the touch points give it away");
+    eq(detectMobilePlatform(UA.mac, 0), null, "a real Mac has no touch points");
+    eq(detectMobilePlatform(UA.windows, 0), null, "Windows");
+    eq(detectMobilePlatform("", 0), null, "no navigator at all — the prerender — is not a phone");
+});
+
+test("desktop is untouched: every provider keeps its exact web URL", () => {
+    for (const [email] of SAMPLES) {
+        const p = mailProviderForEmail(email);
+        const t = mailLinkTarget(p, null, UA.windows);
+        eq(t.href, p.url, `${p.id}: the desktop href must be the resolved URL, unchanged`);
+        eq(t.opensApp, false, `${p.id}: a desktop has no app to open`);
+        eq(t.iosScheme, null, `${p.id}: and no scheme to attempt`);
+    }
+});
+
+test("Android hands the tap to the app, with the fallback built into the href", () => {
+    const p = mailProviderForEmail("shivam@gmail.com");
+    const t = mailLinkTarget(p, "android", UA.androidChrome);
+    eq(t.opensApp, true, "the Gmail app is what a phone should land in");
+    assert(t.href.startsWith("intent://mail.google.com/mail/u/0/#Intent;"), `wrong intent data: ${t.href}`);
+    assert(t.href.includes(";scheme=https;"), "the data scheme has to be declared separately");
+    assert(
+        t.href.includes(";package=com.google.android.gm;"),
+        "an explicit package is what makes an unverified https filter match"
+    );
+    assert(t.href.endsWith(";end"), "an unterminated intent URI is ignored");
+    eq(t.webUrl, p.url, "the web URL stays available for the modal's copy");
+});
+
+test("the Android fallback is the desktop URL, search and all", () => {
+    for (const [email] of SAMPLES) {
+        const p = mailProviderForEmail(email);
+        const t = mailLinkTarget(p, "android", UA.androidChrome);
+        if (!t.opensApp) continue;
+        const encoded = fallbackOf(t.href);
+        assert(encoded !== null, `${p.id}: an intent with no fallback strands a phone without the app`);
+        eq(decodeURIComponent(encoded), p.url, `${p.id}: the fallback must be exactly today's URL`);
+    }
+});
+
+test("nothing in the fallback can terminate the intent extras early", () => {
+    // Gmail's URL carries its search in a #fragment and its account hint in a
+    // query — a raw # or ; inside the extras truncates the fallback, and the
+    // phone without the app lands on half a URL.
+    const p = mailProviderForEmail("shivam@gmail.com");
+    assert(p.url.includes("#search/"), "the Gmail URL still carries a fragment");
+    const encoded = fallbackOf(mailLinkTarget(p, "android", UA.androidChrome).href);
+    assert(!encoded.includes("#"), "a raw # would end the fallback at the fragment");
+    assert(!encoded.includes(";"), "a raw ; would end it at the next extra");
+    assert(encoded.includes("%23") && encoded.includes("%3F"), "so both are percent-encoded");
+});
+
+test("Samsung Internet is Chromium enough; Firefox for Android is not", () => {
+    eq(supportsAndroidIntent(UA.androidChrome), true, "Chrome");
+    eq(supportsAndroidIntent(UA.androidSamsung), true, "Samsung Internet");
+    eq(supportsAndroidIntent(UA.androidFirefox), false, "intent:// there risks an error page, not a fallback");
+
+    const p = mailProviderForEmail("shivam@gmail.com");
+    const t = mailLinkTarget(p, "android", UA.androidFirefox);
+    eq(t.href, p.url, "so Firefox keeps exactly today's link");
+    eq(t.opensApp, false, "and the modal must not promise it an app");
+});
+
+test("a provider with no Android app keeps the web URL", () => {
+    for (const email of ["shivam@icloud.com", "shivam@rediffmail.com"]) {
+        const p = mailProviderForEmail(email);
+        const t = mailLinkTarget(p, "android", UA.androidChrome);
+        eq(t.href, p.url, `${p.id}: nothing to hand off to on Android`);
+        eq(t.opensApp, false, `${p.id}: and it must not claim otherwise`);
+    }
+});
+
+test("iOS keeps the web URL in the href and only attempts the app", () => {
+    const p = mailProviderForEmail("shivam@gmail.com");
+    const t = mailLinkTarget(p, "ios", UA.iphone);
+    eq(t.href, p.url, "a long-press, or a browser that never runs the handler, must still reach the mailbox");
+    eq(t.iosScheme, "googlegmail://", "the app comes first");
+    eq(t.webUrl, p.url, "and the web URL is what the grace period falls back to");
+    eq(t.opensApp, true, "the tap is expected to leave the browser");
+});
+
+test("iOS schemes are published ones, never guesses", () => {
+    // A scheme no installed app claims raises a Safari error dialog BEFORE any
+    // fallback of ours can run, so an unverifiable scheme is worse than none.
+    const published = {
+        gmail: "googlegmail://",
+        outlook: "ms-outlook://",
+        yahoo: "ymail://",
+        proton: "protonmail://",
+        icloud: "message://",
+    };
+    for (const [email, id] of SAMPLES) {
+        const p = mailProviderForEmail(email);
+        const t = mailLinkTarget(p, "ios", UA.iphone);
+        eq(t.iosScheme, published[id] ?? null, `${id} on iOS`);
+        if (!published[id]) {
+            eq(t.href, p.url, `${id} has no scheme we can verify, so it keeps the web URL`);
+            eq(t.opensApp, false, `${id} must not claim to open an app`);
+        }
+    }
+});
+
+test("a table entry with a fragment cannot smuggle it into the intent", () => {
+    const url = androidIntentUrl("https://mail.zoho.com/zm/#mail/folder/inbox", "com.zoho.mail", "https://x.test/");
+    assert(
+        url.startsWith("intent://mail.zoho.com/zm/#Intent;"),
+        `the intent syntax owns the fragment, so the entry's own must be dropped: ${url}`
+    );
+    eq(androidIntentUrl("not-a-url", "com.x", "https://x.test/"), null, "an unparseable entry degrades to the web URL");
+});
+
+await netTest(
+    "a Microsoft 365 tenant opens Outlook on both phones",
+    async () => ({ ok: true, json: async () => ({ Answer: [{ type: 15, data: "0 x.mail.protection.outlook.com." }] }) }),
+    async () => {
+        const p = await lookupMailProvider("rahul@somecollege.ac.in");
+        eq(p.id, "office365", "a work tenant");
+        eq(mailLinkTarget(p, "ios", UA.iphone).iosScheme, "ms-outlook://", "one app for work and consumer alike");
+        const android = mailLinkTarget(p, "android", UA.androidChrome);
+        assert(android.href.includes(";package=com.microsoft.office.outlook;"), "same app on Android");
+        eq(decodeURIComponent(fallbackOf(android.href)), p.url, "falling back to the tenant's own web URL");
+    }
+);
+
 console.log("\n  The modal wiring");
 
 const MODAL = read("src/components/EmailVerificationModal.tsx");
@@ -410,11 +588,60 @@ const MODAL = read("src/components/EmailVerificationModal.tsx");
 test("Open mail is an anchor, not a popup-blocked window.open", () => {
     assert(!/window\.open\s*\(/.test(MODAL), "window.open() after an await is blocked; use <a target=_blank>");
     assert(
-        /<a\s+[^>]*href=\{mailProvider\.url\}/.test(MODAL),
-        "the button must render an <a> bound to the resolved URL"
+        /<a\s+[^>]*href=\{mailTarget\.href\}/.test(MODAL),
+        "the button must render an <a> bound to the resolved target"
     );
-    assert(/target="_blank"/.test(MODAL), "opens in a new tab so the polling tab survives");
     assert(/rel="noopener noreferrer"/.test(MODAL), "target=_blank without noopener leaks window.opener");
+});
+
+test("the new tab survives on a phone too", () => {
+    // EmailVerified.tsx is a deliberate dead end — "carry on in the tab where
+    // you signed up". Spend the tap on a new tab so that one is still there.
+    assert(/target="_blank"/.test(MODAL), "opens in a new tab so the polling tab survives");
+    assert(
+        !/target=\{/.test(MODAL),
+        "no platform may trade the polling tab away — /verified has nowhere else to send the user"
+    );
+});
+
+test("the search survives the app launch, on its own line", () => {
+    // The app opens on its INBOX, and a verification email nobody can find is
+    // usually in Spam — so the filtered URL has to stay one tap away on a phone.
+    assert(
+        /mailTarget\?\.opensApp && mailProvider\.filtered &&/.test(MODAL),
+        "the search link belongs to the app path, and only where a real filter exists"
+    );
+    assert(
+        /href=\{mailTarget\.webUrl\}/.test(MODAL),
+        "it must point at the filtered web URL — the app link cannot carry a search"
+    );
+    assert(
+        MODAL.includes("Search mail for {VERIFICATION_SENDER}"),
+        "and say which sender it searches for, from the one constant"
+    );
+});
+
+test("the phone decides once, outside the click handler", () => {
+    assert(MODAL.includes("detectMobilePlatform()"), "the platform must be read");
+    assert(
+        /useMemo\(\(\) => detectMobilePlatform\(\), \[\]\)/.test(MODAL),
+        "read it once per mount — a user agent cannot change under a mounted component"
+    );
+    assert(
+        /mailLinkTarget\(mailProvider, platform\)/.test(MODAL),
+        "the href must be decided when the modal opens, not on the tap"
+    );
+});
+
+test("the iOS handler is the only one that intercepts the tap", () => {
+    // Android's fallback lives in the href itself, so a handler there would only
+    // add a way to get it wrong.
+    assert(
+        /onClick=\{\s*mailTarget\.iosScheme\s*\?/.test(MODAL),
+        "the click handler must be conditional on there being an iOS scheme"
+    );
+    assert(MODAL.includes("e.preventDefault()"), "the anchor's own navigation has to stand down first");
+    assert(MODAL.includes("openMailApp(mailTarget)"), "the app attempt belongs in the library, not inline here");
 });
 
 test("the URL is resolved when the modal opens, not inside the click handler", () => {

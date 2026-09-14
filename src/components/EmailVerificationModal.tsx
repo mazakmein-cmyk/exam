@@ -6,7 +6,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog";
-import { Mail, CheckCircle2, RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
+import { Mail, CheckCircle2, RefreshCw, AlertTriangle, ExternalLink, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
     VERIFICATION_SENDER,
     type MailProvider,
 } from "@/lib/mailProvider";
+import { detectMobilePlatform, mailLinkTarget, openMailApp } from "@/lib/mailAppLink";
 
 interface EmailVerificationModalProps {
     isOpen: boolean;
@@ -56,6 +57,16 @@ const EmailVerificationModal = ({
     const knownProvider = useMemo(() => mailProviderForEmail(email), [email]);
     const [resolvedProvider, setResolvedProvider] = useState<MailProvider | null>(null);
     const mailProvider = knownProvider ?? resolvedProvider;
+
+    // A phone gets pointed at the mail APP; a desktop keeps the exact web URL
+    // resolved above. The user agent cannot change under a mounted component,
+    // so read it once — and detectMobilePlatform survives having no navigator
+    // at all, which is how the prerender build sees this file.
+    const platform = useMemo(() => detectMobilePlatform(), []);
+    const mailTarget = useMemo(
+        () => (mailProvider ? mailLinkTarget(mailProvider, platform) : null),
+        [mailProvider, platform]
+    );
 
     useEffect(() => {
         // Resolving here rather than in the click handler is deliberate: an
@@ -332,7 +343,7 @@ const EmailVerificationModal = ({
                 </DialogHeader>
                 {!isVerified && (
                     <div className="flex flex-col gap-3 mt-4">
-                        {mailProvider && (
+                        {mailProvider && mailTarget && (
                             /* A real anchor rather than a button that calls
                                window.open: popup blockers leave a plain new-tab
                                link alone, and Cmd/Ctrl+click keeps the signup tab
@@ -341,13 +352,36 @@ const EmailVerificationModal = ({
                                success state. */
                             <Button asChild className="w-full">
                                 <a
-                                    href={mailProvider.url}
+                                    href={mailTarget.href}
+                                    /* A new tab on every platform, phones
+                                       included. /verified is a dead end by
+                                       design — it tells the user to "carry on in
+                                       the tab where you signed up" — so THIS tab
+                                       has to still exist when they come back.
+                                       On Android the intent fires out of the new
+                                       tab and, if no app takes it, the fallback
+                                       URL lands there instead of eating this
+                                       page. */
                                     target="_blank"
                                     rel="noopener noreferrer"
+                                    /* iOS only: no intent:// there, so the app
+                                       scheme is tried from here with the web URL
+                                       as the timed fallback. Android needs no
+                                       handler — its fallback rides in the href. */
+                                    onClick={
+                                        mailTarget.iosScheme
+                                            ? (e) => {
+                                                  e.preventDefault();
+                                                  openMailApp(mailTarget);
+                                              }
+                                            : undefined
+                                    }
                                     title={
-                                        mailProvider.filtered
-                                            ? `Opens your mailbox with a search for ${VERIFICATION_SENDER}, including Spam`
-                                            : "Opens your mailbox in a new tab"
+                                        mailTarget.opensApp
+                                            ? `Opens your ${mailProvider.label.replace(/^Open /, "")} app`
+                                            : mailProvider.filtered
+                                                ? `Opens your mailbox with a search for ${VERIFICATION_SENDER}, including Spam`
+                                                : "Opens your mailbox in a new tab"
                                     }
                                 >
                                     <Mail className="h-4 w-4" />
@@ -355,6 +389,27 @@ const EmailVerificationModal = ({
                                     <ExternalLink className="h-4 w-4 opacity-70" />
                                 </a>
                             </Button>
+                        )}
+
+                        {mailProvider && mailTarget?.opensApp && mailProvider.filtered && (
+                            /* The app above opens on its INBOX — no mail app on
+                               either platform takes a search through a launch
+                               link. A verification email nobody can find is
+                               usually in Spam, which is exactly what the search
+                               above the fold on desktop covers, so on a phone it
+                               gets its own line rather than being lost. Only
+                               where the provider actually has a search deep link:
+                               a link promising a filter it cannot apply is the
+                               one thing worse than no link. */
+                            <a
+                                href={mailTarget.webUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="-mt-1 inline-flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                            >
+                                <Search className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">Search mail for {VERIFICATION_SENDER}</span>
+                            </a>
                         )}
 
                         <Button
