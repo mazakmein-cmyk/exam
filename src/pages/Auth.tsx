@@ -10,8 +10,11 @@ import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 
 import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
+import GoogleAuthButton from "@/components/GoogleAuthButton";
 import OnboardingModal from "@/components/OnboardingModal";
 import SEO from "@/components/SEO";
+import { completeGoogleAuth } from "@/lib/googleAuth";
+import { isOAuthLanding } from "@/lib/oauthLanding";
 
 const Auth = () => {
   const [email, setEmail] = useState("");
@@ -24,12 +27,71 @@ const Auth = () => {
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const [authTab, setAuthTab] = useState("signin");
+  const [googleLoading, setGoogleLoading] = useState(isOAuthLanding);
+  // True only while the return leg is in flight. isOAuthLanding is fixed for
+  // the page's life, so using it directly would keep saying "Signing you in"
+  // on a retry after a failed return.
+  const [oauthReturning, setOauthReturning] = useState(isOAuthLanding);
   const signupEmailRef = useRef<HTMLInputElement>(null);
+  // A Google return is handled exactly once, by whichever of the mount effect or
+  // a late SIGNED_IN gets there first.
+  const oauthHandledRef = useRef(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
+    // Returning from Google. Deliberately driven from the mount effect rather
+    // than the SIGNED_IN listener below: auth-js raises that event for a
+    // URL-borne session from inside _initialize on a setTimeout(…, 0), and this
+    // page is a lazy() route whose listener subscribes after it has gone past.
+    const finishGoogle = async () => {
+      if (oauthHandledRef.current) return;
+      oauthHandledRef.current = true;
+
+      // Everything below is wrapped: an unexpected throw (storage blocked, a
+      // network failure inside supabase-js) would otherwise leave the button
+      // stuck on its busy label with no way back.
+      try {
+        const result = await completeGoogleAuth("creator");
+        if (result.status === "none") return;
+
+        if (result.status === "error") {
+          toast({ title: "Google sign-in failed", description: result.message, variant: "destructive" });
+          return;
+        }
+        if (result.status === "wrong-portal") {
+          // Same rule the password path enforces — the account's own user_type
+          // decides which portal it belongs to, never the button that was clicked.
+          await supabase.auth.signOut();
+          toast({
+            title: "Wrong account type",
+            description: "This Google account is registered as a student. Please log in from the Student login page.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        toast({ title: "Welcome!", description: "Signed in with Google." });
+        await checkProfileAndRedirect();
+      } catch (err) {
+        console.error("Google sign-in failed to complete:", err);
+        toast({
+          title: "Google sign-in failed",
+          description: "Something went wrong finishing your sign-in. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        // Always released, so the button is never left spinning.
+        setGoogleLoading(false);
+        setOauthReturning(false);
+      }
+    };
+
     const checkUser = async () => {
+      if (isOAuthLanding) {
+        await finishGoogle();
+        return;
+      }
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         if (session.user.user_metadata?.user_type === 'creator') {
@@ -42,12 +104,16 @@ const Auth = () => {
       // PASSWORD_RECOVERY is handled globally in AuthStateListener, which
       // routes to the dedicated /reset-password page.
       if (event === "SIGNED_IN" && session) {
+        // A Google return owns its own routing — it still has a user_type to
+        // write and a JWT to refresh before anyone may navigate.
+        if (isOAuthLanding) return;
         if (session.user.user_metadata?.user_type === 'creator') {
           navigate("/dashboard");
         }
       }
     });
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -207,6 +273,22 @@ const Auth = () => {
         <div className="relative rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-2xl shadow-2xl shadow-black/60 overflow-hidden">
           <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-[#6C3EF4]/50 to-transparent" />
           <div className="p-7">
+            {/* Above the tabs, not inside them: one Google click both signs an
+                existing creator in and creates a new account, so it belongs to
+                neither panel. */}
+            <GoogleAuthButton
+              portal="creator"
+              loading={googleLoading}
+              loadingLabel={oauthReturning ? "Signing you in..." : undefined}
+              disabled={loading}
+              onLoadingChange={setGoogleLoading}
+              onError={(message) => toast({ title: "Google sign-in failed", description: message, variant: "destructive" })}
+            />
+            <div className="relative my-5 flex items-center gap-3" aria-hidden="true">
+              <span className="h-px flex-1 bg-white/[0.09]" />
+              <span className="text-[11px] font-medium uppercase tracking-widest text-white/45">or</span>
+              <span className="h-px flex-1 bg-white/[0.09]" />
+            </div>
             <Tabs value={authTab} onValueChange={setAuthTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2 bg-white/[0.04] border border-white/[0.07] rounded-xl p-1 mb-6 h-10">
                 <TabsTrigger value="signin" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#6C3EF4] data-[state=active]:text-white transition-all duration-200 h-8">Log In</TabsTrigger>
@@ -235,7 +317,7 @@ const Auth = () => {
                       </button>
                     </div>
                   </div>
-                  <button type="submit" disabled={loading}
+                  <button type="submit" disabled={loading || googleLoading}
                     className="w-full h-11 mt-2 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-sm shadow-lg shadow-[#6C3EF4]/30 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
                     {loading
                       ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Logging in...</>
@@ -278,7 +360,7 @@ const Auth = () => {
                       </button>
                     </div>
                   </div>
-                  <button type="submit" disabled={loading}
+                  <button type="submit" disabled={loading || googleLoading}
                     className="w-full h-11 mt-2 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-sm shadow-lg shadow-[#6C3EF4]/30 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
                     {loading
                       ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Creating account...</>

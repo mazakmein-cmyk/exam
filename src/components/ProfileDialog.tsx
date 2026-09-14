@@ -10,9 +10,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
-import { User, GraduationCap, PenLine } from "lucide-react";
+import { User, GraduationCap, PenLine, KeyRound, Check } from "lucide-react";
 import { VerifiedSeal } from "@/components/VerifiedBadge";
 import { getVerificationTier } from "@/lib/verification";
+import SetPasswordModal from "@/components/SetPasswordModal";
+import { hasPasswordCredential, usesGoogle } from "@/lib/passwordSetup";
 
 interface ProfileDialogProps {
     isOpen: boolean;
@@ -32,6 +34,11 @@ const ProfileDialog = ({
     const [isEditing, setIsEditing] = useState(false);
     const [editedProfile, setEditedProfile] = useState({ full_name: "", phone_number: "" });
     const [saving, setSaving] = useState(false);
+    // How this account can be signed into — so someone who skipped the prompt
+    // after a Google sign-up has somewhere to go and add a password later.
+    const [googleLinked, setGoogleLinked] = useState(false);
+    const [hasPassword, setHasPassword] = useState(true);
+    const [showSetPassword, setShowSetPassword] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
@@ -47,6 +54,8 @@ const ProfileDialog = ({
         if (user) {
             setEmail(user.email);
             setUserType(user.user_metadata?.user_type === "student" ? "student" : "creator");
+            setGoogleLinked(usesGoogle(user));
+            setHasPassword(hasPasswordCredential(user));
 
             const { data } = await supabase
                 .from('profiles')
@@ -165,8 +174,55 @@ const ProfileDialog = ({
                                 <span className="text-sm col-span-3">{profile?.phone_number || "Not set"}</span>
                             )}
                         </div>
+
+                        {/* Sign-in methods. Only shown to accounts that came in
+                            through Google — for everyone else there is nothing
+                            to say, since they signed up with a password by
+                            definition. */}
+                        {googleLinked && (
+                            <div className="grid grid-cols-4 items-start gap-4 border-t pt-4">
+                                <span className="text-sm font-medium text-muted-foreground col-span-1">Sign in with:</span>
+                                <div className="col-span-3 space-y-2">
+                                    <p className="text-sm flex items-center gap-1.5">
+                                        <Check className="h-3.5 w-3.5 text-green-600" />
+                                        Google
+                                    </p>
+                                    {hasPassword ? (
+                                        <p className="text-sm flex items-center gap-1.5">
+                                            <Check className="h-3.5 w-3.5 text-green-600" />
+                                            Email &amp; password
+                                        </p>
+                                    ) : (
+                                        <>
+                                            <p className="text-xs text-muted-foreground">
+                                                Add a password and you can log in with your email too —
+                                                useful on a shared computer, or anywhere Google sign-in
+                                                isn't available.
+                                            </p>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setShowSetPassword(true)}
+                                                className="gap-1.5"
+                                            >
+                                                <KeyRound className="h-3.5 w-3.5" />
+                                                Set a password
+                                            </Button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
+
+                <SetPasswordModal
+                    isOpen={showSetPassword}
+                    onOpenChange={setShowSetPassword}
+                    required
+                    onComplete={() => setHasPassword(true)}
+                />
 
                 <DialogFooter className="sm:justify-end gap-2">
                     {isEditing ? (

@@ -17,6 +17,7 @@ import { formatMarks } from "@/services/scoringEngine";
 import { formatDuration } from "@/lib/utils";
 import { studentQuestionsRelation } from "@/lib/dbFeatures";
 import OnboardingModal from "@/components/OnboardingModal";
+import { notifyPasswordPromptRecheck } from "@/lib/passwordSetup";
 import { fetchTimingGroups, type TimingGroupRow } from "@/lib/timingGroupSettings";
 import { normalizeAnswerText } from "@/lib/answerNormalize.js";
 import { groupDisplayName, groupPoolMinutes, resolveTimingGroupIds } from "@/lib/timingGroups.js";
@@ -1342,6 +1343,9 @@ export default function ExamReview() {
         onComplete={() => {
           sessionStorage.removeItem('needsOnboarding');
           setShowOnboardingModal(false);
+          // The set-password prompt defers while that key is set, and a plain
+          // sessionStorage write notifies nothing in its own tab.
+          notifyPasswordPromptRecheck();
         }}
       />
     </div>

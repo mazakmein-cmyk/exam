@@ -6,6 +6,7 @@ import { createBrowserRouter, RouterProvider, Outlet, useLocation } from "react-
 import AuthStateListener from "./components/AuthStateListener";
 import GoogleAnalytics from "./components/GoogleAnalytics";
 import MicrosoftClarity from "./components/MicrosoftClarity";
+import SetPasswordPrompt from "./components/SetPasswordPrompt";
 import { isAdminPath } from "./lib/adminRoute";
 
 // Eager: tiny + likely first hit
@@ -155,6 +156,11 @@ const Layout = () => (
     <GoogleAnalytics />
     <MicrosoftClarity />
     <PrefetchLikelyRoutes />
+    {/* Offers a password to Google accounts that have none. Mounted here rather
+        than on each destination page so there is one rule in one place; it picks
+        its own moments and renders nothing until one arrives. Deliberately not on
+        PresentLayout — a dialog on the projector is the last thing anyone wants. */}
+    <SetPasswordPrompt />
     <Suspense fallback={<RouteFallback />}>
       <Outlet />
     </Suspense>

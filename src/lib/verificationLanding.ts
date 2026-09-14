@@ -15,6 +15,11 @@
 // in the first place. The query and hash are carried across untouched, so
 // supabase-js still finds its token exactly where it expects it.
 
+// Imported for its side effect as much as its value: oauthLanding.ts reads the
+// URL and performs its own history rewrite at module load, and must do so before
+// this module decides anything. An ES import guarantees that ordering.
+import { isOAuthLanding } from "./oauthLanding";
+
 const CONFIRMATION_TYPES = new Set(["signup", "email_change", "invite", "magiclink", "email"]);
 
 const readVerificationLanding = (): boolean => {
@@ -28,10 +33,21 @@ const readVerificationLanding = (): boolean => {
   if (type === "recovery") return false;
   if (type !== null) return CONFIRMATION_TYPES.has(type);
 
+  // A Google sign-in returns a token with no `type` either, and lands in exactly
+  // the shape the fallback below was written to catch. It is recognised by its
+  // landing path (or a parked intent record) rather than by anything in the
+  // token — see oauthLanding.ts — and claiming it here would drop the user on
+  // the terminal /verified page instead of logging them in.
+  //
+  // This test sits above the fallback and not above the `type` checks on purpose:
+  // an email link always stamps a `type`, isOAuthLanding is always false when one
+  // is present, and keeping the email branches first makes that ordering visible.
+  if (isOAuthLanding) return false;
+
   // No `type` to go on (PKCE links carry only `?code=`, and some GoTrue
-  // versions omit it). This app has no OAuth, no magic-link and no OTP
-  // sign-in — supabase-js is the only thing that ever writes a session — so a
-  // token landing that is not a recovery can only have come from a
+  // versions omit it). Past the OAuth test above, this app has no magic-link and
+  // no OTP sign-in — supabase-js is the only thing that ever writes a session —
+  // so a token landing that is not a recovery can only have come from a
   // confirmation email.
   return Boolean(hash.get("access_token") || query.get("code"));
 };

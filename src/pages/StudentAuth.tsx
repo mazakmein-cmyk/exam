@@ -15,8 +15,11 @@ import {
 } from "@/lib/pendingSubmissions.js";
 import EmailVerificationModal from "@/components/EmailVerificationModal";
 import ForgotPasswordModal from "@/components/ForgotPasswordModal";
+import GoogleAuthButton from "@/components/GoogleAuthButton";
 import OnboardingModal from "@/components/OnboardingModal";
 import SEO from "@/components/SEO";
+import { completeGoogleAuth } from "@/lib/googleAuth";
+import { isOAuthLanding } from "@/lib/oauthLanding";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,9 +58,71 @@ const StudentAuth = () => {
   // read savingResults=false and each write a fresh attempt row. The ref flips
   // synchronously, so only the first invocation ever reaches saveExamAttempt.
   const savingRef = useRef(false);
+  const [googleLoading, setGoogleLoading] = useState(isOAuthLanding);
+  // True only while the return leg is in flight. isOAuthLanding is fixed for
+  // the page's life, so using it directly would keep saying "Signing you in"
+  // on a retry after a failed return.
+  const [oauthReturning, setOauthReturning] = useState(isOAuthLanding);
+  // A Google return is handled exactly once.
+  const oauthHandledRef = useRef(false);
+  // Set the instant we hand off to Google, so the unsaved-responses guard below
+  // knows this particular navigation is deliberate.
+  const leavingForGoogleRef = useRef(false);
 
   useEffect(() => {
+    // Returning from Google. Driven from the mount effect, not the SIGNED_IN
+    // listener: auth-js raises that event for a URL-borne session from inside
+    // _initialize on a setTimeout(…, 0), and this page is a lazy() route whose
+    // listener subscribes after it has already fired.
+    const finishGoogle = async () => {
+      if (oauthHandledRef.current) return;
+      oauthHandledRef.current = true;
+
+      // Everything below is wrapped: an unexpected throw (storage blocked, a
+      // network failure inside supabase-js) would otherwise leave the button
+      // stuck on its busy label with no way back.
+      try {
+        const result = await completeGoogleAuth("student");
+        if (result.status === "none") return;
+
+        if (result.status === "error") {
+          toast({ title: "Google sign-in failed", description: result.message, variant: "destructive" });
+          return;
+        }
+        if (result.status === "wrong-portal") {
+          await supabase.auth.signOut();
+          toast({
+            title: "Wrong account type",
+            description: "This Google account is registered as a creator. Please log in from the Creator login page.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        toast({ title: "Welcome!", description: "Signed in with Google." });
+        // Same pipeline the password path uses — profile check, then the pending
+        // exam replay. By this point completeGoogleAuth has refreshed the JWT, so
+        // the attempts INSERT policy can actually see user_type='student'.
+        await checkProfileAndRedirect();
+      } catch (err) {
+        console.error("Google sign-in failed to complete:", err);
+        toast({
+          title: "Google sign-in failed",
+          description: "Something went wrong finishing your sign-in. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        // Always released, so the button is never left spinning.
+        setGoogleLoading(false);
+        setOauthReturning(false);
+      }
+    };
+
     const checkUser = async () => {
+      if (isOAuthLanding) {
+        await finishGoogle();
+        return;
+      }
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         if (session.user.user_metadata?.user_type === 'student' && !isExamSubmit) {
@@ -70,17 +135,42 @@ const StudentAuth = () => {
       // PASSWORD_RECOVERY is handled globally in AuthStateListener, which
       // routes to the dedicated /reset-password page.
       if (event === "SIGNED_IN" && session) {
+        // A Google return owns its own routing — it still has a user_type to
+        // write and a JWT to refresh before anything may navigate.
+        if (isOAuthLanding) return;
         if (session.user.user_metadata?.user_type === 'student' && !isExamSubmit) {
           navigate(returnTo || "/marketplace");
         }
       }
     });
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate, isExamSubmit, returnTo]);
+
+  // Coming BACK from Google's consent screen restores this page from the
+  // back/forward cache rather than re-running it, so the latches set on the way
+  // out survive: the unsaved-responses guard would stay disarmed for the rest of
+  // the visit, and the button would stay stuck on its busy label. pageshow with
+  // persisted=true is the only notification a bfcache restore gives us.
+  useEffect(() => {
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      leavingForGoogleRef.current = false;
+      setGoogleLoading(false);
+      setOauthReturning(false);
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
 
   useEffect(() => {
     if (!isExamSubmit) return;
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Handing off to Google is a navigation away from this page, so without
+      // this the browser raises "Leave site? Changes you made may not be saved"
+      // over the sign-in the student just asked for — and the warning says their
+      // responses will be lost, which is exactly backwards.
+      if (leavingForGoogleRef.current) return;
       e.preventDefault();
       e.returnValue = "Exam responses will not be saved. Please sign up to save the responses.";
       return "Exam responses will not be saved. Please sign up to save the responses.";
@@ -340,6 +430,30 @@ const StudentAuth = () => {
           <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-[#0EA5E9]/40 to-transparent" />
 
           <div className="p-7">
+            {/* Above the tabs, not inside them: one Google click both signs an
+                existing student in and creates a new account, so it belongs to
+                neither panel. The journey is handed over with it — a finished
+                paper waiting to be saved has to survive the trip to Google. */}
+            <GoogleAuthButton
+              portal="student"
+              loading={googleLoading}
+              loadingLabel={oauthReturning ? "Signing you in..." : undefined}
+              disabled={loading}
+              onLoadingChange={setGoogleLoading}
+              onBeforeRedirect={() => { leavingForGoogleRef.current = true; }}
+              onError={(message) => {
+                leavingForGoogleRef.current = false;
+                toast({ title: "Google sign-in failed", description: message, variant: "destructive" });
+              }}
+              trigger={searchParams.get("trigger")}
+              returnTo={rawReturnTo}
+              from={searchParams.get("from")}
+            />
+            <div className="relative my-5 flex items-center gap-3" aria-hidden="true">
+              <span className="h-px flex-1 bg-white/[0.09]" />
+              <span className="text-[11px] font-medium uppercase tracking-widest text-white/45">or</span>
+              <span className="h-px flex-1 bg-white/[0.09]" />
+            </div>
             <Tabs value={authTab} onValueChange={setAuthTab} className="w-full">
               <TabsList className="grid w-full grid-cols-2 bg-white/[0.04] border border-white/[0.07] rounded-xl p-1 mb-6 h-10">
                 <TabsTrigger value="signin" className="rounded-lg text-[13px] font-medium text-white/40 data-[state=active]:bg-[#0EA5E9] data-[state=active]:text-white transition-all duration-200 h-8">Log In</TabsTrigger>
@@ -368,7 +482,7 @@ const StudentAuth = () => {
                       </button>
                     </div>
                   </div>
-                  <button type="submit" disabled={loading}
+                  <button type="submit" disabled={loading || googleLoading}
                     className="w-full h-11 mt-2 rounded-xl bg-[#0EA5E9] hover:bg-[#0284C7] text-white font-semibold text-sm shadow-lg shadow-[#0EA5E9]/25 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
                     {loading
                       ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Logging in...</>
@@ -413,7 +527,7 @@ const StudentAuth = () => {
                       </button>
                     </div>
                   </div>
-                  <button type="submit" disabled={loading}
+                  <button type="submit" disabled={loading || googleLoading}
                     className="w-full h-11 mt-2 rounded-xl bg-[#0EA5E9] hover:bg-[#0284C7] text-white font-semibold text-sm shadow-lg shadow-[#0EA5E9]/25 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2">
                     {loading
                       ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Creating account...</>

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { isRecoveryLanding } from "@/lib/recoveryLanding";
 import { isVerificationLanding } from "@/lib/verificationLanding";
+import { isOAuthLanding } from "@/lib/oauthLanding";
 import { hasPendingSubmissions } from "@/lib/pendingSubmissions.js";
 
 const AuthStateListener = () => {
@@ -93,6 +94,14 @@ const AuthStateListener = () => {
                 }
 
             } else if (event === 'SIGNED_IN' && session) {
+                // A Google return is still mid-flight: the portal page has a
+                // user_type to write and a JWT to refresh before anyone may
+                // navigate, and it decides for itself whether the account even
+                // belongs to that portal. Navigating here would race all of it.
+                // Note the two paths below already sit in the SIGNED_OUT
+                // skip-list, so a wrong-portal sign-out is left alone too.
+                if (isOAuthLanding) return;
+
                 // Only redirect from auth pages
                 const isAuthPage = currentPath === '/auth' || currentPath === '/student-auth';
 
