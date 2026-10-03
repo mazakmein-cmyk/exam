@@ -11,7 +11,7 @@ const post: BlogPost = {
   excerpt:
     "The same dozen mistakes end preparations every cycle, and almost none of them are knowledge problems. Each is a habit or a misunderstanding, which means each has a concrete fix.",
   publishedAt: "2026-08-19",
-  updatedAt: "2026-08-19",
+  updatedAt: "2026-10-03",
   readingMinutes: 10,
   category: "Exam Strategy",
   tags: ["JEE Main", "Common Mistakes", "Exam Strategy", "Preparation Tips", "Study Plan"],
@@ -108,15 +108,23 @@ const post: BlogPost = {
     },
     {
       type: "h2",
-      text: "8. Starting Section B at Question One",
+      text: "8. Treating Section B as the Risk-Free Section",
     },
     {
       type: "p",
-      text: "You need five of ten numerical questions per subject, which is an explicit invitation to discard the hardest material in the paper. Candidates who begin at question one and solve until they have five answers routinely spend eleven minutes on a question they should never have opened while an easy question waits at position eight.",
+      text: "Section B used to be the one free bet in the paper: ten numerical questions per subject, any five attempted, and nothing lost on a wrong value. NTA discontinued that structure from the 2025 cycle and it has not come back. Each subject now carries exactly five numerical-value questions, all five compulsory, with the same four marks for a correct answer and one mark off for a wrong one that applies in Section A — fifteen questions across the paper that most candidates still handle as though they were consequence-free.",
     },
     {
       type: "p",
-      text: "The fix costs thirty seconds: read all ten before solving any, and rank them. The full treatment is in the [Section B guide](/blog/jee-main-numerical-value-questions).",
+      text: "The arithmetic has flipped. A blind guess on a four-option MCQ is worth a quarter of a mark on average: one in four lands for four marks, three in four cost one each. A blind guess on a numerical answer is worth a flat minus one, because the answer space is every number there is, and the plausible-looking figure you write down after a half-finished derivation is not one chance in four. Under the old rule that guess was free and you skipped the question for nothing; now there is no slot to skip, and a value entered without a completed calculation is a loss you have chosen.",
+    },
+    {
+      type: "p",
+      text: "The other half of the bleeding is entry rather than mathematics. A value that is right in your rough work and wrong in the box used to cost zero and now costs a mark, and the causes are mechanical: rounding to two decimals when the paper asked for the nearest integer, typing the unit in alongside the number, entering the whole value when the question asked only for the coefficient of a stated power of ten, and transposing digits on an on-screen keypad nobody practises on.",
+    },
+    {
+      type: "p",
+      text: "So the fix is two rules, both cheap. Enter a value only when you have actually computed it through to the end, and leave the box empty otherwise — zero beats minus one. Then read the entered value back off the screen against your rough work, checking the rounding and the form the question specified, before you move on. The full treatment is in the [Section B guide](/blog/jee-main-numerical-value-questions).",
     },
     {
       type: "h2",
@@ -124,7 +132,7 @@ const post: BlogPost = {
     },
     {
       type: "p",
-      text: "Both sections now carry a one-mark penalty in recent cycles. A candidate attempting seventy-five questions at seventy-five percent accuracy scores around 206; the same candidate at eighty-five percent scores around 244. The difference is not knowledge — it is which marginal questions were attempted.",
+      text: "Every question in the paper carries a one-mark penalty for a wrong answer, Section B included. All seventy-five are compulsory, so there is no longer anything to leave out — only answers to enter or decline. A candidate attempting seventy-five questions at seventy-five percent accuracy scores around 206; the same candidate at eighty-five percent scores around 244. The difference is not knowledge — it is which marginal questions were attempted.",
     },
     {
       type: "p",
@@ -198,7 +206,12 @@ const post: BlogPost = {
     {
       question: "Is it bad to guess in JEE Main?",
       answer:
-        "Blind guessing is, since both sections carry a one-mark penalty in recent cycles and accuracy is an explicit tie-breaker when percentiles match. Informed attempts are fine: in Section A, attempt when you can eliminate at least two options and have a positive reason for one of the rest; in Section B, only when you have actually computed a value.",
+        "Blind guessing is, since every question carries a one-mark penalty — Section B included, where it did not before — and accuracy is an explicit tie-breaker when percentiles match. Informed attempts are fine: in Section A, attempt when you can eliminate at least two options and have a positive reason for one of the rest; in Section B, only when you have actually computed a value.",
+    },
+    {
+      question: "Can I still attempt any 5 of 10 questions in JEE Main Section B?",
+      answer:
+        "No. NTA discontinued that structure from the 2025 cycle and it has not returned. Each subject now has exactly five numerical-value questions in Section B and all five are compulsory, carrying four marks for a correct answer and one mark off for a wrong one. The whole paper is seventy-five compulsory questions — twenty-five per subject, twenty in Section A and five in Section B — for 300 marks in 180 minutes.",
     },
   ],
 };

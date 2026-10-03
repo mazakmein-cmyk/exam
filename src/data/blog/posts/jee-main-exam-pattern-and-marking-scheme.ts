@@ -5,13 +5,13 @@ const post: BlogPost = {
   title: "JEE Main Exam Pattern and Marking Scheme, Explained Properly",
   metaTitle: "JEE Main Exam Pattern & Marking Scheme 2027 | MockSetu",
   metaDescription:
-    "The JEE Main exam pattern in full — 90 questions, 75 attempted, 300 marks, Section A and Section B rules, negative marking, and what the structure means for strategy.",
+    "The JEE Main exam pattern in full — 75 compulsory questions, 300 marks, Section A and Section B rules, negative marking in both sections, and what each rule means for strategy.",
   keywords:
-    "JEE Main exam pattern, JEE Main marking scheme, JEE Main negative marking, JEE Main total marks, JEE Main section B numerical, JEE Main exam pattern 2027, JEE Main paper 1 pattern, JEE Main number of questions",
+    "JEE Main exam pattern, JEE Main marking scheme, JEE Main negative marking, JEE Main total marks, JEE Main section B numerical, JEE Main exam pattern 2027, JEE Main paper 1 pattern, JEE Main number of questions, JEE Main 75 questions, JEE Main section B compulsory",
   excerpt:
     "Most candidates can recite the pattern and still play it badly. The structure of JEE Main encodes several strategic decisions, and almost all of them are made before you see a question.",
   publishedAt: "2026-08-19",
-  updatedAt: "2026-08-19",
+  updatedAt: "2026-10-03",
   readingMinutes: 10,
   category: "Exam Guides",
   tags: ["JEE Main", "Exam Pattern", "Marking Scheme", "Negative Marking", "Exam Guides"],
@@ -28,15 +28,16 @@ const post: BlogPost = {
     },
     {
       type: "p",
-      text: "JEE Main Paper 1, taken by B.E. and B.Tech aspirants, is a computer-based test of three hours. It carries 90 questions across Physics, Chemistry and Mathematics — thirty per subject — of which you attempt 75, for a maximum of 300 marks. Each subject is split into two sections, and the split is where most of the strategy lives.",
+      text: "JEE Main Paper 1, taken by B.E. and B.Tech aspirants, is a computer-based test of three hours. It carries 75 questions across Physics, Chemistry and Mathematics — twenty-five per subject — and every one of them is compulsory, for a maximum of 300 marks. Each subject is split into two sections, and the split is where most of the strategy lives.",
     },
     {
       type: "ul",
       items: [
         "Conducting body: National Testing Agency, in computer-based mode across multiple days and two daily shifts.",
         "Section A, per subject: 20 multiple-choice questions, all compulsory, four marks each.",
-        "Section B, per subject: 10 numerical-value questions, of which any 5 are to be attempted, four marks each.",
-        "Total attempted: 75 questions — 60 from Section A and 15 from Section B.",
+        "Section B, per subject: 5 numerical-value questions, all compulsory, four marks each.",
+        "Total: 75 questions — 60 in Section A and 15 in Section B. Nothing is optional and nothing can be skipped for free.",
+        "Changed from the 2025 cycle: Section B used to carry 10 numerical questions of which any 5 were attempted. NTA removed that choice, so the paper is no longer 90 questions with 75 attempted.",
         "Maximum marks: 300, distributed equally as 100 per subject.",
         "Duration: 3 hours, extended to 4 hours for eligible PwD candidates.",
         "Languages: offered in thirteen languages including English, Hindi and several regional languages.",
@@ -52,23 +53,23 @@ const post: BlogPost = {
     },
     {
       type: "p",
-      text: "Every correct answer is worth four marks. Every incorrect answer in Section A costs one mark. Unattempted questions cost nothing. So far, so familiar. The detail that changes decisions is that Section B now carries negative marking too — in earlier cycles the numerical section was penalty-free, and a substantial number of candidates still prepare with the old rule in their heads.",
+      text: "Every correct answer is worth four marks. Every incorrect answer costs one mark — in Section A and in Section B alike. Unattempted questions cost nothing. The first and the last of those are familiar; the middle one is where people get hurt, because Section B now carries negative marking too. Up to the 2024 cycle the numerical section was penalty-free, and a substantial number of candidates still prepare with that old rule in their heads.",
     },
     {
       type: "p",
-      text: "Assume negative marking applies to both sections unless the bulletin for your cycle says otherwise, and verify it in the bulletin rather than from memory or a coaching handout. The difference is not academic: under a penalty-free Section B, the correct play is to attempt all five slots regardless of confidence. Under a penalised one, a genuinely blind guess at a numerical answer is close to pure loss, because unlike a four-option MCQ there is no one-in-four rescue.",
+      text: "The difference is not academic. Under the old penalty-free Section B, the correct play was to put a value in every slot regardless of confidence, because a wrong numerical cost nothing. Under the current rule, a genuinely blind guess at a numerical is close to pure loss: unlike a four-option MCQ there is no one-in-four rescue, so the expected value of a random value is simply minus one. Read the information bulletin for your cycle anyway — the rule has already been changed once — but plan on the penalty applying, because it has applied in every cycle from 2025.",
     },
     {
       type: "h2",
-      text: "What 'Attempt Any 5 of 10' Actually Buys You",
+      text: "Section B Changed: Five Compulsory Numericals, Not Any 5 of 10",
     },
     {
       type: "p",
-      text: "The optional structure of Section B is the single most under-used feature of the paper. You are given ten numerical questions per subject and need only five. That is a built-in escape from the hardest material in the subject — you can discard the five that look worst and still collect full marks for the section.",
+      text: "Section B used to be the one place in the paper where you were handed a choice: ten numerical questions per subject, of which you answered any five, so the five that looked worst could simply be left alone. NTA discontinued that structure from the 2025 cycle, and it has stayed discontinued through 2026 and 2027. There are now five numerical questions per subject, all five are compulsory, and each wrong one costs a mark. That is the change in one line — a guessed numerical is no longer free, and the habit of walking away from the hardest five no longer exists to be exploited. If you remember the old structure, or you are working from a guide written before 2025, this is the paragraph that supersedes it.",
     },
     {
       type: "p",
-      text: "Using it well requires a habit most candidates never build: reading all ten before solving any. Thirty seconds of triage across ten questions routinely finds two or three that are noticeably more tractable than the rest. Candidates who instead start at question one and solve until they have five answers regularly spend eleven minutes on a question they should never have opened. The mechanics of this section, including how to handle answers that must be entered as values rather than selected, are covered in the [numerical value questions guide](/blog/jee-main-numerical-value-questions).",
+      text: "What survives from the old advice is the triage, not the discarding. Read all five numericals in a subject before solving any of them: thirty seconds of scanning routinely finds two that are noticeably more tractable than the rest, and banking those first stops you sinking eleven minutes into the hardest one and running the clock out on the other four. The difference is what happens afterwards. The hard ones no longer go away, so you return to them with whatever time is left and answer the ones you can reason to a value — and leave blank only the ones where you would be inventing a number, since a blank costs nothing and an invented number costs one. The mechanics of this section, including how to handle answers that must be entered as values rather than selected, are covered in the [numerical value questions guide](/blog/jee-main-numerical-value-questions).",
     },
     {
       type: "h2",
@@ -124,7 +125,7 @@ const post: BlogPost = {
     },
     {
       type: "p",
-      text: "Reduce the whole structure to four commitments and rehearse them until they are boring. Decide your subject order and time budget in advance. Read all ten Section B questions before solving any of them. Never guess blindly in Section B, and guess in Section A only when you have eliminated at least two options. Reserve the final five minutes for a palette sweep and enter nothing new during it.",
+      text: "Reduce the whole structure to four commitments and rehearse them until they are boring. Decide your subject order and time budget in advance. Read all five Section B numericals in a subject before solving any of them, then come back to the hard ones rather than abandoning them. Never guess blindly in Section B, and guess in Section A only when you have eliminated at least two options. Reserve the final five minutes for a palette sweep and enter nothing new during it.",
     },
     {
       type: "p",
@@ -133,14 +134,19 @@ const post: BlogPost = {
   ],
   faqs: [
     {
-      question: "How many questions are there in JEE Main and how many do I attempt?",
+      question: "How many questions are there in JEE Main, and are any of them optional?",
       answer:
-        "The paper has 90 questions — 30 per subject, split into 20 compulsory Section A multiple-choice questions and 10 optional Section B numerical questions. You attempt 75 in total: all 60 from Section A and any 5 of 10 from Section B in each subject. Each question carries four marks, for a maximum of 300.",
+        "The paper has 75 questions — 25 per subject, split into 20 Section A multiple-choice questions and 5 Section B numerical-value questions. All 75 are compulsory, so there is nothing to choose between. The older structure, where Section B offered 10 numericals and you attempted any 5, was discontinued by NTA from the 2025 cycle. Each question carries four marks, for a maximum of 300.",
+    },
+    {
+      question: "Is the 'attempt any 5 of 10' rule in Section B still valid?",
+      answer:
+        "No. NTA discontinued the optional Section B from the 2025 cycle, and it has not returned for 2026 or 2027. Section B is now 5 numerical-value questions per subject, all compulsory, marked +4 and -1 exactly like Section A. Any guide still describing 90 questions with 75 attempted is describing the pattern as it stood up to the 2024 cycle.",
     },
     {
       question: "Is there negative marking in JEE Main Section B?",
       answer:
-        "In recent cycles, yes — one mark is deducted for an incorrect numerical answer, unlike earlier years when Section B was penalty-free. Because the rule has changed before, verify it in the information bulletin for your cycle rather than relying on memory. Assume the penalty applies when planning your guessing policy.",
+        "Yes. One mark is deducted for an incorrect numerical answer, the same as in Section A, unlike the cycles up to 2024 when Section B was penalty-free. Since all five numericals per subject are now compulsory and penalised, a blind guess at a value is close to pure loss — there is no one-in-four rescue the way there is on a four-option MCQ. Verify it in the information bulletin for your cycle, then plan on the penalty applying.",
     },
     {
       question: "Are the three subjects timed separately in JEE Main?",

@@ -168,7 +168,7 @@ export const BLOG_POSTS: Record<string, BlogPost> = {
       { type: "h2", text: "Exam pattern — the surface difference" },
       {
         type: "p",
-        text: "JEE Main has a fixed pattern: 90 questions (75 to be attempted, 25 per subject), 3 hours, 300 marks. Section A is MCQ with +4 / −1. Section B is numerical answer type with no negative marking. Three subjects: Physics, Chemistry, Mathematics.",
+        text: "JEE Main has a fixed pattern: 75 questions, 25 per subject, all compulsory, 3 hours, 300 marks. Each subject splits into Section A (20 MCQs) and Section B (5 numerical-value questions), and both carry +4 / −1 — NTA discontinued the old 'attempt any 5 of 10' choice, and Section B's penalty-free status with it, from the 2025 cycle. Three subjects: Physics, Chemistry, Mathematics.",
       },
       {
         type: "p",

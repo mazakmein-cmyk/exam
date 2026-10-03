@@ -63,9 +63,9 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       badge: "JEE Main 2027 · 300 Marks · 3 Hours",
       h1: "Free JEE Main Mock Test — Practice in NTA Exam-Day Conditions",
       intro:
-        "Practise JEE Main 2027 under the exact conditions of the real National Testing Agency (NTA) exam. MockSetu's free JEE Main mock test simulator gives you a 3-hour, 300-mark, full-length paper with the real question palette, mark-for-review states, a Section B numerical keypad enforcing 'attempt any 5 of 10', and analytics that show where you actually lose marks. No payment, no limits — just disciplined practice.",
+        "Practise JEE Main 2027 under the exact conditions of the real National Testing Agency (NTA) exam. MockSetu's free JEE Main mock test simulator gives you a 3-hour, 300-mark, full-length paper with the real question palette, mark-for-review states, a Section B numerical keypad where all five numericals per subject are compulsory and carry −1, and analytics that show where you actually lose marks. No payment, no limits — just disciplined practice.",
       stats: [
-        { value: "90", label: "Questions" },
+        { value: "75", label: "Questions" },
         { value: "3 hrs", label: "Duration" },
         { value: "300", label: "Max Marks" },
       ],
@@ -76,10 +76,10 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
         { label: "Conducting body", value: "National Testing Agency (NTA)" },
         { label: "Mode", value: "Computer-Based Test (CBT), multiple days and two daily shifts" },
         { label: "Sections", value: "Physics, Chemistry, Mathematics" },
-        { label: "Total questions", value: "90 (75 attempted: 25 per subject)" },
+        { label: "Total questions", value: "75 (25 per subject, all compulsory)" },
         { label: "Section A (MCQ)", value: "20 per subject, all compulsory, 4 marks each" },
-        { label: "Section B (Numerical)", value: "10 per subject, attempt any 5, 4 marks each" },
-        { label: "Marking scheme", value: "+4 correct, −1 incorrect — in recent cycles the penalty applies to Section B too" },
+        { label: "Section B (Numerical)", value: "5 per subject, all compulsory, 4 marks each" },
+        { label: "Marking scheme", value: "+4 correct, −1 incorrect, 0 unattempted — the penalty applies in Section B as well as Section A" },
         { label: "Total marks", value: "300 (100 per subject)" },
         { label: "Duration", value: "3 hours (4 hours for eligible PwD candidates)" },
         { label: "Scoring", value: "Shift-wise percentile (normalisation); better of your two sessions counts" },
@@ -99,7 +99,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
           "Work backwards from your session. Start at one full-length paper a fortnight from around six months out, accepting that parts will be unattempted — an early mock measures navigation, pacing and three-hour stamina, none of which need a finished syllabus. Move to weekly about three months out, then twice weekly at eight weeks. In the final fortnight, drop back to one and spend the freed hours on your error log: that taper is deliberate, because the last two weeks build no new capability and a punishing schedule there simply arrives at the exam exhausted. Budget an hour and a half of review for every hour attempted, or you are taking too many mocks rather than too few.",
         bullets: [
           "Take mocks in the same shift slot as your expected exam shift (9 AM or 3 PM)",
-          "Read all ten Section B questions before solving any — you only need five",
+          "All five Section B numericals per subject are scored and a wrong value costs −1, so commit a number only when your method is complete",
           "Always enter an answer before marking a question for review; marked-and-empty is not counted",
           "Sort every lost mark into concept gap, application gap, execution error or selection error",
           "Also review correct answers that took over four minutes — they cost you two other questions",
@@ -155,7 +155,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       },
       {
         title: "Section B enforced properly",
-        desc: "Numerical answers on an on-screen keypad, 'attempt any 5 of 10' per subject, and the rounding and unit traps that only show up on a real interface.",
+        desc: "Numerical answers on an on-screen keypad, all five per subject compulsory with −1 for a wrong value, and the rounding and unit traps that only show up on a real interface.",
       },
       {
         title: "Deep analytics",
@@ -195,7 +195,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       {
         question: "Does MockSetu support Section B (numerical answer type) questions?",
         answer:
-          "Yes. Both Section A (MCQ) and Section B (numerical answer) are fully supported, with the official NTA scheme of 'attempt any 5 of 10' enforced per subject.",
+          "Yes. Both Section A (MCQ) and Section B (numerical answer) are fully supported on the current NTA scheme — 20 MCQs and 5 numericals per subject, all 75 compulsory, with −1 applied to a wrong numerical exactly as NTA scores it.",
       },
       {
         question: "When is JEE Main 2027?",
@@ -205,7 +205,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       {
         question: "Is there negative marking in JEE Main Section B?",
         answer:
-          "In recent cycles, yes — one mark is deducted for an incorrect numerical answer, unlike earlier years when Section B was penalty-free. Because there is no option list to eliminate from, a blind guess at a numerical value is close to pure loss. Confirm the rule in the bulletin for your cycle.",
+          "Yes. One mark is deducted for a wrong numerical answer, the same as in Section A. Section B was penalty-free only under the older optional structure, and NTA discontinued that from the 2025 cycle — the choice of 5 out of 10 is gone and all five numericals per subject are compulsory. Because there is no option list to eliminate from, a blind guess at a numerical value is close to pure loss; a considered one is still worth making.",
       },
       {
         question: "How many marks are needed for 99 percentile in JEE Main?",
@@ -237,7 +237,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       {
         slug: "jee-main-exam-pattern-and-marking-scheme",
         label: "Exam Pattern & Marking Scheme",
-        blurb: "90 questions, 75 attempted, and what each rule implies for how you attempt the paper.",
+        blurb: "75 compulsory questions, +4/−1 in both sections, and what each rule implies for how you attempt the paper.",
       },
       {
         slug: "jee-main-previous-year-question-papers",
@@ -267,7 +267,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       {
         slug: "jee-main-numerical-value-questions",
         label: "Section B Numerical Questions",
-        blurb: "Using 'attempt any 5 of 10' properly, and avoiding rounding and entry errors.",
+        blurb: "Five compulsory numericals per subject at +4/−1, and avoiding rounding and entry errors.",
       },
       {
         slug: "jee-main-time-management-in-exam",
@@ -296,20 +296,20 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
     slug: "neet-ug",
     examName: "NEET UG",
     examShort: "NEET",
-    tagline: "Free NEET Mock Test 2026 — 180 Questions, 200 Minutes, Real NTA Conditions",
+    tagline: "Free NEET Mock Test 2026 — 180 Questions in 180 Minutes, Real NTA Conditions",
     metaTitle: "Free NEET UG Mock Test 2026 — Online Exam Simulator | MockSetu",
     metaDescription:
-      "Free NEET UG mock test with real exam-day conditions. 180-question, 200-minute online simulator for Physics, Chemistry, Botany & Zoology. Instant scoring + deep analytics.",
+      "Free NEET UG mock test with real exam-day conditions. 180-question, 180-minute online simulator for Physics, Chemistry, Botany & Zoology. Instant scoring + deep analytics.",
     keywords:
       "NEET mock test, NEET UG mock test, free NEET mock test, NEET 2026 mock test, NEET online mock test, NEET exam simulator, NEET previous year papers, NEET PYQ mock test",
     hero: {
-      badge: "NEET UG 2026 · 720 Marks · 200 Minutes",
+      badge: "NEET UG 2026 · 720 Marks · 180 Minutes",
       h1: "Free NEET UG Mock Test — Practice the Full 180-Question NTA Pattern",
       intro:
-        "MockSetu's free NEET UG mock test simulator runs the complete 180-question, 200-minute paper exactly the way NTA conducts it on exam day. Get Physics, Chemistry, Botany, and Zoology timed together, a CAT-style question palette to flag tough questions, instant +4/−1 scoring, and chapter-wise analytics so you know which topics actually need more rotation. Built for serious NEET aspirants targeting 650+.",
+        "MockSetu's free NEET UG mock test simulator runs the complete 180-question, 180-minute paper exactly the way NTA conducts it on exam day — all 180 compulsory, one minute per question, no optional Section B to fall back on. Get Physics, Chemistry, Botany, and Zoology timed together, a CAT-style question palette to flag tough questions, instant +4/−1 scoring, and chapter-wise analytics so you know which topics actually need more rotation. Built for serious NEET aspirants targeting 650+.",
       stats: [
         { value: "180", label: "Questions" },
-        { value: "200 min", label: "Duration" },
+        { value: "180 min", label: "Duration" },
         { value: "720", label: "Max Marks" },
       ],
     },
@@ -319,11 +319,11 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
         { label: "Conducting body", value: "National Testing Agency (NTA)" },
         { label: "Mode", value: "Offline (OMR-based, pen-and-paper)" },
         { label: "Sections", value: "Physics, Chemistry, Botany, Zoology" },
-        { label: "Questions per section", value: "45 (35 in Section A + 10 in Section B, attempt any 10)" },
-        { label: "Total questions", value: "180 (200 with optional Section B questions)" },
+        { label: "Questions per section", value: "45, all compulsory (the optional Section B set was discontinued)" },
+        { label: "Total questions", value: "180, all compulsory" },
         { label: "Marking scheme", value: "+4 correct, −1 incorrect, 0 unattempted" },
         { label: "Total marks", value: "720" },
-        { label: "Duration", value: "200 minutes (3 hours 20 minutes)" },
+        { label: "Duration", value: "180 minutes (3 hours)" },
         { label: "Languages", value: "13 languages including English, Hindi, Tamil, Telugu, Bengali" },
         { label: "Qualifying threshold", value: "50th percentile (General) for MBBS/BDS counselling" },
       ],
@@ -340,7 +340,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
           "From November onwards, take one full-length NEET mock per week. From February, switch to two per week, and always in the 2 PM slot — the same time NEET is conducted. The single biggest mistake aspirants make is taking mocks when they 'feel ready'. You'll never feel ready. Take them anyway, every week, and let the score graph drive your revision priorities instead of your subjective feelings.",
         bullets: [
           "Always start with Biology (90 questions) — protect your highest-confidence section",
-          "Treat the 200-minute clock as 50 min Bio + 50 min Bio + 50 min Chem + 50 min Physics",
+          "Split the 180-minute clock roughly 50 min Biology, 45 min Chemistry, 60 min Physics, 25 min review — Biology is recall and should run fast, Physics is where the calculation time goes",
           "After every mock, log your top 5 'silly mistake' question types — these decide your final 30 marks",
           "Don't skip Physics in revision — it's the section that separates 600 from 680",
           "Review NCERT lines linked to every wrong question, not your coaching notes",
@@ -393,7 +393,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
     whyMockSetu: [
       {
         title: "Real NEET timing pressure",
-        desc: "200-minute live countdown, OMR-style flow, and 4-subject section switcher — built so practice transfers directly to exam day.",
+        desc: "180-minute live countdown, OMR-style flow, and 4-subject section switcher — built so practice transfers directly to exam day.",
       },
       {
         title: "+4 / −1 instant scoring",
@@ -405,7 +405,7 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       },
       {
         title: "Mobile-friendly free practice",
-        desc: "Quick chapter quizzes work fully on mobile; full-length 200-minute mocks recommended on laptop or desktop.",
+        desc: "Quick chapter quizzes work fully on mobile; full-length 180-minute mocks recommended on laptop or desktop.",
       },
     ],
     faqs: [
@@ -422,12 +422,12 @@ export const EXAM_LANDING_PAGES: Record<string, ExamLanding> = {
       {
         question: "Does MockSetu cover all 4 NEET subjects?",
         answer:
-          "Yes — Physics, Chemistry, Botany, and Zoology are all fully covered, with the official NEET 180-question pattern (45 per section, including Section A + Section B optional questions).",
+          "Yes — Physics, Chemistry, Botany, and Zoology are all fully covered on the current NEET pattern: 180 questions, 45 per section, every one of them compulsory. NTA removed the optional Section B set, so there is nothing left to discard.",
       },
       {
         question: "How is NEET marking different from JEE?",
         answer:
-          "NEET uses +4 for every correct answer, −1 for every incorrect answer, and 0 for unattempted — same as JEE Main. The difference is NEET has 180 questions in 200 minutes (vs JEE's 90 in 180), so negative marking pressure is higher.",
+          "NEET uses +4 for every correct answer, −1 for every incorrect answer, and 0 for unattempted — same as JEE Main, which now applies the same −1 in Section B too. Both papers are fully compulsory. The difference is pace: NEET gives you 180 questions in 180 minutes, one minute each, against JEE's 75 in the same 180 minutes — so the same penalty bites far harder, because you never get the time to be sure.",
       },
       {
         question: "Can I take a NEET mock during my drop year?",
