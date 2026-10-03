@@ -55,8 +55,11 @@ import type { CommitJsonExtras, CommitResult } from "@/components/JsonUploadDial
 import { normalizeReportOptionLabels } from "@/lib/optionLabels.js";
 import {
   AI_IMPORT_MODELS,
+  AI_IMPORT_MODES,
   DEFAULT_AI_IMPORT_MODEL,
+  DEFAULT_AI_IMPORT_MODE,
   ackAiImport,
+  aiImportMode,
   aiImportModel,
   cancelAiImport,
   defaultSectionMinutes,
@@ -70,6 +73,7 @@ import {
   uploadAiImportPdf,
   LIVE_WALL_CLOCK_MS,
   type AiImportEngine,
+  type AiImportMode,
   type AiImportModelId,
   type LastAiImportJob,
   type UploadedPdf,
@@ -113,6 +117,12 @@ type Step = {
   eta?: string;
   /** Which Gemini engine the step runs on — decides when "slow" becomes "over the limit". */
   engine?: AiImportEngine;
+  /**
+   * The server split the paper into parts. A live engine's 2½-minute cap then
+   * bounds ONE part, not the job, so the whole-job clock may pass it without
+   * anything being wrong.
+   */
+  split?: boolean;
   /** Set while the step is being retried on its own — what went wrong the first time. */
   retryNote?: string;
 };
@@ -161,6 +171,8 @@ type RunCtx = {
   language: string;
   model: AiImportModelId;
   mode: "append" | "replace";
+  /** How the paper is handed to Gemini: split into parts, or one request. */
+  readMode: AiImportMode;
   pdfFile: File | null;
   uploaded: (UploadedPdf & { file: File | null }) | null;
   jobId: string | null;
@@ -265,6 +277,7 @@ export default function AiPdfImportDialog({
 
   const [language, setLanguage] = useState<string>(primaryLanguage);
   const [model, setModel] = useState<AiImportModelId>(DEFAULT_AI_IMPORT_MODEL);
+  const [readMode, setReadMode] = useState<AiImportMode>(DEFAULT_AI_IMPORT_MODE);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [mode, setMode] = useState<"append" | "replace">("append");
   const [dragging, setDragging] = useState(false);
@@ -315,6 +328,7 @@ export default function AiPdfImportDialog({
     setCommitting(false);
     setMode("append");
     setModel(DEFAULT_AI_IMPORT_MODEL);
+    setReadMode(DEFAULT_AI_IMPORT_MODE);
     setLanguage(
       activeLanguage && supportedLanguages.includes(activeLanguage) ? activeLanguage : primaryLanguage
     );
@@ -403,6 +417,7 @@ export default function AiPdfImportDialog({
         examId,
         language: ctx.language,
         model: ctx.model,
+        mode: ctx.readMode,
         storagePath: ctx.uploaded.storagePath,
         pdfName: ctx.uploaded.pdfName,
         force: ctx.forceNewJob,
@@ -438,11 +453,27 @@ export default function AiPdfImportDialog({
       }
       ensureLive(ctx);
       if (!isTerminalAiImportStatus(st.status)) {
+        // The server reports what it ACTUALLY ran. Asking for the split on a
+        // database that cannot plan one still gets a single pass, and saying
+        // "split into parts" while one long request grinds away would send the
+        // creator looking for a bug in the wrong place.
+        const how = st.mode === "single" ? "all in one go" : st.mode ? "split into parts" : null;
+        // When the split was wanted and could not run, the server says why —
+        // usually a database error naming the migration to paste. Showing it
+        // here is what turns "chunking is not working" into a fix.
+        const blocked =
+          st.mode === "single" && st.splitBlockedBy && ctx.readMode !== "single" ? ` — ${st.splitBlockedBy}` : "";
         patchStep("gemini", {
+          split: st.mode === "parallel",
           live:
-            opt.engine === "background"
-              ? `${opt.label} · runs on Gemini's side — safe to close this window`
-              : `${opt.label} · runs live on the server — must finish within 2½ minutes`,
+            (opt.engine === "background"
+              ? `${opt.label} · runs on Gemini's side`
+              : st.mode === "parallel"
+                ? `${opt.label} · runs live on the server in parts — keep this window open`
+                : `${opt.label} · runs live on the server — must finish within 2½ minutes`) +
+            (how ? ` · ${how}` : "") +
+            blocked +
+            (st.progress ? ` · ${st.progress}` : ""),
         });
         continue;
       }
@@ -776,6 +807,7 @@ export default function AiPdfImportDialog({
       language,
       model,
       mode: mode === "replace" && replaceBlockedReason ? "append" : mode,
+      readMode,
       pdfFile,
       // Same File as the last run → the upload step reuses it.
       uploaded: prev?.uploaded && prev.uploaded.file === pdfFile ? prev.uploaded : null,
@@ -808,6 +840,7 @@ export default function AiPdfImportDialog({
         language: lastJob.language,
         model: modelId,
         mode: "append",
+        readMode,
         pdfFile: null,
         uploaded: {
           storagePath: lastJob.storagePath,
@@ -865,6 +898,7 @@ export default function AiPdfImportDialog({
         language,
         model,
         mode: mode === "replace" && replaceBlockedReason ? "append" : mode,
+        readMode,
         pdfFile: null,
         uploaded: {
           storagePath: job.storagePath,
@@ -957,6 +991,7 @@ export default function AiPdfImportDialog({
     ctx.rawOutput = null;
     ctx.autoRetries = 0;
     setModel(DEFAULT_AI_IMPORT_MODEL);
+    setReadMode(DEFAULT_AI_IMPORT_MODE);
     void runFrom("gemini");
   };
   const startOver = () => {
@@ -1287,6 +1322,43 @@ export default function AiPdfImportDialog({
                 </RadioGroupPrimitive.Root>
               </section>
 
+              {/* How the paper is read */}
+              <section className="space-y-2">
+                <FieldLabel id="ai-import-readmode-label">How to read the paper</FieldLabel>
+                <RadioGroupPrimitive.Root
+                  value={readMode}
+                  onValueChange={(v) => setReadMode(v as AiImportMode)}
+                  aria-labelledby="ai-import-readmode-label"
+                  className="grid gap-3 sm:grid-cols-2"
+                >
+                  {AI_IMPORT_MODES.map((m) => (
+                    <RadioGroupPrimitive.Item
+                      key={m.id}
+                      value={m.id}
+                      className={`group ${PICK} ${FOCUS} flex min-w-0 flex-col gap-2 p-3 text-left`}
+                    >
+                      <span className="flex w-full items-start gap-2.5">
+                        <span
+                          aria-hidden="true"
+                          className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-muted-foreground/40 group-data-[state=checked]:border-primary"
+                        >
+                          <RadioGroupPrimitive.Indicator className="h-2 w-2 rounded-full bg-primary" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-sm font-semibold leading-5">{m.label}</span>
+                            {m.badge && <Tag className="bg-primary/10 text-primary dark:text-foreground">{m.badge}</Tag>}
+                          </span>
+                          <span className="mt-0.5 block text-xs tabular-nums text-muted-foreground">{m.eta}</span>
+                        </span>
+                      </span>
+                      <span className="block text-sm leading-5">{m.headline}</span>
+                      <span className="block text-xs leading-5 text-muted-foreground">{m.detail}</span>
+                    </RadioGroupPrimitive.Item>
+                  ))}
+                </RadioGroupPrimitive.Root>
+              </section>
+
               {/* Existing questions */}
               {existingQs > 0 && (
                 <section className="space-y-2">
@@ -1387,7 +1459,7 @@ export default function AiPdfImportDialog({
                 {failure
                   ? "Retry the step below, or start over."
                   : geminiActive
-                    ? `${runModel.label} is reading the paper on Google's servers — you can close this window and come back.`
+                    ? `${runModel.label} is reading the paper in parts — keep this window open; closing it pauses the import until you come back.`
                     : committing
                       ? "Saving questions — keep this tab open."
                       : "Each step ticks off as it finishes."}
@@ -1867,7 +1939,9 @@ function StepRow({
   const active = step.status === "active";
   const muted = step.status === "pending" || step.status === "skipped";
   const elapsed = active && step.startedAt ? Math.max(0, nowMs - step.startedAt) : null;
-  const limit = step.engine === "live" ? LIVE_WALL_CLOCK_MS : SLOW_GEMINI_MS;
+  // A live engine's cap bounds one request. Split into parts, the job is many
+  // requests, so only an UNSPLIT live run is "over the limit" at 2½ minutes.
+  const limit = step.engine === "live" && !step.split ? LIVE_WALL_CLOCK_MS : SLOW_GEMINI_MS;
   const slow = step.id === "gemini" && elapsed !== null && elapsed > limit;
   const numeric = active && step.progress && step.progress.total > 0 ? step.progress : null;
 
@@ -1896,14 +1970,18 @@ function StepRow({
         {step.retryNote && (active || step.status === "failed") && (
           <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">{step.retryNote}</p>
         )}
-        {active && (slow || step.live) && (
+        {/* Both lines, not one or the other. The live line is the only place
+            that says HOW the paper is being read (split or single, and why),
+            and "slow" is precisely when the creator needs to know that. */}
+        {active && slow && (
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {slow
-              ? step.engine === "live"
-                ? "Past the server's 2½-minute limit — this run will be reported as failed. Switch to Gemini 3.5 Flash, which runs in the background."
-                : "Taking longer than usual — long papers can run to 10 minutes. You can close this window and come back."
-              : step.live}
+            {step.engine === "live" && !step.split
+              ? "Past the server's 2½-minute limit for one request — this run will be reported as failed. Retry with the paper split into parts."
+              : "Taking longer than usual — long papers can run to 10 minutes. Keep this window open; closing it pauses the import until you come back."}
           </p>
+        )}
+        {active && step.live && (
+          <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{step.live}</p>
         )}
         {numeric ? (
           <div

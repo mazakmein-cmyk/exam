@@ -1,0 +1,90 @@
+# Deploys the ai-pdf-import edge function whenever its code changes on main,
+# then PROVES the deploy landed by reading the version header off the live
+# function.
+#
+# Why this exists: the function was "deployed" four times between 2026-09-12
+# and 2026-09-23 and the live build was stale every time — once because a bare
+# `supabase functions deploy` went to the project named in config.toml, which
+# is not the project in .env. Deploying from here pins the project ref and
+# fails loudly when the header does not match the code, so "is it live?" stops
+# being a question anyone has to ask.
+#
+# One-time setup, all in the browser:
+#   1. Supabase dashboard → account menu → Access Tokens → generate one.
+#   2. GitHub → this repo → Settings → Secrets and variables → Actions →
+#      New repository secret → SUPABASE_ACCESS_TOKEN = that token.
+#   3. Optional but recommended: SUPABASE_ANON_KEY = the value of
+#      VITE_SUPABASE_PUBLISHABLE_KEY from .env. It is the public anon key the
+#      website already ships to every browser; it is only used here to get
+#      past the gateway so the version header can be read. Without it the
+#      verify step is skipped with a warning.
+#
+# Gemini keys are NOT set here. They live in Supabase → Edge Functions →
+# Secrets and are read per invocation, so adding one needs no deploy at all.
+
+name: Deploy ai-pdf-import
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/functions/ai-pdf-import/**"
+      - "src/lib/extractionPrompt.js"
+      - "supabase/config.toml"
+      - ".github/workflows/deploy-ai-pdf-import.yml"
+  # "Run workflow" button in the Actions tab, for a redeploy with no code change.
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ai-pdf-import
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      # The project in .env — NOT the project_id in supabase/config.toml.
+      SUPABASE_PROJECT_REF: dwqlxyvrlrwzjwmjiost
+      # Secrets are mapped to env here because a step's `if:` cannot read the
+      # secrets context directly, only env.
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to run without the access token
+        if: ${{ env.SUPABASE_ACCESS_TOKEN == '' }}
+        run: |
+          echo "::error::SUPABASE_ACCESS_TOKEN is not set. Supabase dashboard → Access Tokens, then GitHub → Settings → Secrets and variables → Actions."
+          exit 1
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy
+        run: supabase functions deploy ai-pdf-import --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Verify the live build matches the code
+        if: ${{ env.SUPABASE_ANON_KEY != '' }}
+        run: |
+          expected=$(grep -oP 'const FUNCTION_VERSION = "\K[^"]+' supabase/functions/ai-pdf-import/index.ts)
+          echo "code says:  $expected"
+          # A request with no JWT is answered by the gateway and never reaches
+          # the function, so the anon key rides along. The function's own 401
+          # is the response that carries the header.
+          live=$(curl -s -D - -o /dev/null -X POST \
+            "https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/ai-pdf-import" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "Content-Type: application/json" -d '{}' \
+            | grep -i '^x-ai-import-version:' | tr -d '\r' | awk '{print $2}')
+          echo "live says:  ${live:-<no header>}"
+          if [ "$live" != "$expected" ]; then
+            echo "::error::The live function is '${live:-none}' but the code is '$expected'. The deploy did not land on $SUPABASE_PROJECT_REF."
+            exit 1
+          fi
+          echo "Live build verified: $live"
+
+      - name: Verify skipped
+        if: ${{ env.SUPABASE_ANON_KEY == '' }}
+        run: echo "::warning::SUPABASE_ANON_KEY is not set, so the live version header was not checked. Add it as a repository secret to make this job prove the deploy landed."

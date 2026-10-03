@@ -41,22 +41,69 @@ export const AI_IMPORT_MODELS: AiImportModelOption[] = [
     id: "gemini-3.5-flash",
     label: "Gemini 3.5 Flash",
     badge: "Recommended",
-    engine: "background",
+    // Was "background" (Gemini's Interactions API). On 2026-09-23 Google's
+    // retrieve call began refusing every status poll, so the server runs this
+    // model live, in small parts. Keep in step with ENGINE_35 in the function.
+    engine: "live",
     headline: "Most accurate on maths and Hindi in our checks.",
-    detail: "Runs in the background — close this window and come back.",
-    eta: "Usually 2–3 min",
+    detail: "Reads the paper in small parts at once — keep this window open while it runs.",
+    eta: "Usually 2–4 min",
   },
   {
     id: "gemini-2.5-flash",
     label: "Gemini 2.5 Flash",
     engine: "live",
     headline: "Weaker on formula-heavy questions in our checks.",
-    detail: "Runs live on the server, which stops it after about 2½ minutes — short papers only.",
-    eta: "Short papers · under 2½ min",
+    detail: "Reads the paper in small parts at once — keep this window open while it runs.",
+    eta: "Usually 2–4 min",
   },
 ];
 
 export const DEFAULT_AI_IMPORT_MODEL: AiImportModelId = "gemini-3.5-flash";
+
+/**
+ * How the paper is handed to Gemini.
+ *
+ * "parallel" splits it into slices of question numbers and runs them at once —
+ * faster, and a slice that stalls costs a slice rather than the whole paper.
+ * "single" is the original: one call, the whole paper, one stream. It is slower
+ * and all-or-nothing, but it is the behaviour that ran for months, so it stays
+ * available for a paper the split gets wrong.
+ */
+export type AiImportMode = "parallel" | "single";
+
+export type AiImportModeOption = {
+  id: AiImportMode;
+  label: string;
+  badge?: string;
+  headline: string;
+  detail: string;
+  eta: string;
+};
+
+export const AI_IMPORT_MODES: AiImportModeOption[] = [
+  {
+    id: "parallel",
+    label: "Split into parts",
+    badge: "Faster",
+    headline: "Reads the paper in several pieces at once.",
+    detail: "Usually 2–4× quicker, and one piece failing no longer loses the whole paper.",
+    eta: "Usually under 2 min",
+  },
+  {
+    id: "single",
+    label: "All in one go",
+    headline: "One request for the whole paper — the original method.",
+    detail: "Slower and all-or-nothing, but nothing is split, so nothing can be split wrongly.",
+    eta: "2–5 min, longer for big papers",
+  },
+];
+
+export const DEFAULT_AI_IMPORT_MODE: AiImportMode = "parallel";
+
+export function aiImportMode(id: string | null | undefined): AiImportModeOption {
+  return AI_IMPORT_MODES.find((m) => m.id === id) ?? AI_IMPORT_MODES[0];
+}
 
 export function aiImportModel(id: string | null | undefined): AiImportModelOption {
   return AI_IMPORT_MODELS.find((m) => m.id === id) ?? AI_IMPORT_MODELS[0];
@@ -82,6 +129,20 @@ export type AiImportJob = {
   rawOutput?: string | null;
   /** start only: an already-running job for this exam+language was returned. */
   reused?: boolean;
+  /**
+   * Which engine actually ran. The server decides: asking for "parallel" on a
+   * database without migration 20260916000000 still runs the single pass, and
+   * saying so is better than a progress bar that quietly means something else.
+   */
+  mode?: AiImportMode;
+  /**
+   * Why the split did not run, when it did not — the server's own diagnosis,
+   * usually a database error naming migration 20260916000000. Null when the
+   * split ran, or when the creator asked for the single pass and got it.
+   */
+  splitBlockedBy?: string | null;
+  /** Where the split is right now, in words, while the job runs. */
+  progress?: string | null;
 };
 
 export class AiImportError extends Error {
@@ -176,6 +237,8 @@ export type StartAiImportParams = {
   model: AiImportModelId;
   storagePath: string;
   pdfName: string;
+  /** Split the paper into parallel parts, or send it in one request. */
+  mode?: AiImportMode;
   /** Start even if a job for this exam+language is still running. */
   force?: boolean;
 };

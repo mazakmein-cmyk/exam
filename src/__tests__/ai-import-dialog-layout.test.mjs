@@ -93,9 +93,11 @@ test("long strings break instead of widening the panel", () => {
 });
 
 // ─── 3. Radio groups ─────────────────────────────────────────────────────────
-test("language, model and add/replace are Radix radio groups sharing one selected idiom", () => {
+test("language, model, how-to-read and add/replace are Radix radio groups sharing one selected idiom", () => {
   has(dialog, 'import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";');
-  if (count(render, "<RadioGroupPrimitive.Root") !== 3) throw new Error("expected three radio groups");
+  // Four now: the fourth is "How to read the paper" — split the paper into
+  // parallel parts, or send it in one request like the original importer.
+  if (count(render, "<RadioGroupPrimitive.Root") !== 4) throw new Error("expected four radio groups");
   lacks(render, 'role="radio"', "hand-rolled role=radio buttons must be gone");
   has(dialog, "data-[state=checked]:border-primary data-[state=checked]:bg-primary/5", "the shared PICK idiom");
   has(render, "value={effectiveMode}", "a blocked replace shows the mode that will run");
@@ -104,10 +106,21 @@ test("language, model and add/replace are Radix radio groups sharing one selecte
 });
 
 test("radio groups and the drop zone are named by their visible labels", () => {
-  for (const id of ["ai-import-paper-label", "ai-import-language-label", "ai-import-model-label", "ai-import-mode-label"]) {
+  for (const id of [
+    "ai-import-paper-label",
+    "ai-import-language-label",
+    "ai-import-model-label",
+    "ai-import-readmode-label",
+    "ai-import-mode-label",
+  ]) {
     has(render, `id="${id}"`, `${id} must be rendered`);
   }
-  for (const id of ["ai-import-language-label", "ai-import-model-label", "ai-import-mode-label"]) {
+  for (const id of [
+    "ai-import-language-label",
+    "ai-import-model-label",
+    "ai-import-readmode-label",
+    "ai-import-mode-label",
+  ]) {
     has(render, `aria-labelledby="${id}"`, `${id} must be referenced`);
   }
   has(
@@ -172,7 +185,9 @@ test("the step clock runs from when the step went active, and the live engine's 
   has(dialog, 'patchStep("gemini", { startedAt: ctx.jobStartedAt, eta: opt.eta.toLowerCase(), engine: opt.engine });');
   has(render, "formatElapsed(elapsed)");
   has(service, "export const LIVE_WALL_CLOCK_MS = 150_000;");
-  has(render, 'step.engine === "live" ? LIVE_WALL_CLOCK_MS : SLOW_GEMINI_MS');
+  // Split into parts, the live cap bounds one part, not the job.
+  has(render, 'step.engine === "live" && !step.split ? LIVE_WALL_CLOCK_MS : SLOW_GEMINI_MS');
+  has(dialog, 'split: st.mode === "parallel",');
   lacks(service, '"Usually 2–5 min"', "the live engine cannot promise a range that ends past its own cut-off");
 });
 

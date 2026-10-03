@@ -4,21 +4,45 @@
 // with the platform's Gemini key, and hands the raw reply back to the exam page,
 // which parses and imports it with the same code path as a manual JSON upload.
 //
-// Why a job + poll design and not one long request: Supabase Edge Functions
-// must answer within 150 s and live at most 150 s (Free) / 400 s (paid) of wall
-// clock, while a full paper takes Gemini 1–5 minutes. So:
+// ─── SHAPE OF A JOB ──────────────────────────────────────────────────────────
+// A full paper is too much for one Gemini call to emit quickly: the work is
+// decode-bound — ~25k output tokens plus ~38k thinking tokens on a 100-question
+// paper — and a model produces those one after another however fast the network
+// is. So a job is split:
 //
-//   engine "background"  Gemini runs the job on ITS side (Interactions API,
-//                        background=true). `start` returns in ~3 s with an
-//                        interaction id; `status` polls it. Survives the tab
-//                        closing, the function dying, everything.
-//   engine "live"        For models that refuse background mode. `start` still
-//                        answers immediately and the Gemini call continues in
-//                        the same worker via EdgeRuntime.waitUntil, bounded by
-//                        the wall-clock limit. `status` marks a job that
-//                        outlived that limit as failed with a plain explanation.
+//   1. an INDEX pass reads the paper's shape and transcribes the answer key;
+//   2. N extraction workers each emit their own range of printed question
+//      numbers, in parallel, each on a different key in the chain;
+//   3. the parts are merged, deterministically and server-side, back into the
+//      single delimited JSON block the browser already knows how to import.
 //
-// Security — every action, in this order:
+// Step 3 is the contract with the client and it has not changed: the exam page
+// still receives one `rawOutput` string in the v1.0 schema and still parses it
+// with parseExamJson. Nothing in the browser knows the split exists.
+//
+// The orchestration lives in orchestrator.ts; this file is the front door.
+// When migration 20260916000000 has not been pasted yet, the columns that plan
+// needs are missing and the import runs legacy.ts — the single pass that
+// shipped before — so deploying this function is never a step that breaks a
+// working feature.
+//
+// ─── WHY A JOB + POLL DESIGN ─────────────────────────────────────────────────
+// Supabase Edge Functions must answer within 150 s and live at most 150 s
+// (Free) / 400 s (paid) of wall clock, while a paper takes Gemini minutes. So
+// `start` answers immediately and the dialog polls `status` every 4 s — and
+// every one of those polls is a scheduler tick: it reaps finished workers,
+// fails and relaunches ones past their deadline, starts what is queued, and
+// merges when the last part lands. No cron, no queue service, no client change.
+//
+//   engine "background"  Gemini runs the worker on ITS side (Interactions API,
+//                        background=true). Survives the tab closing, the
+//                        function dying, everything.
+//   engine "live"        For models that refuse background mode. The call runs
+//                        inside a worker via EdgeRuntime.waitUntil, bounded by
+//                        the wall clock — which a SLICE of a paper fits inside
+//                        comfortably where a whole paper did not.
+//
+// ─── SECURITY — every action, in this order ──────────────────────────────────
 //   1. a real signed-in user (the JWT is verified with auth.getUser, not just
 //      accepted by the gateway — the anon key is also a valid JWT);
 //   2. profiles.can_use_ai_import for that user (the admin grant);
@@ -29,52 +53,109 @@
 // The prompt is built HERE from the shared module — the client never supplies
 // prompt text, so the function cannot be used as a general Gemini proxy.
 //
-// Keys: GEMINI_API_KEY is primary; GEMINI_API_KEY_FALLBACK,
-// GEMINI_API_KEY_FALLBACK2 and GEMINI_API_KEY_FALLBACK3 are optional extras.
-// A call refused with 403/429/5xx walks down that chain, skipping slots with
-// no secret set, and the slot that finally served it is stored — a background
-// interaction can only be polled with the key that created it, so a poll never
-// switches keys.
+// ─── KEYS ────────────────────────────────────────────────────────────────────
+// GEMINI_API_KEY is primary; GEMINI_API_KEY_FALLBACK, GEMINI_API_KEY_FALLBACK2
+// and GEMINI_API_KEY_FALLBACK3 are optional extras, and each is meant to be a
+// SEPARATE Google project — four keys on one account share one quota and buy
+// nothing. Work is spread across them from the start rather than piling onto
+// the primary until it refuses: each job opens one key on from the previous
+// job (round-robin), hands worker i the slot after worker i-1, and a retry
+// moves on again. A key that refuses is REMEMBERED for as long as this isolate
+// lives — a minute for a per-minute quota, hours for a daily one — and gets no
+// new work while any other key is healthy, so the next job does not rediscover
+// the same refusal. A call that meets a refusal at the door walks to the next
+// key inside the same request instead of failing and waiting for a poll to
+// relaunch it. See gemini.ts.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
+import { EXTRACTION_PROMPT_VERSION } from "../../../src/lib/extractionPrompt.js";
+import { configuredSlotCount, currentGetVariant, keyHealth, modelHealth, nextJobOffset, slotAt } from "./gemini.ts";
+import { buildWholePaperPrompt } from "./prompts.ts";
 import {
-  EXTRACTION_PROMPT_VERSION,
-  fillExtractionPromptContext,
-  hasDelimitedExtraction,
-} from "../../../src/lib/extractionPrompt.js";
+  CONTROL_COLUMNS,
+  MAX_CUT_BYTES,
+  type TickContext,
+  adoptPlanIfReady,
+  beginJob,
+  cleanupParts,
+  modelChain,
+  newOrchestration,
+  progressLine,
+  tick,
+} from "./orchestrator.ts";
+import { pdfPageCount } from "./pdf.ts";
+import { BACKGROUND_STALE_MS, pollJob, runLiveJob, startBackgroundJob } from "./legacy.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+/**
+ * Which build is live.
+ *
+ * This exists because "is the new function actually deployed?" was, for a while,
+ * unanswerable without starting a real import and watching the clock — and the
+ * answer turned out to be no, three times running — and a fourth time on
+ * 2026-09-23, when this check found the live build still predated it. It rides
+ * on EVERY response this function writes, the 401 included, so one curl settles
+ * it. The request has to get PAST THE GATEWAY first: config.toml sets
+ * verify_jwt = true, so a request with no JWT is answered by the gateway with
+ * its own 401 ({"code":"UNAUTHORIZED_NO_AUTH_HEADER"}) and never reaches this
+ * code or this header. The project's anon key is a valid JWT:
+ *
+ *   curl -s -D - -o /dev/null -X POST \
+ *     https://<project>.supabase.co/functions/v1/ai-pdf-import \
+ *     -H "Authorization: Bearer <anon key>" -H "Content-Type: application/json" \
+ *     -d '{}' | grep -i x-ai-import-version
+ *
+ * The function's own 401 ("sign_in_required") carrying the header is the proof.
+ * Bump it whenever this function is changed in a way worth telling apart.
+ */
+const FUNCTION_VERSION = "2026-09-23.parallel-19-rotate";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Expose-Headers": "x-ai-import-version",
+  "x-ai-import-version": FUNCTION_VERSION,
 };
 
 type Engine = "background" | "live";
-type KeySlot = "primary" | "fallback" | "fallback2" | "fallback3";
+
+/**
+ * Which engine 3.5 Flash runs on.
+ *
+ * It was "background" (Interactions API, background: true, polled by id) and
+ * that worked — two jobs completed that way on 2026-09-17. On 2026-09-23 every
+ * GET /interactions/{id} came back 400 ("Request contains an invalid argument"
+ * or "API key not valid", alternating, on identical requests and on every key)
+ * while the POST that created the interaction succeeded. Seven request shapes
+ * were tried; all refused. Work finished on Google's side and nothing could
+ * see it, so every attempt ran to its deadline and every import failed.
+ *
+ * generateContent never stopped working, so 3.5 Flash runs on it — the same
+ * live engine 2.5 Flash uses — and the split is what makes that fit the
+ * platform's wall clock: twelve-question slices instead of a whole paper. Set
+ * AI_IMPORT_35_ENGINE=background to go back once Google's retrieve call works
+ * again; the background code path is intact and the poll self-heals its
+ * request shape.
+ */
+const ENGINE_35: Engine = Deno.env.get("AI_IMPORT_35_ENGINE") === "background" ? "background" : "live";
 
 /** Models the UI may ask for. Anything else is refused before Gemini is called. */
 const MODELS: Record<string, { engine: Engine }> = {
-  "gemini-3.5-flash": { engine: "background" },
+  "gemini-3.5-flash": { engine: ENGINE_35 },
   "gemini-2.5-flash": { engine: "live" },
 };
 
 const BUCKET = "exam-pdfs";
 const MAX_PDF_BYTES = 40 * 1024 * 1024;
 const JOBS_PER_HOUR = 12;
-/** A live job older than this is dead: no plan's wall clock reaches it. */
-const LIVE_STALE_MS = 7 * 60 * 1000;
-/** A background job older than this is abandoned rather than polled forever. */
-const BACKGROUND_STALE_MS = 45 * 60 * 1000;
-const GEMINI = "https://generativelanguage.googleapis.com/v1beta";
-const API_REVISION = "2026-05-20";
-/** Gemini statuses worth retrying on the next key. 403 covers a suspended key. */
-const RETRYABLE = new Set([403, 429, 500, 502, 503, 504]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
+// deno-lint-ignore no-explicit-any
+type Client = any;
 
 function json(body: Json, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -86,193 +167,7 @@ function fail(status: number, code: string, message: string): Response {
   return json({ error: { code, message } }, status);
 }
 
-/**
- * The key chain, in the order it is walked. Each slot is meant to be a separate
- * Gemini project: a key that is over its free-tier quota (429) or suspended
- * (403) is out for the moment as a whole, so what the next slot buys is a
- * different account — not a retry of the same one. A project may set one key or
- * all four; slots with no secret are skipped.
- */
-const KEY_SLOTS: KeySlot[] = ["primary", "fallback", "fallback2", "fallback3"];
-const KEY_ENV: Record<KeySlot, string> = {
-  primary: "GEMINI_API_KEY",
-  fallback: "GEMINI_API_KEY_FALLBACK",
-  fallback2: "GEMINI_API_KEY_FALLBACK2",
-  fallback3: "GEMINI_API_KEY_FALLBACK3",
-};
-
-function keyFor(slot: KeySlot): string | undefined {
-  const key = Deno.env.get(KEY_ENV[slot])?.trim();
-  return key ? key : undefined;
-}
-
-/** How many slots actually hold a key. 0 means the feature is not configured. */
-function configuredSlotCount(): number {
-  return KEY_SLOTS.filter((slot) => keyFor(slot) !== undefined).length;
-}
-
-/**
- * A slot name read back off a job row. Rows written before the chain grew hold
- * only 'primary' or 'fallback'; an unrecognised name reads as 'primary' rather
- * than throwing mid-poll. This checks the NAME only — whether that slot still
- * holds a key is a separate question, and handleStatus asks it before polling.
- */
-function asKeySlot(value: unknown): KeySlot {
-  return KEY_SLOTS.includes(value as KeySlot) ? (value as KeySlot) : "primary";
-}
-
-/** A Gemini error body, read once by gemini() so no caller re-reads the stream. */
-type GeminiError = { status: number; message: string; reason: string };
-
-/**
- * Pull the error out of a failed Gemini response.
- *
- * Two shapes in the wild: /models/* returns `{error:{…}}` while /interactions
- * wraps it in a ONE-ELEMENT ARRAY, `[{error:{…}}]`. Reading only the object
- * shape is why a failed background start used to report a bare
- * "Gemini error 400." with the actual reason — "API key not valid" — dropped.
- */
-async function readGeminiError(res: Response): Promise<GeminiError> {
-  let message = "";
-  let reason = "";
-  try {
-    const parsed = JSON.parse(await res.text());
-    const err = (Array.isArray(parsed) ? parsed[0]?.error : parsed?.error) ?? {};
-    message = typeof err?.message === "string" ? err.message : "";
-    const detail = (err?.details ?? []).find((d: Json) => d?.reason)?.reason;
-    reason = String(detail ?? err?.status ?? "");
-  } catch {
-    /* body missing, empty, or not JSON */
-  }
-  return { status: res.status, message, reason };
-}
-
-/**
- * Should the chain move to the next key? 403/429/5xx are the key's problem, so
- * a different account is worth trying. A 400 is normally OUR bad request and
- * repeating it on four keys is pointless — except API_KEY_INVALID, which is
- * what Google returns for a deleted or rotated key. That one is precisely what
- * the next slot exists for, and treating it as fatal would strand the chain on
- * a dead key.
- */
-function shouldTryNextKey(err: GeminiError): boolean {
-  if (RETRYABLE.has(err.status)) return true;
-  return (
-    err.status === 400 &&
-    (/API_KEY_INVALID/i.test(err.reason) || /api key not valid/i.test(err.message))
-  );
-}
-
-/**
- * Call Gemini with a key slot. When `allowFallback` is set, a failure the chain
- * can route around moves on to the next configured slot, starting from
- * `preferred`; otherwise only `preferred` is used. Returns the slot that
- * produced the response, `tried` — how many keys the chain burned getting there,
- * since a caller writing an error sentence needs to know whether one key or
- * every key said no — and, for a failure, the parsed error body.
- */
-async function gemini(
-  path: string,
-  init: { method?: string; body?: Json },
-  preferred: KeySlot,
-  allowFallback: boolean
-): Promise<{ res: Response; slot: KeySlot; tried: number; error?: GeminiError }> {
-  const order: KeySlot[] = allowFallback
-    ? [preferred, ...KEY_SLOTS.filter((slot) => slot !== preferred)]
-    : [preferred];
-  const chain = order
-    .map((slot) => ({ slot, key: keyFor(slot) }))
-    .filter((entry): entry is { slot: KeySlot; key: string } => entry.key !== undefined);
-  if (!chain.length) throw new Error("No Gemini key is configured on this project.");
-
-  let last!: { res: Response; slot: KeySlot; tried: number; error?: GeminiError };
-  for (let i = 0; i < chain.length; i++) {
-    const { slot, key } = chain[i];
-    const res = await fetch(`${GEMINI}${path}`, {
-      method: init.method ?? "GET",
-      headers: {
-        "x-goog-api-key": key,
-        "Content-Type": "application/json",
-        "Api-Revision": API_REVISION,
-      },
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    });
-    // A success hands the body back untouched — only a failure is read here,
-    // and then it is read exactly once, so no caller can hit a consumed stream.
-    if (res.ok) return { res, slot, tried: i + 1 };
-    const error = await readGeminiError(res);
-    last = { res, slot, tried: i + 1, error };
-    if (!shouldTryNextKey(error)) return last;
-    console.warn(
-      `[ai-pdf-import] Gemini ${res.status}${error.reason ? ` (${error.reason})` : ""} on the ` +
-        `${slot} key for ${path} (slot ${i + 1} of ${chain.length})`
-    );
-  }
-  return last;
-}
-
-/**
- * Turn a parsed Gemini error into one sentence a creator can act on. `tried` is
- * how many keys gave this same answer: with a chain of four, "wait a minute and
- * retry" is honest after one key and a lie after all of them.
- */
-function geminiErrorMessage(err: GeminiError, tried = 1): string {
-  const { status, message } = err;
-  if (status === 429) {
-    return tried > 1
-      ? `Gemini is over its quota on all ${tried} platform keys. Wait a few minutes and retry, or ask the MockSetu admin to add another key.`
-      : "Gemini is over its quota right now. Wait a minute and retry.";
-  }
-  if (status === 503) {
-    return tried > 1
-      ? `Gemini is busy on all ${tried} platform keys. Retry in a few minutes.`
-      : "Gemini is busy right now. Retry in a moment.";
-  }
-  if (status === 403) {
-    return tried > 1
-      ? `Gemini refused all ${tried} platform keys. Ask the MockSetu admin to check them.`
-      : "Gemini refused the platform key. Ask the MockSetu admin to check the key.";
-  }
-  if (shouldTryNextKey(err) && status === 400) {
-    return tried > 1
-      ? `Gemini rejected all ${tried} platform keys as invalid. Ask the MockSetu admin to re-set them.`
-      : "Gemini rejected the platform key as invalid. Ask the MockSetu admin to re-set it.";
-  }
-  if (status === 404) return "This Gemini model is not available to the platform key any more.";
-  return message ? `Gemini error ${status}: ${message}` : `Gemini error ${status}.`;
-}
-
-/** Text of the model's reply from an Interactions API object — model_output steps only. */
-function interactionText(interaction: Json): string {
-  const out: string[] = [];
-  if (typeof interaction?.output_text === "string") out.push(interaction.output_text);
-  for (const step of interaction?.steps ?? []) {
-    if (step?.type !== "model_output") continue;
-    for (const c of step?.content ?? []) if (c?.type === "text" && c.text) out.push(c.text);
-  }
-  return out.join("\n");
-}
-
-/** Text of a generateContent reply. */
-function generateContentText(reply: Json): string {
-  const parts = reply?.candidates?.[0]?.content?.parts ?? [];
-  return parts.map((p: Json) => p?.text).filter(Boolean).join("\n");
-}
-
-function isoNow(): string {
-  return new Date().toISOString();
-}
-
-// deno-lint-ignore no-explicit-any
-type Client = ReturnType<typeof createClient<any>>;
-
-async function updateJob(service: Client, id: string, patch: Record<string, Json>) {
-  const { error } = await service
-    .from("ai_import_jobs")
-    .update({ ...patch, updated_at: isoNow() })
-    .eq("id", id);
-  if (error) console.error("[ai-pdf-import] job update failed:", error.message);
-}
+const isoNow = () => new Date().toISOString();
 
 /** What the client sees. raw_output only rides along on a completed job. */
 function publicJob(job: Json, includeOutput: boolean) {
@@ -291,57 +186,127 @@ function publicJob(job: Json, includeOutput: boolean) {
     pdfName: job.pdf_name ?? null,
     pdfUrl: job.pdf_url ?? null,
     error: job.error ?? null,
+    // What actually ran, not what was asked for. A creator who picked the split
+    // on a database that cannot plan one gets a single pass, and the dialog has
+    // to be able to say so rather than show a progress story that is not true.
+    mode: job.orchestration ? "parallel" : "single",
+    // Why a single pass ran, when the split could not: the database error,
+    // verbatim, so "chunking is not working" comes with its own diagnosis.
+    splitBlockedBy: job.orchestration ? null : splitBlockedBy(),
+    // Where the split is right now, in words: "indexing the paper · attempt 1
+    // of 2 · key fallback3 · Gemini says in progress · 214s in". The creator
+    // watching a seven-minute step deserves to know which part of it is slow.
+    progress: job.orchestration && job.status === "running" ? progressLine(job.orchestration) : null,
     rawOutput: includeOutput && job.status === "completed" ? job.raw_output ?? null : undefined,
   };
 }
 
-// ─── Live engine: the Gemini call continues after the response is sent ───────
-async function runLiveJob(
-  service: Client,
-  jobId: string,
-  model: string,
-  prompt: string,
-  pdfBase64: string,
-  preferred: KeySlot
-) {
-  try {
-    const body: Json = {
-      contents: [{
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: "application/pdf", data: pdfBase64 } },
-        ],
-      }],
-      generationConfig: { temperature: 0, maxOutputTokens: 65536 },
-    };
-    const budget = Deno.env.get("AI_IMPORT_THINKING_BUDGET");
-    if (budget !== undefined && budget !== "" && Number.isFinite(Number(budget))) {
-      body.generationConfig.thinkingConfig = { thinkingBudget: Number(budget) };
-    }
-    const { res, slot, tried, error } = await gemini(`/models/${model}:generateContent`, { method: "POST", body }, preferred, true);
-    if (!res.ok) {
-      const failure = error ?? await readGeminiError(res);
-      await updateJob(service, jobId, { status: "failed", api_key_slot: slot, error: geminiErrorMessage(failure, tried), completed_at: isoNow() });
-      return;
-    }
-    const reply = await res.json();
-    const text = generateContentText(reply);
-    const finish = reply?.candidates?.[0]?.finishReason;
-    if (finish === "MAX_TOKENS") {
-      await updateJob(service, jobId, { status: "failed", api_key_slot: slot, error: "Gemini's reply was cut off — the paper is too long for one pass. Split the PDF, or import one language at a time.", completed_at: isoNow(), usage: reply?.usageMetadata ?? null });
-      return;
-    }
-    if (!hasDelimitedExtraction(text)) {
-      await updateJob(service, jobId, { status: "failed", api_key_slot: slot, error: "Gemini replied without the JSON block. Retry, or try the other model.", completed_at: isoNow(), usage: reply?.usageMetadata ?? null, raw_output: text.slice(0, 4000) });
-      return;
-    }
-    await updateJob(service, jobId, { status: "completed", api_key_slot: slot, raw_output: text, usage: reply?.usageMetadata ?? null, completed_at: isoNow(), error: null });
-  } catch (e) {
-    await updateJob(service, jobId, { status: "failed", error: `Gemini call failed: ${e instanceof Error ? e.message : String(e)}`, completed_at: isoNow() });
+// ─── Is the parallel path available on this database? ────────────────────────
+//
+// Migration 20260916000000 is pasted by hand, so "the columns are not there
+// yet" is a normal state, not an error. It is probed once per worker and the
+// answer is cached — a negative answer only briefly, because the whole point is
+// that the import gets faster the moment the SQL lands without anyone having to
+// redeploy the function.
+
+let parallelCache: { value: boolean; at: number; reason: string | null } | null = null;
+// A minute, not five: the fix for a broken database is a paste in the SQL
+// editor, and the creator retrying right after it should see the split, not
+// four more minutes of the slow path.
+const PARALLEL_RECHECK_MS = 60 * 1000;
+
+/**
+ * Why the split is not running, in a sentence the creator sees.
+ *
+ * For eleven days every import on this project ran the single pass because the
+ * two RPCs the split needs raised 22P02 on every call, and the only trace was a
+ * console.warn in function logs nobody opens. The reason now rides on every
+ * status reply and the dialog prints it next to "all in one go" — a degraded
+ * path that says WHY it degraded is a bug report; one that does not is a week.
+ */
+function splitBlockedBy(): string | null {
+  if (Deno.env.get("AI_IMPORT_PARALLEL") === "off") return "Split switched off by the admin (AI_IMPORT_PARALLEL=off).";
+  return parallelCache && !parallelCache.value ? parallelCache.reason : null;
+}
+
+async function parallelAvailable(service: Client): Promise<boolean> {
+  if (Deno.env.get("AI_IMPORT_PARALLEL") === "off") return false;
+  const now = Date.now();
+  if (parallelCache && (parallelCache.value || now - parallelCache.at < PARALLEL_RECHECK_MS)) {
+    return parallelCache.value;
   }
+  // Both halves of the migration are checked, because a database with the
+  // columns but not the functions is the worst of the three states: planning
+  // would start workers whose results nothing could record, and every job would
+  // sit there until its deadline. The RPC probe names a job id that cannot
+  // exist, so it matches no row and changes nothing — it only answers "does
+  // this function exist".
+  const probeJob = "00000000-0000-0000-0000-000000000000";
+  const [columns, recorder, marker] = await Promise.all([
+    service.from("ai_import_jobs").select("orchestration, shard_results").limit(1),
+    service.rpc("ai_import_record_shard", {
+      p_job: probeJob,
+      p_index: 0,
+      p_payload: null,
+      p_status: "done",
+      p_error: null,
+      p_attempt: 0,
+    }),
+    service.rpc("ai_import_mark_shard_running", {
+      p_job: probeJob,
+      p_index: 0,
+      p_interaction: "probe",
+      p_slot: "primary",
+      p_deadline: new Date().toISOString(),
+    }),
+  ]);
+  const missing = columns.error ?? recorder.error ?? marker.error;
+  const value = !missing;
+  let reason: string | null = null;
+  if (missing) {
+    const where = columns.error ? "the plan columns" : recorder.error ? "ai_import_record_shard" : "ai_import_mark_shard_running";
+    reason =
+      `Split unavailable — migration 20260916000000 is not applied or is broken on this project ` +
+      `(${where}: ${missing.message}). Re-paste it in the SQL editor; this is re-checked every minute.`;
+    console.warn(`[ai-pdf-import] running single-pass imports: ${reason}`);
+  }
+  parallelCache = { value, at: now, reason };
+  return value;
+}
+
+type PdfLoader = { bytes: () => Promise<Uint8Array>; base64: () => Promise<string> };
+
+/** Downloads the PDF at most once per invocation; base64 is derived from the same bytes on demand. */
+function pdfLoader(service: Client, storagePath: string, preloaded?: Uint8Array): PdfLoader {
+  let bytes: Uint8Array | null = preloaded ?? null;
+  let b64: string | null = null;
+  const load = async () => {
+    if (bytes) return bytes;
+    const { data: file, error } = await service.storage.from(BUCKET).download(storagePath);
+    if (error || !file) throw new Error("The uploaded PDF could not be read from storage.");
+    bytes = new Uint8Array(await file.arrayBuffer());
+    return bytes;
+  };
+  return {
+    bytes: load,
+    base64: async () => (b64 ??= encodeBase64(await load())),
+  };
+}
+
+function tickContext(service: Client, job: Json, loader: PdfLoader): TickContext {
+  return {
+    service,
+    job,
+    pdf: loader.base64,
+    pdfBytes: loader.bytes,
+    bucket: BUCKET,
+    engine: (MODELS[job.model]?.engine ?? job.engine ?? "live") as Engine,
+    model: job.model,
+  };
 }
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
+
 async function handleStart(service: Client, userId: string, body: Json): Promise<Response> {
   const examId = String(body?.examId ?? "");
   const language = String(body?.language ?? "").trim().toLowerCase();
@@ -349,6 +314,10 @@ async function handleStart(service: Client, userId: string, body: Json): Promise
   const storagePath = String(body?.storagePath ?? "");
   const pdfName = body?.pdfName ? String(body.pdfName).slice(0, 200) : null;
   const force = body?.force === true;
+  // How the creator asked for the paper to be read. Anything unrecognised means
+  // "no preference" and takes the default, rather than refusing the import over
+  // a spelling.
+  const requestedMode = body?.mode === "single" ? "single" : body?.mode === "parallel" ? "parallel" : "auto";
 
   if (!UUID_RE.test(examId)) return fail(400, "bad_request", "Missing exam.");
   if (language !== "en" && language !== "hi") return fail(400, "bad_request", "Language must be en or hi.");
@@ -377,11 +346,18 @@ async function handleStart(service: Client, userId: string, body: Json): Promise
     : ["en"];
   if (!supported.includes(language)) return fail(400, "bad_request", "This exam does not have that language.");
 
+  // Probed once here rather than just before the insert, because the reuse
+  // query below has to know whether `orchestration` is a column it may select.
+  const canParallel = await parallelAvailable(service);
+
   // One running job per exam+language, unless the caller explicitly restarts.
   if (!force) {
     const { data: active } = await service
       .from("ai_import_jobs")
-      .select("*")
+      .select(
+        "id,status,engine,model,language,created_at,completed_at,storage_path,pdf_name,pdf_url,error" +
+          (canParallel ? ",orchestration" : "")
+      )
       .eq("exam_id", examId)
       .eq("language", language)
       .in("status", ["queued", "running"])
@@ -414,13 +390,6 @@ async function handleStart(service: Client, userId: string, body: Json): Promise
     .map((s: Json) => String(s.name ?? "").trim())
     .filter(Boolean);
 
-  let prompt: string;
-  try {
-    prompt = fillExtractionPromptContext({ language, sectionNames });
-  } catch (e) {
-    return fail(500, "prompt_error", e instanceof Error ? e.message : String(e));
-  }
-
   const { data: file, error: dlErr } = await service.storage.from(BUCKET).download(storagePath);
   if (dlErr || !file) return fail(400, "pdf_missing", "The uploaded PDF could not be read. Upload it again.");
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -429,60 +398,80 @@ async function handleStart(service: Client, userId: string, body: Json): Promise
   const pdfBase64 = encodeBase64(bytes);
   const { data: pub } = service.storage.from(BUCKET).getPublicUrl(storagePath);
 
-  const { data: job, error: insErr } = await service
-    .from("ai_import_jobs")
-    .insert({
-      user_id: userId,
-      exam_id: examId,
-      language,
-      model,
-      engine: modelSpec.engine,
-      status: "queued",
-      storage_path: storagePath,
-      pdf_name: pdfName,
-      pdf_url: pub?.publicUrl ?? null,
-      section_names: sectionNames,
-      prompt_version: EXTRACTION_PROMPT_VERSION,
-    })
-    .select("*")
-    .single();
-  if (insErr || !job) return fail(500, "db_error", insErr?.message ?? "Could not record the job.");
+  // The split is used when the creator asked for it (or expressed no
+  // preference) AND the database can plan one. "single" is honoured absolutely:
+  // it is the escape hatch for a paper the split gets wrong, so it must never
+  // quietly become a parallel run.
+  const parallel = requestedMode !== "single" && canParallel;
+  const row: Json = {
+    user_id: userId,
+    exam_id: examId,
+    language,
+    model,
+    engine: modelSpec.engine,
+    status: "queued",
+    storage_path: storagePath,
+    pdf_name: pdfName,
+    pdf_url: pub?.publicUrl ?? null,
+    section_names: sectionNames,
+    prompt_version: EXTRACTION_PROMPT_VERSION,
+  };
+  const orchestration = parallel ? newOrchestration() : null;
+  if (orchestration) row.orchestration = orchestration;
 
-  if (modelSpec.engine === "background") {
-    const { res, slot, tried, error: geminiError } = await gemini(
-      "/interactions",
-      {
-        method: "POST",
-        body: {
-          model,
-          input: [
-            { type: "text", text: prompt },
-            { type: "document", mime_type: "application/pdf", data: pdfBase64 },
-          ],
-          background: true,
-          generation_config: { temperature: 0, max_output_tokens: 65536 },
-        },
-      },
-      "primary",
-      true
-    );
-    if (!res.ok) {
-      const message = geminiErrorMessage(geminiError ?? await readGeminiError(res), tried);
-      await updateJob(service, job.id, { status: "failed", api_key_slot: slot, error: message, completed_at: isoNow() });
-      return fail(502, "gemini_error", message);
+  let job: Json | null = null;
+  {
+    const { data, error } = await service.from("ai_import_jobs").insert(row).select(CONTROL_COLUMNS).single();
+    if (error && orchestration) {
+      // PostgREST can serve a stale column list for a while after a migration,
+      // so "that column does not exist" here is a cache answer, not a verdict.
+      // Drop the plan and run the single pass rather than refusing the import.
+      console.warn("[ai-pdf-import] insert with orchestration failed, falling back:", error.message);
+      parallelCache = {
+        value: false,
+        at: Date.now(),
+        reason: `Split unavailable — the database refused the job's plan column (${error.message}). Re-checked every minute.`,
+      };
+      delete row.orchestration;
+      const retry = await service.from("ai_import_jobs").insert(row).select("*").single();
+      if (retry.error || !retry.data) {
+        return fail(500, "db_error", retry.error?.message ?? "Could not record the job.");
+      }
+      job = retry.data;
+    } else if (error || !data) {
+      return fail(500, "db_error", error?.message ?? "Could not record the job.");
+    } else {
+      job = data;
     }
-    const created = await res.json();
-    if (!created?.id) {
-      await updateJob(service, job.id, { status: "failed", api_key_slot: slot, error: "Gemini did not return a job id.", completed_at: isoNow() });
-      return fail(502, "gemini_error", "Gemini did not return a job id.");
+  }
+
+  // ── The parallel path ──
+  if (job.orchestration) {
+    // Page mode: cut the PDF into page chunks so no call ever reads the whole
+    // paper (pdf.ts). Needs the page count, which pdf-lib reads here — about
+    // 0.7 s of CPU on a 2.4 MB paper. A PDF pdf-lib cannot read, or one too
+    // big to hold twice in memory, runs as one PDF the way it did before.
+    if (bytes.byteLength <= MAX_CUT_BYTES()) {
+      const pageCount = await pdfPageCount(bytes);
+      if (pageCount) {
+        job.orchestration.pageCount = pageCount;
+        job.orchestration.partsDir = `${userId}/${examId}/ai-import-parts/${job.id}`;
+      }
     }
-    await updateJob(service, job.id, { status: "running", interaction_id: created.id, api_key_slot: slot });
+    const ctx = tickContext(service, job, pdfLoader(service, storagePath, bytes));
+    await beginJob(ctx, job.orchestration, pdfBase64, true);
     return json({ ...publicJob({ ...job, status: "running" }, false), reused: false });
   }
 
-  // Live engine: answer now, keep working.
-  await updateJob(service, job.id, { status: "running" });
-  const work = runLiveJob(service, job.id, model, prompt, pdfBase64, "primary");
+  // ── The single pass ──
+  const prompt = buildWholePaperPrompt({ language, sectionNames });
+  if (modelSpec.engine === "background") {
+    const error = await startBackgroundJob(service, job.id, model, prompt, pdfBase64);
+    if (error) return fail(502, "gemini_error", error);
+    return json({ ...publicJob({ ...job, status: "running" }, false), reused: false });
+  }
+  await service.from("ai_import_jobs").update({ status: "running", updated_at: isoNow() }).eq("id", job.id);
+  const work = runLiveJob(service, job.id, model, prompt, pdfBase64, slotAt(nextJobOffset()));
   if (typeof EdgeRuntime !== "undefined" && EdgeRuntime && typeof EdgeRuntime.waitUntil === "function") {
     EdgeRuntime.waitUntil(work);
   } else {
@@ -492,104 +481,127 @@ async function handleStart(service: Client, userId: string, body: Json): Promise
   return json({ ...publicJob({ ...job, status: "running" }, false), reused: false });
 }
 
-async function loadOwnJob(service: Client, userId: string, body: Json): Promise<{ job?: Json; res?: Response }> {
+async function loadOwnJob(
+  service: Client,
+  userId: string,
+  body: Json,
+  columns: string
+): Promise<{ job?: Json; res?: Response }> {
   const jobId = String(body?.jobId ?? "");
   if (!UUID_RE.test(jobId)) return { res: fail(400, "bad_request", "Missing job.") };
-  const { data: job, error } = await service.from("ai_import_jobs").select("*").eq("id", jobId).maybeSingle();
+  const { data: job, error } = await service.from("ai_import_jobs").select(columns).eq("id", jobId).maybeSingle();
   if (error) return { res: fail(500, "db_error", error.message) };
   if (!job || job.user_id !== userId) return { res: fail(404, "not_found", "Import job not found.") };
   return { job };
 }
 
+/** A completed job's reply, fetched only when it is actually being sent. */
+async function withOutput(service: Client, job: Json, includeOutput: boolean): Promise<Json> {
+  if (!includeOutput || job.status !== "completed" || job.raw_output !== undefined) return job;
+  const { data } = await service.from("ai_import_jobs").select("raw_output").eq("id", job.id).maybeSingle();
+  return { ...job, raw_output: data?.raw_output ?? null };
+}
+
 async function handleStatus(service: Client, userId: string, body: Json): Promise<Response> {
-  const { job, res } = await loadOwnJob(service, userId, body);
-  if (res) return res;
+  const parallel = await parallelAvailable(service);
+  const columns = parallel ? CONTROL_COLUMNS : "*";
+  const loaded = await loadOwnJob(service, userId, body, columns);
+  if (loaded.res) return loaded.res;
+  let job = loaded.job!;
   const includeOutput = body?.includeOutput !== false;
 
   if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
-    return json(publicJob(job, includeOutput));
+    if (job.orchestration) await cleanupParts(service, BUCKET, job);
+    return json(publicJob(await withOutput(service, job, includeOutput), includeOutput));
   }
 
-  const ageMs = Date.now() - new Date(job.created_at).getTime();
+  // ── The parallel path: every poll is a scheduler tick ──
+  if (job.orchestration) {
+    job = await adoptPlanIfReady(service, job);
+    const ctx = tickContext(service, job, pdfLoader(service, job.storage_path));
+    const outcome = await tick(ctx);
+    if (outcome.changed) {
+      const { data: fresh } = await service
+        .from("ai_import_jobs")
+        .select(CONTROL_COLUMNS)
+        .eq("id", job.id)
+        .maybeSingle();
+      if (fresh) job = fresh;
+    }
+    // The chunk PDFs have done their job once the paper is merged or given up on.
+    if (outcome.finished && (job.status === "completed" || job.status === "failed")) {
+      await cleanupParts(service, BUCKET, job);
+    }
+    return json(publicJob(await withOutput(service, job, includeOutput), includeOutput));
+  }
 
-  if (job.engine === "live") {
-    if (ageMs > LIVE_STALE_MS) {
-      const error = "The server ran out of time before Gemini finished — the hosting plan caps each run. Retry with Gemini 3.5 Flash, which runs in the background.";
-      await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow() });
-      return json(publicJob({ ...job, status: "failed", error }, false));
-    }
-    return json(publicJob(job, false));
-  }
-
-  // background
-  if (!job.interaction_id) return json(publicJob(job, false));
-  if (ageMs > BACKGROUND_STALE_MS) {
-    const error = "Gemini did not finish within 45 minutes. Retry the import.";
-    await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow() });
-    return json(publicJob({ ...job, status: "failed", error }, false));
-  }
-  // Polling is pinned to the slot that created the interaction — Gemini will
-  // not show it to any other key — so a slot whose secret has since been
-  // removed cannot be polled at all. Say that, instead of a bare 500 from the
-  // empty chain or a confusing 404 from guessing another key.
-  const slot = asKeySlot(job.api_key_slot);
-  if (!keyFor(slot)) {
-    const error = "The Gemini key that started this import is no longer configured. Start the import again.";
-    await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow() });
-    return json(publicJob({ ...job, status: "failed", error }, false));
-  }
-  const { res: gres } = await gemini(`/interactions/${job.interaction_id}`, {}, slot, false);
-  if (!gres.ok) {
-    // A transient poll failure is not a failed job; only 404 means it is gone.
-    if (gres.status === 404) {
-      const error = "Gemini lost this job. Retry the import.";
-      await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow() });
-      return json(publicJob({ ...job, status: "failed", error }, false));
-    }
-    return json(publicJob(job, false));
-  }
-  const interaction = await gres.json();
-  const st = String(interaction?.status ?? "");
-  if (st === "in_progress" || st === "queued" || st === "requires_action") {
-    return json(publicJob(job, false));
-  }
-  if (st === "completed") {
-    const text = interactionText(interaction);
-    if (!hasDelimitedExtraction(text)) {
-      const error = "Gemini replied without the JSON block. Retry, or try the other model.";
-      await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow(), usage: interaction?.usage ?? null, raw_output: text.slice(0, 4000) });
-      return json(publicJob({ ...job, status: "failed", error }, false));
-    }
-    const completed_at = isoNow();
-    await updateJob(service, job.id, { status: "completed", raw_output: text, usage: interaction?.usage ?? null, completed_at, error: null });
-    return json(publicJob({ ...job, status: "completed", raw_output: text, completed_at }, includeOutput));
-  }
-  const error =
-    st === "incomplete" || st === "budget_exceeded"
-      ? "Gemini's reply was cut off — the paper is too long for one pass. Split the PDF, or import one language at a time."
-      : `Gemini stopped with status "${st || "unknown"}". Retry the import.`;
-  await updateJob(service, job.id, { status: "failed", error, completed_at: isoNow(), usage: interaction?.usage ?? null });
-  return json(publicJob({ ...job, status: "failed", error }, false));
+  // ── The single pass ──
+  const patch = await pollJob(service, job);
+  if (patch) job = { ...job, ...patch };
+  return json(publicJob(job, includeOutput));
 }
 
 async function handleCancel(service: Client, userId: string, body: Json): Promise<Response> {
-  const { job, res } = await loadOwnJob(service, userId, body);
+  const parallel = await parallelAvailable(service);
+  const { job, res } = await loadOwnJob(service, userId, body, "id,user_id,status" + (parallel ? ",orchestration" : ""));
   if (res) return res;
+  if (job.orchestration) await cleanupParts(service, BUCKET, job);
   if (job.status === "queued" || job.status === "running") {
     // We do not ask Gemini to stop — a background interaction cannot be
     // reliably cancelled and a live one is already in flight. Marking the row
-    // is what matters: it frees the exam+language slot for a fresh start.
-    await updateJob(service, job.id, { status: "cancelled", error: "Cancelled by the creator.", completed_at: isoNow() });
+    // is what matters: it frees the exam+language slot for a fresh start, and
+    // the scheduler only ever advances a job whose status is still running.
+    await service
+      .from("ai_import_jobs")
+      .update({
+        status: "cancelled",
+        error: "Cancelled by the creator.",
+        completed_at: isoNow(),
+        updated_at: isoNow(),
+      })
+      .eq("id", job.id);
   }
-  return json({ jobId: job.id, status: job.status === "queued" || job.status === "running" ? "cancelled" : job.status });
+  return json({
+    jobId: job.id,
+    status: job.status === "queued" || job.status === "running" ? "cancelled" : job.status,
+  });
+}
+
+/**
+ * What is live, in one call: the build, whether the split can run on this
+ * database, which models are offered, and the state of the key chain. Behind
+ * the same gate as every other action, because "why is my import slow" is
+ * usually answered in here and a granted creator is who asks it.
+ */
+async function handleHealth(service: Client): Promise<Response> {
+  const parallel = await parallelAvailable(service);
+  return json({
+    version: FUNCTION_VERSION,
+    parallel,
+    parallelReason: parallel ? null : splitBlockedBy(),
+    models: Object.keys(MODELS),
+    modelChain: modelChain(),
+    modelHealth: modelHealth(),
+    keys: keyHealth(),
+    pollShape: currentGetVariant(),
+  });
 }
 
 async function handleAck(service: Client, userId: string, body: Json): Promise<Response> {
-  const { job, res } = await loadOwnJob(service, userId, body);
+  const parallel = await parallelAvailable(service);
+  const { job, res } = await loadOwnJob(service, userId, body, "id,user_id" + (parallel ? ",orchestration" : ""));
   if (res) return res;
-  // The result has been imported: remember that, and drop the 100–500 KB
-  // reply — the questions now live in parsed_questions.
-  await updateJob(service, job.id, { imported_at: isoNow(), raw_output: null });
+  if (job.orchestration) await cleanupParts(service, BUCKET, job);
+  // The result has been imported: remember that, and drop the reply along with
+  // the parts it was merged from — together they are the better part of a
+  // megabyte, and the questions now live in parsed_questions.
+  const patch: Json = { imported_at: isoNow(), raw_output: null, updated_at: isoNow() };
+  if (await parallelAvailable(service)) patch.shard_results = null;
+  const { error } = await service.from("ai_import_jobs").update(patch).eq("id", job.id);
+  if (error) {
+    delete patch.shard_results;
+    await service.from("ai_import_jobs").update(patch).eq("id", job.id);
+  }
   return json({ jobId: job.id, ok: true });
 }
 
@@ -647,6 +659,8 @@ Deno.serve(async (req: Request) => {
         return await handleCancel(service, user.id, body);
       case "ack":
         return await handleAck(service, user.id, body);
+      case "health":
+        return await handleHealth(service);
       default:
         return fail(400, "bad_request", "Unknown action.");
     }

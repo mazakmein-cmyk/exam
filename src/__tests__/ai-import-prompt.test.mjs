@@ -25,7 +25,7 @@
  *       - a blank correct_answer must never reach the parser as index 0.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -73,10 +73,20 @@ test("the guide page imports the shared prompt and has no local copy", () => {
   assert(guide.includes("<CopyBlock text={EXTRACTION_PROMPT}"), "guide no longer shows the prompt");
 });
 test("the edge function imports the shared prompt and has no local copy", () => {
-  const fn = read("supabase/functions/ai-pdf-import/index.ts");
+  // Every module of the function, not just index.ts: parallel extraction moved
+  // the prompt building into prompts.ts, and the invariant is about the
+  // FUNCTION carrying no copy of the prompt — not about which file fills it.
+  const dir = resolve(ROOT, "supabase/functions/ai-pdf-import");
+  const files = readdirSync(dir).filter((f) => f.endsWith(".ts")).sort();
+  const fn = files.map((f) => read(`supabase/functions/ai-pdf-import/${f}`)).join("\n\n");
   assert(fn.includes('from "../../../src/lib/extractionPrompt.js"'), "edge function does not import the shared module");
   assert(fn.includes("fillExtractionPromptContext("), "edge function does not fill the context block");
   assert(!fn.includes("You are converting an exam paper"), "edge function carries its own prompt text");
+  // The parallel path appends a scope to the shared prompt; it must APPEND,
+  // never edit, or the in-app flow and the manual flow drift apart.
+  assert(fn.includes("ADDENDUM — THIS RUN IS ONE SLICE OF A PARALLEL IMPORT"),
+    "the shard scope block is gone");
+  assert(fn.includes("${base}"), "the shard prompt must start from the shared prompt verbatim");
 });
 
 console.log("\n2. The context block is filled");
