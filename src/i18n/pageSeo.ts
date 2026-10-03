@@ -101,14 +101,34 @@ export const CREATOR_SEO_BY_LANG: Record<
     breadcrumbSelf: "For Educators & Creators",
   },
   hi: {
-    // Hindi-first and query-first for the same reason as the English twin: this
-    // is what a Devanagari SERP shows, so "ऑनलाइन टेस्ट मेकर" and "फ्री" sit at
-    // the front where they get read and clicked.
-    title: "फ्री ऑनलाइन टेस्ट मेकर — कोचिंग और शिक्षकों के लिए | MockSetu",
+    // Hindi-first and query-first for the same reason as the English twin.
+    //
+    // Two deliberate choices a tidy-up pass would get wrong:
+    //
+    // 1. "मॉक टेस्ट" is in the title even though "ऑनलाइन टेस्ट मेकर" already
+    //    reads as the head term. It is not redundant — "टेस्ट मेकर" in
+    //    Devanagari is the English phrase transliterated, and the people who
+    //    know that phrase mostly type it in ROMAN. The readers who search in
+    //    Devanagari type "मॉक टेस्ट" and "ऑनलाइन टेस्ट कैसे बनाएं", so the
+    //    title has to carry both registers or it wins only one of them.
+    //
+    // 2. "फ्री" is spelled without the nukta, against the rest of this file's
+    //    (correct) nukta discipline — फ़ोन, सिर्फ़, इंटरफ़ेस. "फ़्री" is the
+    //    stricter transliteration and "फ्री" is what people actually type into
+    //    the search box. The query spelling wins here; do not "fix" it.
+    //
+    // Length is fine despite the character count: Devanagari stacks matras onto
+    // base consonants, so 61 codepoints render roughly as 43 clusters — this
+    // title is NARROWER on screen than the English one.
+    title: "फ्री ऑनलाइन टेस्ट मेकर — कोचिंग के लिए मॉक टेस्ट | MockSetu",
     description:
-      "PDF प्रश्न पत्र को टाइम्ड ऑनलाइन मॉक टेस्ट बनाइए — नेगेटिव मार्किंग, सेक्शन-वार समय, हिंदी-अंग्रेज़ी, लाइव क्लास एग्ज़ाम, एनालिटिक्स। फ्री।",
+      "PDF प्रश्न पत्र से टाइम्ड ऑनलाइन मॉक टेस्ट बनाइए — नेगेटिव मार्किंग, सेक्शन-वार समय, हिंदी-अंग्रेज़ी, लाइव क्लास एग्ज़ाम, एनालिटिक्स। कोचिंग के लिए फ्री।",
     keywords:
-      "ऑनलाइन टेस्ट मेकर, फ्री ऑनलाइन टेस्ट मेकर, ऑनलाइन टेस्ट कैसे बनाएं, टेस्ट सीरीज़ सॉफ्टवेयर, मॉक टेस्ट प्लेटफॉर्म, कोचिंग के लिए ऑनलाइन टेस्ट, पीडीएफ से ऑनलाइन टेस्ट, टेस्ट सीरीज़ कैसे बनाएं, ऑनलाइन परीक्षा सॉफ्टवेयर, शिक्षकों के लिए मॉक टेस्ट, लाइव एग्ज़ाम प्लेटफॉर्म, कोचिंग संस्थान सॉफ्टवेयर, online test kaise banaye, mock test kaise banaye, test series kaise banaye, mock test platform hindi",
+      // The Roman-script entries are not filler. A large share of this audience
+      // types Hindi queries in Roman, and "online test kaise banaye" is a real
+      // high-volume query in a way that a hybrid like "mock test platform hindi"
+      // (which nobody types) is not.
+      "ऑनलाइन टेस्ट मेकर, फ्री ऑनलाइन टेस्ट मेकर, ऑनलाइन टेस्ट कैसे बनाएं, टेस्ट सीरीज़ सॉफ्टवेयर, मॉक टेस्ट प्लेटफॉर्म, कोचिंग के लिए ऑनलाइन टेस्ट, पीडीएफ से ऑनलाइन टेस्ट, टेस्ट सीरीज़ कैसे बनाएं, ऑनलाइन परीक्षा सॉफ्टवेयर, शिक्षकों के लिए मॉक टेस्ट, लाइव एग्ज़ाम प्लेटफॉर्म, कोचिंग संस्थान सॉफ्टवेयर, online test kaise banaye, mock test kaise banaye, test series kaise banaye, online test banane wala app, coaching ke liye online test, free mock test website, paper ko online test kaise banaye",
     lang: "hi-IN",
     breadcrumbHome: "होम",
     breadcrumbSelf: "शिक्षकों और क्रिएटर के लिए",
