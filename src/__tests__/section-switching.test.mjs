@@ -781,11 +781,21 @@ test("nobody starts an exam without accepting the declaration", () => {
   const src = readSrc("pages/ExamIntro.tsx");
   assertContains(src, "const [accepted, setAccepted] = useState(false);", "never pre-ticked");
   assertContains(src, "id=\"exam-declaration\"");
-  // The gate itself: Start is disabled on !canStart, and canStart requires it.
+  // The gate itself: Start refuses inside the handler, so the button can be
+  // pressed and answer for itself instead of sitting dead and silent.
   assertContains(src, "const canStart = blockedReason === null;");
   assertContains(src, ": !accepted");
-  assertContains(src, "disabled={!canStart}");
-  assertContains(src, "Tick the declaration to continue.", "a disabled button has to say why");
+  assertContains(src, "if (blockedReason) {", "Start returns early rather than navigating");
+  assertContains(src, "setStartError(blockedReason);");
+  assertContains(src, "aria-disabled={!canStart}");
+  assert(
+    !/(?<!aria-)disabled={!canStart}/.test(src),
+    "Start stays clickable so the refusal can be explained on click"
+  );
+  assertContains(src, "Tick the declaration below to continue.", "and the refusal says where to look");
+  assertContains(src, "declarationRef.current?.scrollIntoView", "the declaration is brought into view");
+  // The reason only shows after a press, and never outlives the blocker.
+  assertContains(src, "startError !== null && blockedReason !== null ? blockedReason : null");
 });
 
 test("the intro is two screens with the step buttons locked to the foot", () => {

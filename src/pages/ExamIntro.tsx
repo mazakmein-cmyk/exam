@@ -229,6 +229,15 @@ const ExamIntro = () => {
      * than warning after the fact, because after the fact the clock is running.
      */
     const [accepted, setAccepted] = useState(false);
+    /**
+     * Why Start just refused. Empty until the candidate actually presses it:
+     * a standing "you can't start yet" caption next to a dead button is noise
+     * on arrival, when nobody has asked to start anything. Pressing is the
+     * question; this is the answer, and it clears the moment it stops being
+     * true.
+     */
+    const [startError, setStartError] = useState<string | null>(null);
+    const declarationRef = useRef<HTMLDivElement | null>(null);
 
     // Screen 2 starts at its own first line — see the same reset in the runner.
     useEffect(() => {
@@ -505,6 +514,17 @@ const ExamIntro = () => {
     };
 
     const handleStartExam = () => {
+        // Start is pressable even when it can't run yet — a button that does
+        // nothing and says nothing is indistinguishable from a broken one. The
+        // reason appears here, and the declaration is scrolled back into view
+        // so "below" is a place the candidate can actually see.
+        if (blockedReason) {
+            setStartError(blockedReason);
+            declarationRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+        }
+        setStartError(null);
+
         const lang = selectedLanguage || "en";
 
         // Find the first section matching the selected language
@@ -741,9 +761,14 @@ const ExamIntro = () => {
             : isMultiLang && !selectedLanguage
                 ? "Choose a language to continue."
                 : !accepted
-                    ? "Tick the declaration to continue."
+                    ? "Tick the declaration below to continue."
                     : null;
     const canStart = blockedReason === null;
+    // Derived, not stored: the moment the blocker clears — or changes to a
+    // different one — the message follows without a second render pass to
+    // clean it up. (Hooks can't live this far down the body; there are early
+    // returns above.)
+    const shownStartError = startError !== null && blockedReason !== null ? blockedReason : null;
 
     return (
         // exam-frame, the same viewport-height frame the runner uses: the card
@@ -1158,10 +1183,13 @@ const ExamIntro = () => {
                         {/* Declaration — the last thing on the last screen, and
                             the gate on Start. */}
                         <div
+                            ref={declarationRef}
                             className={`lg:col-span-2 rounded-xl border p-4 transition-colors ${
                                 accepted
                                     ? "border-[#6C3EF4]/30 bg-[#6C3EF4]/[0.05]"
-                                    : "border-border/60 bg-muted/30"
+                                    : shownStartError && !accepted
+                                        ? "border-destructive/60 bg-destructive/[0.05]"
+                                        : "border-border/60 bg-muted/30"
                             }`}
                         >
                             <label htmlFor="exam-declaration" className="flex items-start gap-3 cursor-pointer">
@@ -1218,15 +1246,15 @@ const ExamIntro = () => {
                                     Back
                                 </Button>
                                 <div className="flex min-w-0 items-center justify-end gap-3">
-                                    {blockedReason && (
-                                        <p className="hidden sm:block text-xs text-muted-foreground">
-                                            {blockedReason}
+                                    {shownStartError && (
+                                        <p role="alert" className="min-w-0 text-xs font-medium text-destructive">
+                                            {shownStartError}
                                         </p>
                                     )}
                                     <button
                                         onClick={handleStartExam}
-                                        disabled={!canStart}
-                                        className="shrink-0 h-11 px-6 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-base shadow-lg shadow-[#6C3EF4]/30 hover:shadow-xl hover:shadow-[#6C3EF4]/40 hover:-translate-y-[1px] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
+                                        aria-disabled={!canStart}
+                                        className={`shrink-0 h-11 px-6 rounded-xl bg-[#6C3EF4] hover:bg-[#5B2FE3] text-white font-semibold text-base shadow-lg shadow-[#6C3EF4]/30 hover:shadow-xl hover:shadow-[#6C3EF4]/40 hover:-translate-y-[1px] transition-all duration-200 flex items-center justify-center gap-2 ${canStart ? "" : "opacity-60"}`}
                                     >
                                         {isPreview ? <Eye className="h-5 w-5" /> : <BookOpen className="h-5 w-5" />}
                                         {isPreview ? "Start as a student" : "Start Exam"}
