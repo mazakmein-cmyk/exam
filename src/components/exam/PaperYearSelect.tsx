@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { paperYearOptions } from "@/lib/paperType.js";
+import { paperYearOptionsFor } from "@/lib/paperType.js";
+import { usePaperYearMax } from "@/hooks/use-paper-year-max";
 
 type Props = {
   /** The chosen year as a string, or "" for nothing chosen yet. */
@@ -24,16 +25,24 @@ type Props = {
  * fall back to — clearing the year is done by changing the paper type, which
  * is the only thing that actually makes a paper yearless.
  *
- * The list runs newest-first from this year down to 1990. That is ~37 rows, so
- * it scrolls (SelectContent is capped at max-h-96 and grows its own scroll
- * buttons) — but the handful of years anyone actually picks are the first ones
- * under the cursor, and typing a digit jumps the list the way a native select
- * does.
+ * The list runs newest-first from the admin's ceiling down to 1990. That is
+ * ~37 rows, so it scrolls (SelectContent is capped at max-h-96 and grows its
+ * own scroll buttons) — but the handful of years anyone actually picks are the
+ * first ones under the cursor, and typing a digit jumps the list the way a
+ * native select does.
+ *
+ * The ceiling is normally this year. An admin can push it forward (Admin ›
+ * Config › Paper Years) because Indian exam cycles are named for the year
+ * ahead — "JEE Main 2027" is written all through 2026.
  */
 export default function PaperYearSelect({ value, onChange, className, disabled, id }: Props) {
-  // The range only changes at midnight on New Year's Eve; computing it per
-  // render would re-create 37 objects on every keystroke elsewhere in the form.
-  const years = useMemo(() => paperYearOptions(), []);
+  const maxYear = usePaperYearMax();
+  // Recomputed only when the ceiling or the chosen value moves, not on every
+  // keystroke elsewhere in the form — this builds ~37 entries.
+  // `value` is passed in so a year outside the current ceiling (an admin
+  // lowered it after this paper was dated) stays in the list instead of
+  // vanishing and leaving the trigger blank.
+  const years = useMemo(() => paperYearOptionsFor(maxYear, value), [maxYear, value]);
 
   // `value` is passed straight through, "" included: Radix shows the
   // placeholder for an empty string exactly as it does for undefined, and

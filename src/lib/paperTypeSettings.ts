@@ -18,11 +18,19 @@
 import { supabase } from "@/integrations/supabase/client";
 import { tableHasColumn } from "@/lib/dbFeatures";
 import {
+  APP_SETTINGS_MIGRATION,
+  PAPER_YEAR_MAX_KEY,
+  invalidateAppSetting,
+  readAppSetting,
+} from "@/lib/appSettings";
+import {
   DEFAULT_PAPER_TYPE,
   PAPER_TYPE_COLUMN,
   PAPER_YEAR_COLUMN,
+  currentPaperYear,
   effectivePaperYear,
   normalizePaperType,
+  normalizePaperYear,
   readPaperType,
   readPaperYear,
   requiresPaperYear,
@@ -38,6 +46,8 @@ export const PAPER_TYPE_MIGRATION = "20260825000000_add_exam_paper_type.sql";
  * must keep working while the year field simply does not appear.
  */
 export const PAPER_YEAR_MIGRATION = "20260917000000_add_exam_paper_year.sql";
+/** The ceiling setting and its RPC arrive together, in a third migration. */
+export const PAPER_YEAR_MAX_MIGRATION = APP_SETTINGS_MIGRATION;
 
 export type PaperType = "mock" | "pyq";
 
@@ -203,3 +213,51 @@ export async function savePaperType(
 }
 
 export { DEFAULT_PAPER_TYPE };
+
+/* ────────────────────────────────────────────────────────────────────────
+ * The ceiling: how far into the future a paper may be dated.
+ *
+ * Not a column on exams — one global, admin-owned row in app_settings. It
+ * exists because Indian exam cycles are named for the year ahead ("JEE Main
+ * 2027" is written throughout 2026), so the picker occasionally has to offer a
+ * year the calendar has not reached, and how many is a judgement call rather
+ * than a constant.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The newest year creators may pick. Falls back to the CURRENT year on every
+ * failure path — no migration, no row, bad value, network drop — which is
+ * exactly how the picker behaved before this setting existed.
+ */
+export async function fetchPaperYearMax(): Promise<number> {
+  const stored = await readAppSetting<number | string>(PAPER_YEAR_MAX_KEY);
+  // Read through normalizePaperYear, not Number(): the value is jsonb and a
+  // hand-edited row could hold anything at all.
+  return normalizePaperYear(stored) ?? currentPaperYear();
+}
+
+/**
+ * Move the ceiling. Admin only — the RPC re-checks that, so this is not a
+ * permission check, just the call.
+ *
+ * Invalidates the memo on success so the admin who just changed it sees the new
+ * range immediately rather than after a reload.
+ */
+export async function savePaperYearMax(year: number): Promise<PaperTypeSaveResult> {
+  const { error } = await (supabase.rpc as any)("admin_set_paper_year_max", {
+    next_year: year,
+  });
+  if (error) {
+    // The table and the RPC arrive in the same hand-pasted migration, so
+    // "function does not exist" is the expected pre-migration failure and
+    // deserves to name the file rather than leak Postgres wording.
+    const missing = /does not exist|schema cache|PGRST202|PGRST205/i.test(error.message ?? "");
+    return {
+      ok: false,
+      reason: missing ? "missing-migration" : "error",
+      message: missing ? `Apply ${PAPER_YEAR_MAX_MIGRATION} first` : error.message,
+    };
+  }
+  invalidateAppSetting(PAPER_YEAR_MAX_KEY);
+  return { ok: true };
+}

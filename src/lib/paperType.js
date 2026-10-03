@@ -278,3 +278,44 @@ export function paperYearPickerValue(year) {
 export function storedPaperYearValue(paperType, year) {
   return paperYearPickerValue(effectivePaperYear(paperType, year));
 }
+
+/**
+ * The years to OFFER, given an admin-set ceiling and whatever the field is
+ * already showing.
+ *
+ * Two rules, and the second is the one that is easy to forget:
+ *
+ *  1. The list runs from `max` (the admin's ceiling, defaulting to this year)
+ *     down to 1990.
+ *  2. The CURRENT VALUE is always in the list, even when it sits outside that
+ *     range. An admin who walks the ceiling back from 2030 to 2026 must not
+ *     turn every paper dated 2028 into a picker showing a blank — Radix renders
+ *     the placeholder when the value matches no item, which would read as "no
+ *     year chosen" on a paper that plainly has one, and force a creator editing
+ *     an unrelated question to re-pick it.
+ *
+ * Returns numbers, newest first, never empty.
+ */
+export function paperYearOptionsFor(max, selected) {
+  const ceiling = normalizePaperYear(max) ?? currentPaperYear();
+  const years = paperYearOptions(ceiling);
+  const current = normalizePaperYear(selected);
+  if (current !== null && !years.includes(current)) {
+    years.push(current);
+    years.sort((a, b) => b - a);
+  }
+  return years;
+}
+
+/**
+ * Coerce an admin-supplied ceiling. Must be a year the column can hold AND not
+ * earlier than this one — a ceiling in the past would stop creators dating a
+ * paper that has already been sat, which is the field's entire purpose. The
+ * RPC enforces the same floor server-side; this is so the console can say no
+ * without a round trip.
+ */
+export function normalizePaperYearMax(value, now = currentPaperYear()) {
+  const year = normalizePaperYear(value);
+  if (year === null) return null;
+  return year >= now ? year : null;
+}

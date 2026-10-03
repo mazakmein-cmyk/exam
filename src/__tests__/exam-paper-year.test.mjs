@@ -36,7 +36,9 @@ import {
   effectivePaperYear,
   matchesPaperYearFilter,
   normalizePaperYear,
+  normalizePaperYearMax,
   paperYearOptions,
+  paperYearOptionsFor,
   paperYearPickerValue,
   paperYearSelectOptions,
   parsePaperYearParam,
@@ -48,6 +50,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
 /** CRLF on a Windows checkout — normalise so multi-line needles below match. */
+const CRLF = new RegExp(String.fromCharCode(13) + String.fromCharCode(10), "g");
+const NL = String.fromCharCode(10);
 const readSrc = (p) => readFileSync(resolve(ROOT, "src", p), "utf8").replace(/\r\n/g, "\n");
 
 let passed = 0;
@@ -89,6 +93,12 @@ const LIBRARY = readSrc("pages/Marketplace.tsx");
 const SETTINGS = readSrc("lib/paperTypeSettings.ts");
 const ACCESS_HOOK = readSrc("hooks/use-paper-type-access.ts");
 const PICKER = readSrc("components/exam/PaperYearSelect.tsx");
+const ADMIN = readSrc("pages/AdminDashboard.tsx");
+const APP_SETTINGS = readSrc("lib/appSettings.ts");
+const CEILING_MIGRATION = readFileSync(
+  resolve(ROOT, "supabase/migrations/20260918000000_app_settings_paper_year_max.sql"),
+  "utf8"
+).replace(CRLF, NL);
 const MIGRATION = readFileSync(
   resolve(ROOT, "supabase/migrations/20260917000000_add_exam_paper_year.sql"),
   "utf8"
@@ -477,6 +487,134 @@ test("the migration adds no index for a filter that runs in the browser", () => 
   assert(
     !/CREATE INDEX/i.test(MIGRATION),
     "the library filters client-side over the list it already fetched — an index here is paid for by every write and read by nothing"
+  );
+});
+
+// ─── 7. The admin-set ceiling ───────────────────────────────────────────────
+console.log("");
+console.log("7. how far ahead a paper may be dated is an admin setting");
+
+test("the ceiling defaults to this year, so an unset database behaves as before", () => {
+  assertEqual(paperYearOptionsFor(null, null)[0], currentPaperYear());
+  assertEqual(paperYearOptionsFor(undefined, null)[0], currentPaperYear());
+  // Junk in the jsonb column must not shrink or explode the list either.
+  assertEqual(paperYearOptionsFor("banana", null)[0], currentPaperYear());
+  assertEqual(paperYearOptionsFor(1200, null)[0], currentPaperYear());
+});
+
+test("an admin ceiling opens up the years ahead", () => {
+  const years = paperYearOptionsFor(2028, null);
+  assertEqual(years[0], 2028, "the ceiling is the first row under the cursor");
+  assertEqual(years[1], 2027);
+  assertEqual(years[years.length - 1], PAPER_YEAR_MIN, "1990 is still the floor");
+});
+
+test("a value above the ceiling is STILL offered, so lowering it blanks nothing", () => {
+  // An admin walks the ceiling back from 2030 to this year. Every paper
+  // already dated 2029 must keep showing 2029 in its picker: Radix renders the
+  // placeholder when the value matches no item, which would read as "no year
+  // chosen" on a paper that plainly has one — and the save now REFUSES a PYQ
+  // with no year, so an unrelated edit would be blocked by a blank it did not
+  // cause.
+  const years = paperYearOptionsFor(currentPaperYear(), 2029);
+  assert(years.includes(2029), "the value on screen must always be in the list");
+  assertEqual(years[0], 2029, "and it sorts into place, newest first");
+  // Without a value out of range, nothing is added.
+  assert(!paperYearOptionsFor(currentPaperYear(), null).includes(2029));
+});
+
+test("the picker passes its own value in, which is what makes that work", () => {
+  assertContains(
+    PICKER,
+    "paperYearOptionsFor(maxYear, value)",
+    "building the list from the ceiling alone would drop the value on screen"
+  );
+  assertContains(PICKER, "const maxYear = usePaperYearMax();");
+});
+
+test("a ceiling in the past is refused — this year must always be datable", () => {
+  assertEqual(normalizePaperYearMax(2030, 2026), 2030);
+  assertEqual(normalizePaperYearMax(2026, 2026), 2026, "equal to this year is fine");
+  assertEqual(normalizePaperYearMax(2025, 2026), null);
+  assertEqual(normalizePaperYearMax(2101, 2026), null, "the column stops at 2100");
+  assertEqual(normalizePaperYearMax("banana", 2026), null);
+});
+
+test("the RPC enforces the same floor server-side, not just the console", () => {
+  assertContains(CEILING_MIGRATION, "IF next_year < this_year THEN");
+  assertContains(CEILING_MIGRATION, "IF next_year > 2100 THEN");
+  assertContains(
+    CEILING_MIGRATION,
+    "RAISE EXCEPTION 'Access Denied: Admin privileges required.'",
+    "a settings RPC anyone could call is not a setting"
+  );
+  // now() is legal in a function body but not in a CHECK constraint, which is
+  // exactly why the column's own bound had to settle for a flat 2100.
+  assertContains(CEILING_MIGRATION, "extract(year from now())::integer");
+});
+
+test("the settings table is readable by all and writable by none", () => {
+  assertContains(CEILING_MIGRATION, "ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;");
+  assertContains(CEILING_MIGRATION, "FOR SELECT");
+  assertContains(
+    CEILING_MIGRATION,
+    "REVOKE INSERT, UPDATE, DELETE ON public.app_settings FROM anon, authenticated;",
+    "every write has to go through the admin RPC"
+  );
+  assert(
+    !/CREATE POLICY[^;]*FOR (INSERT|UPDATE|DELETE|ALL)/i.test(CEILING_MIGRATION),
+    "a write policy would let a signed-in user move the ceiling"
+  );
+});
+
+test("no seed row — absent means this year, so there is no half-configured state", () => {
+  assert(
+    !/INSERT INTO public\.app_settings[^;]*paper_year_max[^;]*;(?![^$]*ON CONFLICT)/i.test(
+      CEILING_MIGRATION.split("CREATE OR REPLACE FUNCTION")[0]
+    ),
+    "seeding a ceiling would start drifting the moment the calendar moved"
+  );
+  assertContains(APP_SETTINGS, "return null;", "a missing row, table or network is just 'not set'");
+  assertContains(
+    readSrc("lib/paperTypeSettings.ts"),
+    "return normalizePaperYear(stored) ?? currentPaperYear();",
+    "and 'not set' resolves to this year at the one place that reads it"
+  );
+});
+
+test("a failed read is not cached, so a blip does not pin the default all session", () => {
+  // Same contract as dbFeatures.tableHasColumn: memoise the answer, evict the
+  // failure.
+  // Both failure branches of the READ (a PostgREST error, and a thrown
+  // exception) must evict; invalidateAppSetting's own delete is not one of them.
+  const readBody = APP_SETTINGS.split("export function readAppSetting")[1].split(
+    "export function invalidateAppSetting"
+  )[0];
+  assertEqual((readBody.match(/cache\.delete\(key\);/g) || []).length, 2);
+  assertContains(APP_SETTINGS, "cache.set(key, hit");
+  assertContains(APP_SETTINGS, "export function invalidateAppSetting");
+});
+
+test("saving in the console invalidates the memo, so the admin sees it at once", () => {
+  assertContains(readSrc("lib/paperTypeSettings.ts"), "invalidateAppSetting(PAPER_YEAR_MAX_KEY);");
+});
+
+test("the console offers the one-click next year AND an explicit set", () => {
+  assertContains(ADMIN, "handleSavePaperYearMax(paperYearMax + 1)", "the common case is one click");
+  assertContains(ADMIN, "handleSavePaperYearMax(Number(paperYearDraft))", "and any year can be typed");
+  // An explicit set, like the grants: the console knows the value it wants, so
+  // a double-click cannot walk the ceiling twice.
+  assert(
+    !/admin_increment_paper_year|increment_paper_year_max/i.test(ADMIN),
+    "an increment RPC would double-fire on a double-click"
+  );
+});
+
+test("the console says which migration it needs, rather than leaking Postgres", () => {
+  assertContains(ADMIN, "PAPER_YEAR_MAX_MIGRATION");
+  assertContains(
+    readSrc("lib/paperTypeSettings.ts"),
+    "`Apply ${PAPER_YEAR_MAX_MIGRATION} first`"
   );
 });
 

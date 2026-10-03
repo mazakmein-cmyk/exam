@@ -28,6 +28,8 @@ import SEO from "@/components/SEO";
 // Compares SHA-256 digests, so no operator address ships in the bundle. The
 // check is cosmetic — every RPC re-authorises server-side. See lib/adminRoute.ts.
 import { isAdminEmail } from "@/lib/adminRoute";
+import { currentPaperYear, normalizePaperYearMax, PAPER_YEAR_MIN } from "@/lib/paperType.js";
+import { fetchPaperYearMax, PAPER_YEAR_MAX_MIGRATION, savePaperYearMax } from "@/lib/paperTypeSettings";
 
 const AdminDashboard = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -91,6 +93,13 @@ const AdminDashboard = () => {
     // Collapse/Expand State
     const [examsExpanded, setExamsExpanded] = useState(true);
     const [categoriesExpanded, setCategoriesExpanded] = useState(true);
+    // The newest year creators may date a previous-year paper. Seeded with the
+    // current year — the same default every other reader of this setting uses,
+    // so the console never briefly claims a ceiling nobody set.
+    const [paperYearMax, setPaperYearMax] = useState<number>(() => currentPaperYear());
+    const [paperYearDraft, setPaperYearDraft] = useState<string>("");
+    const [savingPaperYear, setSavingPaperYear] = useState(false);
+    const [paperYearsExpanded, setPaperYearsExpanded] = useState(true);
     const [usersExpanded, setUsersExpanded] = useState(true);
     const [customDateType, setCustomDateType] = useState<'signup' | 'active'>('signup');
     const [customFilterOpen, setCustomFilterOpen] = useState(false);
@@ -108,6 +117,7 @@ const AdminDashboard = () => {
                 fetchExams();
                 fetchUsers();
                 fetchCategories();
+                loadPaperYearMax();
             }
         } finally {
             // Never leave the page stuck on "Loading..." — fall through to the
@@ -163,6 +173,47 @@ const AdminDashboard = () => {
         } catch (error: any) {
             console.error("Error fetching categories:", error);
             toast.error("Failed to load categories");
+        }
+    };
+
+    /**
+     * Read the current ceiling. Never toasts on failure: fetchPaperYearMax
+     * already falls back to the current year for a database without the
+     * migration, and the section below says so in its own words rather than
+     * throwing an error at an admin who simply has not pasted the SQL yet.
+     */
+    const loadPaperYearMax = async () => {
+        const year = await fetchPaperYearMax();
+        setPaperYearMax(year);
+        setPaperYearDraft(String(year));
+    };
+
+    /**
+     * Move the ceiling to an explicit year. An explicit set rather than an
+     * increment, for the same reason the grants are explicit sets: the console
+     * knows the value it wants, and a double-click must not walk it twice.
+     *
+     * Validated here only so the console can say no without a round trip — the
+     * RPC enforces the same floor and ceiling server-side.
+     */
+    const handleSavePaperYearMax = async (year: number) => {
+        const thisYear = currentPaperYear();
+        if (normalizePaperYearMax(year, thisYear) === null) {
+            toast.error(`Pick a year between ${thisYear} and 2100 — creators must always be able to date a paper from this year.`);
+            return;
+        }
+        setSavingPaperYear(true);
+        try {
+            const result = await savePaperYearMax(year);
+            if (!result.ok) {
+                toast.error(result.message || "Failed to save the year ceiling");
+                return;
+            }
+            setPaperYearMax(year);
+            setPaperYearDraft(String(year));
+            toast.success(`Creators can now date papers up to ${year}`);
+        } finally {
+            setSavingPaperYear(false);
         }
     };
 
@@ -503,6 +554,7 @@ const AdminDashboard = () => {
                 fetchExams();
                 fetchUsers();
                 fetchCategories();
+                loadPaperYearMax();
                 toast.success("Welcome back, Admin");
             } else {
                 await supabase.auth.signOut();
@@ -1351,6 +1403,86 @@ const AdminDashboard = () => {
                                         ))}
                                     </div>
                                 )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Paper Years — how far ahead a paper may be dated.
+                    Sits next to Exam Categories because it is the same kind of
+                    thing: a list creators choose from, curated here. */}
+                <div className="space-y-4">
+                    <div>
+                        <div
+                            className="flex items-center gap-2 cursor-pointer select-none group"
+                            onClick={() => setPaperYearsExpanded(!paperYearsExpanded)}
+                        >
+                            <div className="p-1 rounded hover:bg-gray-200 transition-colors">
+                                {paperYearsExpanded ? <ChevronDown className="h-5 w-5 text-gray-700" /> : <ChevronRight className="h-5 w-5 text-gray-700" />}
+                            </div>
+                            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                                <CalendarIcon className="h-5 w-5 text-primary" />
+                                Paper Years
+                            </h2>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1 pl-9">
+                            Creators picking <span className="font-medium">Previous Year Paper</span> choose a year from {paperYearMax} back to {PAPER_YEAR_MIN}.
+                        </p>
+                    </div>
+
+                    {paperYearsExpanded && (
+                        <div className="bg-white rounded-lg shadow p-6 space-y-6">
+                            <div>
+                                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                    Newest year a paper can be dated
+                                </label>
+                                <div className="flex flex-wrap items-center gap-3 mt-2">
+                                    <Input
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={currentPaperYear()}
+                                        max={2100}
+                                        className="bg-white w-32"
+                                        value={paperYearDraft}
+                                        onChange={(e) => setPaperYearDraft(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleSavePaperYearMax(Number(paperYearDraft)); }}
+                                    />
+                                    <Button
+                                        onClick={() => handleSavePaperYearMax(Number(paperYearDraft))}
+                                        disabled={savingPaperYear || paperYearDraft.trim() === "" || Number(paperYearDraft) === paperYearMax}
+                                        className="whitespace-nowrap"
+                                    >
+                                        {savingPaperYear ? "Saving..." : "Save"}
+                                    </Button>
+                                    {/* The common case, as one click. Exam cycles are named for
+                                        the year ahead, so "we need next year now" is the only
+                                        reason this setting usually moves. */}
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => handleSavePaperYearMax(paperYearMax + 1)}
+                                        disabled={savingPaperYear || paperYearMax >= 2100}
+                                        className="flex items-center gap-2 whitespace-nowrap"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Add {paperYearMax + 1}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div className="text-sm text-gray-500 space-y-1.5 border-t pt-4">
+                                <p>
+                                    Normally this is just the current year ({currentPaperYear()}). Push it forward when a
+                                    cycle named for a future year is already being written — &ldquo;JEE Main 2027&rdquo; papers
+                                    are made throughout 2026.
+                                </p>
+                                <p>
+                                    Lowering it again never changes a paper that is already dated: those keep their year,
+                                    and their creator still sees it in the dropdown.
+                                </p>
+                                <p className="text-gray-400">
+                                    Needs {PAPER_YEAR_MAX_MIGRATION}. Until that is applied the ceiling stays at the
+                                    current year and saving here will say so.
+                                </p>
                             </div>
                         </div>
                     )}
