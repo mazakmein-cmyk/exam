@@ -80,21 +80,35 @@ export const CREATOR_SEO_BY_LANG: Record<
   { title: string; description: string; keywords: string; lang: string; breadcrumbHome: string; breadcrumbSelf: string }
 > = {
   en: {
-    title: "For Educators & Creators — Publish Mock Tests Free | MockSetu (Mockset)",
+    /**
+     * Title leads with the query, not the audience.
+     *
+     * The previous title opened "For Educators & Creators" — 72 characters, and
+     * the first 25 of them were a label nobody searches for. A coaching owner
+     * types "free online test maker", "online test maker for teachers" or
+     * "online test maker for coaching institutes"; this one carries all three
+     * head terms in 57 characters, which is inside what Google renders before
+     * it truncates. The brand stays at the end, where a brand belongs on a page
+     * that has to win a non-brand query first.
+     */
+    title: "Free Online Test Maker for Teachers & Coaching | MockSetu",
     description:
-      "Turn any exam PDF into a full timed online mock test in minutes. MockSetu (Mockset) lets coaching institutes, educators, and creators publish JEE, NEET, CAT, GATE, and UPSC mocks free, with built-in analytics and instant scoring on the leading online assessment platform.",
+      "Turn a question-paper PDF into a timed online mock test — negative marking, sectional timers, Hindi and English, live classroom exams, batch analytics. Free.",
     keywords:
-      "mockset for creators, MockSetu creator, publish mock test on mockset, online test creator, exam authoring platform, mock test for coaching, online assessment platform, test maker, MCQ test creator, exam PDF to online test, live exam platform, coaching institute software",
+      "free online test maker, online test maker for teachers, online test maker for coaching institutes, online exam software for coaching institutes, create online test free, mock test creator, test series platform, publish mock test online, live quiz for classroom, exam PDF to online test, online assessment platform, question paper to online test, coaching institute software, online test kaise banaye, mockset for creators, MockSetu creator",
     lang: "en-IN",
     breadcrumbHome: "Home",
     breadcrumbSelf: "For Educators & Creators",
   },
   hi: {
-    title: "शिक्षकों और कोचिंग के लिए — फ्री में मॉक टेस्ट पब्लिश कीजिए | MockSetu",
+    // Hindi-first and query-first for the same reason as the English twin: this
+    // is what a Devanagari SERP shows, so "ऑनलाइन टेस्ट मेकर" and "फ्री" sit at
+    // the front where they get read and clicked.
+    title: "फ्री ऑनलाइन टेस्ट मेकर — कोचिंग और शिक्षकों के लिए | MockSetu",
     description:
-      "किसी भी प्रश्न पत्र की PDF को मिनटों में पूरे टाइम्ड ऑनलाइन मॉक टेस्ट में बदलिए। MockSetu पर कोचिंग संस्थान और शिक्षक SSC, JEE, NEET, CAT, GATE और UPSC के मॉक टेस्ट फ्री में पब्लिश कर सकते हैं — बिल्ट-इन एनालिटिक्स, लाइव एग्ज़ाम और तुरंत स्कोरिंग के साथ।",
+      "PDF प्रश्न पत्र को टाइम्ड ऑनलाइन मॉक टेस्ट बनाइए — नेगेटिव मार्किंग, सेक्शन-वार समय, हिंदी-अंग्रेज़ी, लाइव क्लास एग्ज़ाम, एनालिटिक्स। फ्री।",
     keywords:
-      "ऑनलाइन टेस्ट कैसे बनाएं, मॉक टेस्ट प्लेटफॉर्म, कोचिंग के लिए ऑनलाइन टेस्ट, पीडीएफ से ऑनलाइन टेस्ट, टेस्ट सीरीज़ कैसे बनाएं, ऑनलाइन परीक्षा सॉफ्टवेयर, शिक्षकों के लिए मॉक टेस्ट, लाइव एग्ज़ाम प्लेटफॉर्म, कोचिंग संस्थान सॉफ्टवेयर, online test kaise banaye, mock test platform hindi",
+      "ऑनलाइन टेस्ट मेकर, फ्री ऑनलाइन टेस्ट मेकर, ऑनलाइन टेस्ट कैसे बनाएं, टेस्ट सीरीज़ सॉफ्टवेयर, मॉक टेस्ट प्लेटफॉर्म, कोचिंग के लिए ऑनलाइन टेस्ट, पीडीएफ से ऑनलाइन टेस्ट, टेस्ट सीरीज़ कैसे बनाएं, ऑनलाइन परीक्षा सॉफ्टवेयर, शिक्षकों के लिए मॉक टेस्ट, लाइव एग्ज़ाम प्लेटफॉर्म, कोचिंग संस्थान सॉफ्टवेयर, online test kaise banaye, mock test kaise banaye, test series kaise banaye, mock test platform hindi",
     lang: "hi-IN",
     breadcrumbHome: "होम",
     breadcrumbSelf: "शिक्षकों और क्रिएटर के लिए",

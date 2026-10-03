@@ -234,3 +234,105 @@ export const buildExamLandingJsonLd = (exam: ExamLanding): Record<string, unknow
     },
   ];
 };
+
+/**
+ * Structured data for the creator pillar, in either language.
+ *
+ * This moved out of ForCreators.tsx for the reason everything else in this
+ * module did: the page used to build its JSON-LD inline, which meant
+ * scripts/prerender.mjs could not reach it and shipped the two creator routes
+ * with `jsonLd: []`. The nodes existed only after React mounted — invisible to
+ * every consumer that does not run JavaScript, which is the exact failure the
+ * prerenderer was written to end. One builder, both consumers.
+ *
+ * Parameters are structural rather than imported types on purpose. This module
+ * must stay importable from Node (the prerenderer bundles it), and a structural
+ * signature keeps it from depending on the i18n or data layers.
+ *
+ * Emits at most four nodes:
+ *   WebPage        — the page itself, tied into the brand graph, audience Educator
+ *   BreadcrumbList — Home > this page, in the page's own language
+ *   FAQPage        — the pillar's own FAQ, and the only FAQPage on this URL
+ *                    (index.html's homepage FAQPage is stripped from every route
+ *                    but `/`, so there is no second node to collide with)
+ *   ItemList       — the guides this hub links out to
+ *
+ * FAQPage and ItemList are omitted entirely when their arrays are empty: an
+ * empty list is a worse signal than no list, the same rule buildExamLandingJsonLd
+ * follows for its guides.
+ */
+export const buildCreatorPageJsonLd = (opts: {
+  /** Site-relative path of this language's page, e.g. "/for-creators". */
+  path: string;
+  /** Site-relative path of the student home in the SAME language. */
+  homePath: string;
+  title: string;
+  description: string;
+  /** BCP-47, e.g. "en-IN" / "hi-IN". */
+  lang: string;
+  breadcrumbHome: string;
+  breadcrumbSelf: string;
+  faqs: ReadonlyArray<{ question: string; answer: string }>;
+  guides: ReadonlyArray<{ slug: string; label: string }>;
+  /** Localised name for the ItemList, e.g. "Guides for Educators". */
+  guidesName: string;
+}): Record<string, unknown>[] => {
+  const url = `${SITE_URL}${opts.path}`;
+  return [
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "@id": `${url}#webpage`,
+      name: opts.title,
+      url,
+      description: opts.description,
+      inLanguage: opts.lang,
+      audience: { "@type": "EducationalAudience", audienceType: "Educator" },
+      isPartOf: { "@id": `${SITE_URL}/#website` },
+      about: { "@id": `${SITE_URL}/#organization` },
+      primaryImageOfPage: { "@type": "ImageObject", url: DEFAULT_OG_IMAGE },
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: opts.breadcrumbHome,
+          item: `${SITE_URL}${opts.homePath}`,
+        },
+        { "@type": "ListItem", position: 2, name: opts.breadcrumbSelf, item: url },
+      ],
+    },
+    ...(opts.faqs.length
+      ? [
+          {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            inLanguage: opts.lang,
+            mainEntity: opts.faqs.map((f) => ({
+              "@type": "Question",
+              name: f.question,
+              acceptedAnswer: { "@type": "Answer", text: f.answer },
+            })),
+          },
+        ]
+      : []),
+    ...(opts.guides.length
+      ? [
+          {
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            name: opts.guidesName,
+            itemListElement: opts.guides.map((g, i) => ({
+              "@type": "ListItem",
+              position: i + 1,
+              name: g.label,
+              url: `${SITE_URL}/blog/${g.slug}`,
+            })),
+          },
+        ]
+      : []),
+  ];
+};

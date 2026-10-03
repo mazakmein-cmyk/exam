@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { ArrowRight, BookOpen, CheckCircle, ChevronDown, Sparkles } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import EducatorStrip from "@/components/creators/EducatorStrip";
 import SEO from "@/components/SEO";
 import { EXAM_LANDING_PAGES } from "@/data/examLandingPages";
 // Shared with scripts/prerender.mjs, which writes this same JSON-LD into the
@@ -323,6 +324,10 @@ const ExamLandingPage = () => {
           </Link>
         </div>
       </section>
+
+      {/* Teachers research the same exam page their students do. One line to
+          the creator pillar, below everything this page exists for. */}
+      <EducatorStrip examLabel={exam.examShort} />
 
       <Footer />
     </div>

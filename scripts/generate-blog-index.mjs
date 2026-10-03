@@ -17,35 +17,10 @@ const SITEMAP = path.join(ROOT, "public", "sitemap.xml");
 const FEED_OUT = path.join(ROOT, "public", "feed.xml");
 const SITE = "https://mocksetu.in";
 
-const CATEGORIES = new Set([
-  "Exam Strategy",
-  "Study Plans",
-  "Mock Test Guide",
-  "Exam Guides",
-  "Study Science",
-  "Placement Prep",
-  "For Educators",
-  "Board Exams",
-  "Career Guidance",
-]);
-
-const KNOWN_STATIC_PATHS = new Set([
-  "/",
-  "/marketplace",
-  "/for-creators",
-  "/student-auth",
-  "/blog",
-  "/json-upload-guide",
-  "/mock-test/jee-main",
-  "/mock-test/neet-ug",
-  "/mock-test/cat",
-  "/mock-test/gate",
-  "/mock-test/upsc-prelims",
-  // SSC MTS hub. Articles in the SSC MTS cluster link here by design, so this
-  // path must be whitelisted or every one of them fails link validation.
-  "/ssc-mts",
-]);
-const LEGACY_SLUGS = ["how-to-take-mock-tests", "jee-main-vs-jee-advanced", "best-mock-test-strategy-for-cat"];
+// The rules themselves live in scripts/lib/postRules.mjs so that
+// scripts/check-post.mjs can apply the IDENTICAL checks without writing any of
+// the three shared files this script rewrites. See that module's header.
+import { LEGACY_SLUGS, validatePost } from "./lib/postRules.mjs";
 
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), "mocksetu-blog-"));
 const errors = [];
@@ -59,58 +34,6 @@ async function importPostFile(filePath) {
   return (await import(pathToFileURL(tmpFile).href)).default;
 }
 
-function wordCount(post) {
-  return post.content.reduce((acc, b) => {
-    const text = b.type === "ul" ? (b.items || []).join(" ") : b.text || "";
-    return acc + text.replace(/\[([^\]]+)\]\(\/[^)\s]*\)/g, "$1").split(/\s+/).filter(Boolean).length;
-  }, 0);
-}
-
-function validate(post, file, allSlugs) {
-  const e = (msg) => errors.push(`${file}: ${msg}`);
-  const w = (msg) => warnings.push(`${file}: ${msg}`);
-  if (!post || typeof post !== "object") return e("no default export object");
-  const strFields = ["slug", "title", "metaTitle", "metaDescription", "keywords", "excerpt", "publishedAt", "updatedAt"];
-  for (const f of strFields) if (typeof post[f] !== "string" || !post[f].trim()) e(`missing/empty field: ${f}`);
-  if (typeof post.readingMinutes !== "number") e("readingMinutes must be a number");
-  if (!CATEGORIES.has(post.category)) e(`invalid category: ${post.category}`);
-  if (!Array.isArray(post.tags) || post.tags.length < 3) w("fewer than 3 tags");
-  if (!post.hero || !post.hero.h1 || !post.hero.lede || !post.hero.eyebrow) e("hero incomplete");
-  else if (post.hero.h1 !== post.title) w("hero.h1 !== title");
-  if (post.slug !== path.basename(file, ".ts")) e(`slug "${post.slug}" does not match filename`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(post.publishedAt || "")) e("publishedAt not ISO yyyy-mm-dd");
-  if (!Array.isArray(post.content) || post.content.length < 8) e("content too short");
-  else {
-    for (const b of post.content) {
-      if (!["p", "h2", "ul", "quote"].includes(b.type)) e(`invalid block type: ${b.type}`);
-    }
-    const h2s = post.content.filter((b) => b.type === "h2").length;
-    if (h2s < 5) w(`only ${h2s} h2 sections`);
-    const words = wordCount(post);
-    if (words < 1200) w(`body only ${words} words`);
-  }
-  if (!Array.isArray(post.faqs) || post.faqs.length < 3) e("fewer than 3 FAQs");
-  if (post.metaTitle && post.metaTitle.length > 68) w(`metaTitle ${post.metaTitle.length} chars`);
-  const md = post.metaDescription ? post.metaDescription.length : 0;
-  if (md && (md < 120 || md > 180)) w(`metaDescription ${md} chars`);
-  // Internal link validation
-  const body = JSON.stringify(post.content);
-  const links = [...body.matchAll(/\]\((\/[^)\s"]*)\)/g)].map((m) => m[1]);
-  if (links.length < 3) w(`only ${links.length} internal links`);
-  for (const l of links) {
-    if (KNOWN_STATIC_PATHS.has(l)) continue;
-    if (l.startsWith("/blog/")) {
-      const s = l.slice(6);
-      // A link to a sibling article that failed to generate is low-risk (soft 404),
-      // so warn rather than fail the whole build.
-      if (!allSlugs.has(s) && !LEGACY_SLUGS.includes(s)) w(`internal blog link to missing slug: ${l}`);
-      continue;
-    }
-    e(`broken internal link: ${l}`);
-  }
-  if (/https?:\/\//.test(body)) w("contains an absolute/external URL in body");
-}
-
 const files = readdirSync(POSTS_DIR).filter((f) => f.endsWith(".ts")).sort();
 const posts = [];
 const allSlugs = new Set(files.map((f) => path.basename(f, ".ts")));
@@ -118,7 +41,9 @@ const allSlugs = new Set(files.map((f) => path.basename(f, ".ts")));
 for (const f of files) {
   try {
     const post = await importPostFile(path.join(POSTS_DIR, f));
-    validate(post, f, allSlugs);
+    const result = validatePost(post, f, allSlugs);
+    errors.push(...result.errors);
+    warnings.push(...result.warnings);
     posts.push(post);
   } catch (err) {
     errors.push(`${f}: failed to load — ${err.message}`);

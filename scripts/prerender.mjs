@@ -479,7 +479,19 @@ const renderExamLandingBody = (exam) => {
             r.label
           )}</span></a>`
       )
-      .join("")}</div></div></section></div>`
+      .join("")}</div></div></section>` +
+    // Mirrors <EducatorStrip> in ExamLandingPage.tsx. These five pages carry
+    // the site's strongest authority, so the creator pillar wants the link in
+    // the first byte rather than only after React mounts.
+    `<section class="px-5 pb-14" aria-label="For educators">` +
+    `<div class="container mx-auto max-w-4xl"><div class="rounded-2xl border border-border/60 bg-secondary/30 px-5 py-4">` +
+    `<p class="text-[13.5px] text-muted-foreground leading-[1.65]">` +
+    `<strong class="font-semibold text-foreground">Teaching this exam?</strong> ` +
+    `Publish your own ${escapeHtml(
+      exam.examShort
+    )} mock tests free — timed, with negative marking and batch analytics. ` +
+    `<a href="/for-creators" class="font-semibold text-primary">For educators</a>` +
+    `</p></div></div></section></div>`
   );
 };
 
@@ -745,6 +757,107 @@ const renderStaticShell = (hero, path) =>
   `</div></section></div>`;
 
 /**
+ * The creator pillar, in either language — hero, capability band, guide links
+ * and the full FAQ.
+ *
+ * Richer than renderStaticShell on purpose, and this is the one page where the
+ * difference is load-bearing rather than cosmetic. /for-creators has to win
+ * non-brand commercial queries ("free online test maker", "online exam software
+ * for coaching institutes") against vendors whose pages are server-rendered.
+ * A first byte carrying one h1 and a lede, with every capability claim, every
+ * FAQ answer and every outbound guide link arriving only after React mounts,
+ * concedes that race to anything that reads HTML without running it — which
+ * includes the social crawlers, several AI answer engines, and Googlebot on a
+ * render-budget-constrained crawl of a page it does not yet rate.
+ *
+ * Everything here comes from the same copy table and the same guides module the
+ * component renders, so the static page and the mounted page cannot disagree.
+ * The `hidden` attribute is deliberately NOT used on the answers: the accordion
+ * is interaction, and the static document should read as a document.
+ */
+const renderCreatorBody = (copy, meta, selfPath, homePath, guides) =>
+  `<div class="min-h-screen bg-background">` +
+  NAV_SPACER +
+  `<section class="${HERO_SECTION_CLS}"><div class="relative z-10 container mx-auto max-w-3xl">` +
+  `<nav aria-label="Breadcrumb" class="mb-6 flex items-center gap-2 text-[12px] text-white/40">` +
+  `<a href="${escapeAttr(homePath)}">${escapeHtml(meta.breadcrumbHome)}</a><span>/</span>` +
+  `<span class="text-white/60">${escapeHtml(meta.breadcrumbSelf)}</span></nav>` +
+  `<h1 class="text-[30px] sm:text-[44px] md:text-[52px] font-black text-white leading-[1.1] tracking-[-0.03em] mb-5">${escapeHtml(
+    `${copy.heroTitleA} ${copy.heroTitleB}`
+  )}</h1>` +
+  `<p class="${LEDE_CLS}">${escapeHtml(
+    `${copy.heroSub}${copy.heroSubStrong}${copy.heroSubTail}`
+  )}</p>` +
+  `</div></section>` +
+  // Capability band — the page's first h2 and the one carrying the head terms.
+  `<section class="py-16 px-5"><div class="container mx-auto max-w-5xl">` +
+  `<h2 class="${H2_CLS}">${escapeHtml(copy.featureTitle)}</h2>` +
+  `<p class="text-[15px] sm:text-[16px] text-muted-foreground leading-[1.8] mb-8">${escapeHtml(
+    copy.featureLede
+  )}</p>` +
+  `<div class="grid sm:grid-cols-3 gap-4">${copy.features
+    .map(
+      (f) =>
+        `<div class="rounded-2xl border border-border/60 bg-card p-5">` +
+        `<h3 class="text-[15px] font-bold text-foreground tracking-tight mb-2">${escapeHtml(
+          f.title
+        )}</h3>` +
+        `<p class="text-[13.5px] text-muted-foreground leading-[1.75] mb-4">${escapeHtml(
+          f.desc
+        )}</p>` +
+        `<a href="${escapeAttr(f.to)}" class="text-[13px] font-semibold text-primary">${escapeHtml(
+          f.linkLabel
+        )}</a></div>`
+    )
+    .join("")}</div></div></section>` +
+  // Guide links. The whole reason the hub exists in the first byte.
+  (guides.length
+    ? `<section class="py-16 px-5 bg-secondary/20"><div class="container mx-auto max-w-5xl">` +
+      `<h2 class="${H2_CLS}">${escapeHtml(copy.guidesTitle)}</h2>` +
+      `<p class="text-[15px] text-muted-foreground leading-[1.8] mb-8">${escapeHtml(
+        copy.guidesLede
+      )}</p>` +
+      `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">${guides
+        .map(
+          (g) =>
+            `<a href="/blog/${escapeAttr(
+              g.slug
+            )}" class="rounded-2xl border border-border/60 bg-card p-5 block">` +
+            `<h3 class="text-[15px] font-bold text-foreground tracking-tight">${escapeHtml(
+              g.label
+            )}</h3>` +
+            `<p class="mt-2 text-[13px] text-muted-foreground leading-[1.65]">${escapeHtml(
+              g.blurb
+            )}</p></a>`
+        )
+        .join("")}</div>` +
+      `<p class="mt-8"><a href="/blog" class="text-[13px] font-semibold text-primary">${escapeHtml(
+        copy.guidesAll
+      )}</a></p>` +
+      `</div></section>`
+    : "") +
+  // The FAQ, open. Its answers are also this route's FAQPage structured data.
+  `<section class="py-16 px-5"><div class="container mx-auto max-w-3xl">` +
+  `<h2 class="${H2_CLS}">${escapeHtml(copy.faqTitle)}</h2>` +
+  `<div class="rounded-2xl border border-border/60 bg-card px-5 sm:px-7">${copy.faqs
+    .map(
+      (f) =>
+        `<div class="border-b border-border/50 last:border-0"><div class="py-5">` +
+        `<h3 class="text-[15px] sm:text-[16px] font-semibold text-foreground tracking-tight">${escapeHtml(
+          f.question
+        )}</h3>` +
+        `<div class="pt-3 text-[14px] sm:text-[15px] text-muted-foreground leading-[1.75]">${escapeHtml(
+          f.answer
+        )}</div></div></div>`
+    )
+    .join("")}</div></div></section>` +
+  `<section class="py-12 px-5"><div class="container mx-auto max-w-3xl">` +
+  `<p><a href="${escapeAttr(selfPath)}" class="text-[13px] font-semibold text-primary">${escapeHtml(
+    copy.ctaPrimary
+  )}</a></p></div></section>` +
+  `</div>`;
+
+/**
  * The /blog index, with its article list.
  *
  * The runtime list is client-rendered and filterable, which meant the static
@@ -801,6 +914,15 @@ async function main() {
   const { STATIC_PAGE_SEO, STATIC_PAGE_HERO } = await importTsModule(
     path.join(ROOT, "src", "data", "staticPageSeo.ts"),
     "staticPageSeo.mjs"
+  );
+  // The creator pillar's outbound guide links, read from the same module the
+  // page renders. Validated below against the real post slugs: a dead link
+  // here is a soft 404 on the page the whole creator cluster exists to lift,
+  // and unlike a link inside an article body nothing else in the build
+  // would catch it.
+  const { CREATOR_GUIDES } = await importTsModule(
+    path.join(ROOT, "src", "data", "creatorGuides.ts"),
+    "creatorGuides.mjs"
   );
   const routes = [];
 
@@ -890,14 +1012,28 @@ async function main() {
       lang: meta.lang,
       ogType: "website",
       alternates: pageSeo.CREATOR_ALTERNATES,
-      jsonLd: [],
-      body: renderStaticShell(
-        {
-          h1: `${c.heroTitleA} ${c.heroTitleB}`,
-          lede: `${c.heroSub}${c.heroSubStrong}${c.heroSubTail}`,
-          breadcrumb: meta.breadcrumbSelf,
-        },
-        pageSeo.CREATOR_PATHS[lang]
+      // Built from the SAME module ForCreators.tsx calls, so the static head
+      // and the mounted head carry identical nodes. These two routes shipped
+      // `jsonLd: []` until the builder was extracted — the WebPage,
+      // BreadcrumbList, FAQPage and ItemList existed only after React ran.
+      jsonLd: seo.buildCreatorPageJsonLd({
+        path: pageSeo.CREATOR_PATHS[lang],
+        homePath: pageSeo.HOME_PATHS[lang],
+        title: meta.title,
+        description: meta.description,
+        lang: meta.lang,
+        breadcrumbHome: meta.breadcrumbHome,
+        breadcrumbSelf: meta.breadcrumbSelf,
+        faqs: c.faqs,
+        guides: CREATOR_GUIDES,
+        guidesName: c.guidesName,
+      }),
+      body: renderCreatorBody(
+        c,
+        meta,
+        pageSeo.CREATOR_PATHS[lang],
+        pageSeo.HOME_PATHS[lang],
+        CREATOR_GUIDES
       ),
     });
   }
@@ -954,6 +1090,33 @@ async function main() {
   const blogMetas = [...posts]
     .sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1))
     .map((p) => ({ slug: p.slug, title: p.title, excerpt: p.excerpt, category: p.category }));
+
+  /**
+   * Every creator-pillar guide link must resolve to a real post.
+   *
+   * generate-blog-index.mjs validates links written INSIDE an article body, but
+   * CREATOR_GUIDES is a hand-maintained list on a hand-built page, so nothing
+   * else checks it. An unresolvable slug there is a soft 404 — HTTP 200 serving
+   * the homepage head, then a client-side bounce to /blog — sitting on the one
+   * URL the whole creator cluster is built to lift, and in that page's ItemList
+   * structured data as well. Fail the build rather than ship it.
+   *
+   * Checked here rather than at the route push above because it needs `posts`,
+   * which is only loaded by this point.
+   */
+  {
+    const realSlugs = new Set(posts.map((p) => p.slug));
+    for (const g of CREATOR_GUIDES) {
+      if (!realSlugs.has(g.slug)) {
+        errors.push(
+          `CREATOR_GUIDES names "${g.slug}", which is not a post in src/data/blog/posts/ — ` +
+            `a dead link on the creator pillar. Remove it or write the article.`
+        );
+      }
+    }
+    const dupes = CREATOR_GUIDES.map((g) => g.slug).filter((s, i, a) => a.indexOf(s) !== i);
+    for (const d of new Set(dupes)) errors.push(`CREATOR_GUIDES lists "${d}" twice`);
+  }
 
   for (const key of STATIC_ROUTE_KEYS) {
     const meta = STATIC_PAGE_SEO[key];

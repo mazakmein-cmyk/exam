@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, ChevronDown, Clock } from "lucide-react";
@@ -6,6 +6,7 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import SEO from "@/components/SEO";
 import { loadPost, relatedPosts } from "@/data/blog";
+import { setContentGroup } from "@/lib/contentGroup";
 // Shared with scripts/prerender.mjs, which writes this same JSON-LD into the
 // static HTML at build time.
 import { buildBlogPostJsonLd } from "@/lib/seo/structuredData";
@@ -80,6 +81,21 @@ const CLUSTER_CTAS = [
       "Reading diagnoses; attempting improves. Sit a full-length JEE Main paper — free, 3 hours, 300 marks, on the real NTA-style exam screen.",
     label: "Free JEE Main Mock Test — Start Now",
   },
+  /**
+   * The creator cluster. Appended rather than prepended on purpose: the two
+   * entries above are STUDENT funnels, and the first match wins, so a post that
+   * ever carried both tags would silently route a coaching owner to a student
+   * pillar. No post may carry "For Creators" alongside a student cluster tag —
+   * src/__tests__/creator-cluster-tags.test.mjs enforces exactly that, which is
+   * what makes appending here safe rather than merely lucky.
+   */
+  {
+    tag: "For Creators",
+    to: "/for-creators",
+    blurb:
+      "Reading explains; publishing teaches. Turn your next question paper into a timed online exam your students sit on the real CBT screen — free, in minutes.",
+    label: "Create Your First Online Exam — Free",
+  },
 ] as const;
 
 const resolveCta = (tags: string[]) => CLUSTER_CTAS.find((c) => tags.includes(c.tag));
@@ -103,6 +119,21 @@ const BlogPost = () => {
     enabled: !!slug,
     staleTime: Infinity,
   });
+
+  /**
+   * Report this article's category to GA4 as the page's content group, so a
+   * whole cluster ("For Educators", "Exam Strategy") reads as one line instead
+   * of two hundred separate URLs.
+   *
+   * Placed ABOVE the early returns below — React requires every hook to run on
+   * every render, and the `post` guards return before the component body ends.
+   * Cleared on unmount so a non-article route can never inherit the group.
+   */
+  const category = post?.category;
+  useEffect(() => {
+    setContentGroup(category ?? null);
+    return () => setContentGroup(null);
+  }, [category]);
 
   if (!slug) return <Navigate to="/blog" replace />;
   if (isLoading) return <PostFallback />;

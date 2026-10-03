@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import EducatorStrip from "@/components/creators/EducatorStrip";
 import SEO from "@/components/SEO";
 import { STATIC_PAGE_SEO } from "@/data/staticPageSeo";
 import { supabase } from "@/integrations/supabase/client";
@@ -2127,6 +2128,10 @@ const SscMtsLanding = () => {
           </div>
         </div>
       </section>
+
+      {/* Teachers research the same exam page their students do. One line to
+          the creator pillar, below everything this page exists for. */}
+      <EducatorStrip examLabel="SSC MTS" />
 
       <Footer />
 

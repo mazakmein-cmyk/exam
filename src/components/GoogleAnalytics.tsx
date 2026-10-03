@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
+import { readContentGroup } from "@/lib/contentGroup";
 
 /**
  * GA4, loaded only when a measurement ID is configured.
@@ -63,13 +64,20 @@ const GoogleAnalytics = () => {
   // its effect flushes BEFORE the routed page's <SEO/> effect has written
   // document.title — reading the title synchronously would tag every hit with
   // the *previous* page's name. Yielding once lets the title land first.
+  //
+  // content_group rides the same deferral for the same reason: the page sets it
+  // in its own effect (see lib/contentGroup.ts), which has not run yet when this
+  // one does. It is omitted entirely rather than sent empty when a route has no
+  // group, so GA4's reports are not polluted with a blank bucket.
   useEffect(() => {
     if (!MEASUREMENT_ID) return;
     const id = window.setTimeout(() => {
+      const contentGroup = readContentGroup();
       window.gtag?.("event", "page_view", {
         page_path: `${location.pathname}${location.search}`,
         page_location: window.location.href,
         page_title: document.title,
+        ...(contentGroup ? { content_group: contentGroup } : {}),
       });
     }, 0);
     return () => window.clearTimeout(id);

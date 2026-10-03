@@ -5,8 +5,12 @@ import {
   BarChart3,
   BookOpen,
   CheckCircle,
+  ChevronDown,
   Clock,
+  FileText,
   Lock,
+  Radio,
+  SlidersHorizontal,
   Sparkles,
   Target,
   Users,
@@ -18,6 +22,12 @@ import SEO from "@/components/SEO";
 import CreatorJourney from "@/components/creators/CreatorJourney";
 import { type CreatorPageCopy } from "@/i18n/creatorCopy";
 import { CREATOR_COPY_EN } from "@/i18n/creatorCopy.en";
+import { CREATOR_GUIDES } from "@/data/creatorGuides";
+// Shared with scripts/prerender.mjs, which writes this same JSON-LD into the
+// static HTML at build time. Before this was shared, the prerenderer emitted
+// `jsonLd: []` for both creator routes and every node here existed only after
+// React mounted.
+import { buildCreatorPageJsonLd } from "@/lib/seo/structuredData";
 
 /**
  * The creator landing page, once, for both languages.
@@ -29,7 +39,53 @@ import { CREATOR_COPY_EN } from "@/i18n/creatorCopy.en";
  * alternates below let Google serve the right one.
  */
 
-import { CREATOR_ALTERNATES, CREATOR_PATHS, CREATOR_SEO_BY_LANG, type CreatorLang } from "@/i18n/pageSeo";
+import {
+  CREATOR_ALTERNATES,
+  CREATOR_PATHS,
+  CREATOR_SEO_BY_LANG,
+  HOME_PATHS,
+  type CreatorLang,
+} from "@/i18n/pageSeo";
+
+/* ═══════════════════════════════════════════════
+   SECTION: FAQ accordion row
+   ═══════════════════════════════════════════════ */
+/**
+ * The answer stays MOUNTED when collapsed and is hidden with `hidden`, rather
+ * than being conditionally rendered the way the blog's accordion does it.
+ *
+ * On an article that distinction is cosmetic. Here it is not: this FAQ is the
+ * page's FAQPage structured data, and the first-byte HTML the prerenderer
+ * writes carries every answer. A consumer that reads the rendered DOM — an AI
+ * overview, a crawler that executes JS, a reader using find-in-page — would
+ * otherwise see one answer and seven empty buttons.
+ */
+const FaqRow = ({ q, a, idx }: { q: string; a: string; idx: number }) => {
+  const [open, setOpen] = useState(idx === 0);
+  return (
+    <div className="border-b border-border/50 last:border-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-start justify-between gap-4 py-5 text-left"
+      >
+        <h3 className="text-[15px] sm:text-[16px] font-semibold text-foreground tracking-tight pr-4">
+          {q}
+        </h3>
+        <ChevronDown
+          className={`h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <div
+        hidden={!open}
+        className="pb-5 text-[14px] sm:text-[15px] text-muted-foreground leading-[1.75]"
+      >
+        {a}
+      </div>
+    </div>
+  );
+};
 
 /* ═══════════════════════════════════════════════
    SECTION: Animated observe-on-scroll wrapper
@@ -74,6 +130,8 @@ const Reveal = ({
 const PAIN_ICONS = [Clock, BarChart3, Target];
 const TRUST_ICONS = [Lock, Users, Zap];
 const TRUST_COLORS = ["#6C3EF4", "#10B981", "#F59E0B"];
+/** Import → configure → run live: the three capability rows, in that order. */
+const FEATURE_ICONS = [FileText, SlidersHorizontal, Radio];
 
 /** Which comparison rows a PDF can also do — indexes into copy.comparisonRows. */
 const PDF_CAPABLE_ROWS = new Set([7, 8]);
@@ -96,8 +154,10 @@ const ForCreators = ({
   const [mounted, setMounted] = useState(false);
   const seo = CREATOR_SEO_BY_LANG[lang];
   // Cross-language links stay inside their own language where a translated
-  // page exists: the Hindi page's "student experience" goes to /hindi.
-  const studentHome = lang === "hi" ? "/hindi" : "/";
+  // page exists: the Hindi page's "student experience" goes to /hindi. Read
+  // from the shared table rather than a local ternary so this page and the
+  // prerenderer resolve the same URL.
+  const studentHome = HOME_PATHS[lang];
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -114,28 +174,18 @@ const ForCreators = ({
         keywords={seo.keywords}
         lang={seo.lang}
         alternates={CREATOR_ALTERNATES}
-        jsonLd={[
-          {
-            "@context": "https://schema.org",
-            "@type": "WebPage",
-            "@id": `https://mocksetu.in${CREATOR_PATHS[lang]}#webpage`,
-            "name": seo.title,
-            "url": `https://mocksetu.in${CREATOR_PATHS[lang]}`,
-            "description": seo.description,
-            "inLanguage": seo.lang,
-            "audience": { "@type": "EducationalAudience", "audienceType": "Educator" },
-            "isPartOf": { "@id": "https://mocksetu.in/#website" },
-            "about": { "@id": "https://mocksetu.in/#organization" }
-          },
-          {
-            "@context": "https://schema.org",
-            "@type": "BreadcrumbList",
-            "itemListElement": [
-              { "@type": "ListItem", "position": 1, "name": seo.breadcrumbHome, "item": `https://mocksetu.in${studentHome}` },
-              { "@type": "ListItem", "position": 2, "name": seo.breadcrumbSelf, "item": `https://mocksetu.in${CREATOR_PATHS[lang]}` }
-            ]
-          }
-        ]}
+        jsonLd={buildCreatorPageJsonLd({
+          path: CREATOR_PATHS[lang],
+          homePath: studentHome,
+          title: seo.title,
+          description: seo.description,
+          lang: seo.lang,
+          breadcrumbHome: seo.breadcrumbHome,
+          breadcrumbSelf: seo.breadcrumbSelf,
+          faqs: copy.faqs,
+          guides: CREATOR_GUIDES,
+          guidesName: copy.guidesName,
+        })}
       />
       <Navbar navButtonLabel={copy.navLabel} navButtonLink={studentHome} />
 
@@ -246,6 +296,67 @@ const ForCreators = ({
                 <div className="mt-1 text-[12px] text-white/30 font-medium tracking-wide">{label}</div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ════════════════════════════════════════
+          WHAT IT IS — the page's first h2, and the
+          one that carries the query.
+
+          The hero above is a hook ("Stop sharing
+          PDFs"), which converts but ranks for
+          nothing. This band states plainly what the
+          product is, in the words a coaching owner
+          actually types, and hands each claim down
+          to the guide that proves it — so the pillar
+          passes authority to its spokes instead of
+          only collecting it.
+      ════════════════════════════════════════ */}
+      <section className="py-16 sm:py-24 px-5">
+        <div className="container mx-auto max-w-5xl">
+          <Reveal>
+            <div className="text-center mb-14">
+              <div className="section-label justify-center mb-4">
+                <span className="w-6 h-px bg-emerald-400/40" />
+                <span className="text-emerald-600/80">{copy.featureLabel}</span>
+                <span className="w-6 h-px bg-emerald-400/40" />
+              </div>
+              <h2 className="text-[28px] sm:text-[36px] md:text-[44px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
+                {copy.featureTitle}
+              </h2>
+              <p className="mt-4 text-[16px] text-muted-foreground max-w-2xl mx-auto leading-[1.7]">
+                {copy.featureLede}
+              </p>
+            </div>
+          </Reveal>
+
+          <div className="grid md:grid-cols-3 gap-5">
+            {copy.features.map((f, i) => {
+              const Icon = FEATURE_ICONS[i];
+              return (
+                <Reveal key={f.to} delay={i * 100}>
+                  <div className="h-full flex flex-col rounded-2xl border border-border/60 bg-card p-6">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center mb-5">
+                      {Icon && <Icon className="h-5 w-5 text-emerald-600" />}
+                    </div>
+                    <h3 className="text-[15.5px] font-bold text-foreground tracking-tight mb-2">
+                      {f.title}
+                    </h3>
+                    <p className="text-[13.5px] text-muted-foreground leading-[1.75] mb-5">
+                      {f.desc}
+                    </p>
+                    <Link
+                      to={f.to}
+                      className="mt-auto inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary hover:text-primary/80 transition-colors"
+                    >
+                      {f.linkLabel}
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </div>
+                </Reveal>
+              );
+            })}
           </div>
         </div>
       </section>
@@ -386,6 +497,100 @@ const ForCreators = ({
                   </Reveal>
                 );
               })}
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ════════════════════════════════════════
+          GUIDES — the hub's outbound half.
+
+          A pillar that only collects links is a hub
+          in name only. These point at the spokes
+          worth lifting right now; the list rotates
+          per content batch and lives in
+          src/data/creatorGuides.ts so the
+          prerenderer can write it into the first
+          byte too.
+      ════════════════════════════════════════ */}
+      {CREATOR_GUIDES.length > 0 && (
+        <section className="py-16 sm:py-24 px-5">
+          <div className="container mx-auto max-w-5xl">
+            <Reveal>
+              <div className="text-center mb-12">
+                <div className="section-label justify-center mb-4">
+                  <span className="w-6 h-px bg-primary/40" />
+                  {copy.guidesLabel}
+                  <span className="w-6 h-px bg-primary/40" />
+                </div>
+                <h2 className="text-[28px] sm:text-[36px] md:text-[42px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
+                  {copy.guidesTitle}
+                </h2>
+                <p className="mt-4 text-[15px] text-muted-foreground max-w-xl mx-auto leading-[1.7]">
+                  {copy.guidesLede}
+                </p>
+              </div>
+            </Reveal>
+
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {CREATOR_GUIDES.map((g, i) => (
+                <Reveal key={g.slug} delay={Math.min(i, 5) * 60}>
+                  <Link
+                    to={`/blog/${g.slug}`}
+                    className="group h-full flex flex-col rounded-2xl border border-border/60 bg-card p-5 hover:border-primary/40 hover:shadow-sm transition-all"
+                  >
+                    <h3 className="text-[15px] font-bold text-foreground tracking-tight group-hover:text-primary transition-colors">
+                      {g.label}
+                    </h3>
+                    <p className="mt-2 text-[13px] text-muted-foreground leading-[1.65]">
+                      {g.blurb}
+                    </p>
+                    <span className="mt-auto pt-4 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-primary/80">
+                      <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+                    </span>
+                  </Link>
+                </Reveal>
+              ))}
+            </div>
+
+            <div className="mt-8 text-center">
+              <Link
+                to="/blog"
+                className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary hover:text-primary/80 transition-colors"
+              >
+                {copy.guidesAll} <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ════════════════════════════════════════
+          FAQ — the single source of this page's
+          FAQPage JSON-LD. Never add a second
+          FAQPage node to this route: two competing
+          nodes on one URL means neither is trusted,
+          and the build validator fails the page.
+      ════════════════════════════════════════ */}
+      <section className="py-16 sm:py-24 px-5 bg-secondary/40">
+        <div className="container mx-auto max-w-3xl">
+          <Reveal>
+            <div className="text-center mb-10">
+              <div className="section-label justify-center mb-4">
+                <span className="w-6 h-px bg-primary/40" />
+                {copy.faqLabel}
+                <span className="w-6 h-px bg-primary/40" />
+              </div>
+              <h2 className="text-[28px] sm:text-[36px] md:text-[42px] font-black text-foreground tracking-[-0.03em] leading-[1.1]">
+                {copy.faqTitle}
+              </h2>
+            </div>
+          </Reveal>
+          <Reveal delay={120}>
+            <div className="rounded-2xl border border-border/60 bg-card px-5 sm:px-7">
+              {copy.faqs.map((f, i) => (
+                <FaqRow key={f.question} q={f.question} a={f.answer} idx={i} />
+              ))}
             </div>
           </Reveal>
         </div>

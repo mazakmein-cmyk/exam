@@ -15,6 +15,10 @@ const post: BlogPost = {
   readingMinutes: 9,
   category: "For Educators",
   tags: [
+    // Routes the end-of-article CTA to /for-creators. See CLUSTER_CTAS in
+    // src/pages/BlogPost.tsx — without it this article funnels a coaching
+    // owner to the student library.
+    "For Creators",
     "coaching institutes",
     "test software for teachers",
     "online exam platform",
