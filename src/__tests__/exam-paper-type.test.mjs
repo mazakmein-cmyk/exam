@@ -213,7 +213,7 @@ test("every access failure path returns false", () => {
 });
 
 test("the create dialog renders the field only when granted", () => {
-  assertContains(CREATE_DIALOG, "const { canSetPaperType } = usePaperTypeAccess();");
+  assertContains(CREATE_DIALOG, "const { canSetPaperType, canSetPaperYear } = usePaperTypeAccess();");
   assertContains(
     CREATE_DIALOG,
     "{canSetPaperType && (",
@@ -226,7 +226,7 @@ test("the create dialog renders the field only when granted", () => {
 });
 
 test("the editor renders the field only when granted", () => {
-  assertContains(EDITOR, "const { canSetPaperType } = usePaperTypeAccess();");
+  assertContains(EDITOR, "const { canSetPaperType, canSetPaperYear } = usePaperTypeAccess();");
   assert(
     EDITOR.indexOf("{canSetPaperType && (") < EDITOR.indexOf("<PaperTypeSelect"),
     "the exam editor must hide the field for an un-granted creator"
@@ -362,8 +362,8 @@ test("the library never names the column anywhere that cannot retry", () => {
     "the fallback has to be keyed off the missing-column signal, not off any error"
   );
   assert(
-    /return build\(EXAM_LIST_BASE_COLUMNS\)/.test(HELPER),
-    "the retry must drop the optional columns rather than give up"
+    /count -= 1;/.test(HELPER) && /columnsFor\(count\)/.test(HELPER),
+    "the retry must drop the optional columns one at a time rather than give up"
   );
 });
 

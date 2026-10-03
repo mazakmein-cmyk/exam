@@ -20,13 +20,24 @@ import { tableHasColumn } from "@/lib/dbFeatures";
 import {
   DEFAULT_PAPER_TYPE,
   PAPER_TYPE_COLUMN,
+  PAPER_YEAR_COLUMN,
+  effectivePaperYear,
   normalizePaperType,
   readPaperType,
+  readPaperYear,
+  requiresPaperYear,
 } from "@/lib/paperType.js";
 
-export { PAPER_TYPE_COLUMN };
+export { PAPER_TYPE_COLUMN, PAPER_YEAR_COLUMN };
 export const PAPER_TYPE_ACCESS_COLUMN = "can_set_paper_type";
 export const PAPER_TYPE_MIGRATION = "20260825000000_add_exam_paper_type.sql";
+/**
+ * The year arrives by its OWN migration, later than the type's. The two are
+ * probed separately for that reason: a database can perfectly well have
+ * paper_type and not yet paper_year, and on such a database the type field
+ * must keep working while the year field simply does not appear.
+ */
+export const PAPER_YEAR_MIGRATION = "20260917000000_add_exam_paper_year.sql";
 
 export type PaperType = "mock" | "pyq";
 
@@ -45,6 +56,11 @@ export type PaperTypeSaveResult = {
 /** Does the live schema know about `exams.paper_type` yet? */
 export function hasPaperTypeColumn(): Promise<boolean> {
   return tableHasColumn("exams", PAPER_TYPE_COLUMN);
+}
+
+/** Does the live schema know about `exams.paper_year` yet? */
+export function hasPaperYearColumn(): Promise<boolean> {
+  return tableHasColumn("exams", PAPER_YEAR_COLUMN);
 }
 
 /**
@@ -119,9 +135,53 @@ export async function paperTypeCopyPatch(
 }
 
 /**
+ * The paper-YEAR field to include in an exam INSERT.
+ *
+ * Takes the TYPE as well as the year, because the stored value depends on both:
+ * a mock stores null however the picker was left. Gated on its own column, so
+ * on a database with paper_type but not yet paper_year the type still saves and
+ * the year is simply absent — which is what such a database can express.
+ */
+export async function paperYearInsertPatch(
+  paperType: PaperType | string | null | undefined,
+  year: number | string | null | undefined
+): Promise<Record<string, unknown>> {
+  if (!(await hasPaperYearColumn())) return {};
+  return { [PAPER_YEAR_COLUMN]: effectivePaperYear(paperType, year) };
+}
+
+/**
+ * The paper-year field to include in an exam UPDATE. Identical to the insert
+ * patch today; named separately for the same reason paperTypeUpdatePatch is.
+ */
+export async function paperYearUpdatePatch(
+  paperType: PaperType | string | null | undefined,
+  year: number | string | null | undefined
+): Promise<Record<string, unknown>> {
+  return paperYearInsertPatch(paperType, year);
+}
+
+/**
+ * The paper-year field to carry onto a duplicate. Reads the SOURCE row, like
+ * paperTypeCopyPatch — a copy of the 2024 paper is still the 2024 paper, and
+ * readPaperYear already refuses to carry a year off a row tagged as a mock.
+ */
+export async function paperYearCopyPatch(
+  source: unknown
+): Promise<Record<string, unknown>> {
+  if (!(await hasPaperYearColumn())) return {};
+  return { [PAPER_YEAR_COLUMN]: readPaperYear(source) };
+}
+
+/**
  * Persist just the paper type. Not used by the exam editor (which folds the
  * field into its one exam UPDATE via paperTypeUpdatePatch) — this is for any
  * caller that needs to change only this.
+ *
+ * Turning a paper into a mock clears its year in the same statement. This is
+ * the one write that moves the type without the year picker beside it, so it
+ * has to carry the pairing rule itself — otherwise a demoted paper would keep a
+ * year that readPaperYear hides but the column still holds.
  */
 export async function savePaperType(
   examId: string,
@@ -129,9 +189,14 @@ export async function savePaperType(
 ): Promise<PaperTypeSaveResult> {
   if (!(await hasPaperTypeColumn())) return { ok: false, reason: "missing-migration" };
 
+  const patch: Record<string, unknown> = { [PAPER_TYPE_COLUMN]: normalizePaperType(value) };
+  if (!requiresPaperYear(value) && (await hasPaperYearColumn())) {
+    patch[PAPER_YEAR_COLUMN] = null;
+  }
+
   const { error } = await supabase
     .from("exams")
-    .update({ [PAPER_TYPE_COLUMN]: normalizePaperType(value) } as never)
+    .update(patch as never)
     .eq("id", examId);
   if (error) return { ok: false, reason: "error", message: error.message };
   return { ok: true };

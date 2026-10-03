@@ -15,10 +15,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import InstructionTemplateAction from "@/components/exam/InstructionTemplateAction";
 import GenerateExamInstruction from "@/components/exam/GenerateExamInstruction";
 import PaperTypeSelect from "@/components/exam/PaperTypeSelect";
+import PaperYearSelect from "@/components/exam/PaperYearSelect";
 import { rowsForText } from "@/lib/instructionTemplates";
 import { usePaperTypeAccess } from "@/hooks/use-paper-type-access";
-import { DEFAULT_PAPER_TYPE } from "@/lib/paperType.js";
-import { paperTypeInsertPatch } from "@/lib/paperTypeSettings";
+import { DEFAULT_PAPER_TYPE, normalizePaperYear, requiresPaperYear } from "@/lib/paperType.js";
+import { paperTypeInsertPatch, paperYearInsertPatch } from "@/lib/paperTypeSettings";
 
 const AVAILABLE_LANGUAGES = [
   { code: "en", label: "English", nativeLabel: "English" },
@@ -47,7 +48,16 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
   // see it; for everyone else this state never moves off "mock", which is what
   // an untagged paper is and what the column defaults to.
   const [paperType, setPaperType] = useState<string>(DEFAULT_PAPER_TYPE);
-  const { canSetPaperType } = usePaperTypeAccess();
+  // Which year a previous-year paper is from, as the picker's string. Kept
+  // across a switch back to Mock rather than cleared, so a creator who flips
+  // the type to look at something and flips back does not have to re-pick it.
+  // What gets STORED is decided by effectivePaperYear inside the patch, which
+  // writes null for a mock no matter what this holds.
+  const [paperYear, setPaperYear] = useState<string>("");
+  const { canSetPaperType, canSetPaperYear } = usePaperTypeAccess();
+  // The year is shown — and therefore demanded — only when the creator can see
+  // the type picker at all, the column exists, and the paper is a PYQ.
+  const needsPaperYear = canSetPaperYear && requiresPaperYear(paperType);
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(["en"]);
   const [primaryLanguage, setPrimaryLanguage] = useState<string>("en");
   const [sections, setSections] = useState<Section[]>([]);
@@ -143,6 +153,15 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       return;
     }
 
+    if (needsPaperYear && normalizePaperYear(paperYear) === null) {
+      toast({
+        title: "Year required",
+        description: "Please pick the year this previous year paper is from.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setUploadingPdf(true);
 
@@ -163,12 +182,19 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       const paperTypePatch = await paperTypeInsertPatch(
         canSetPaperType ? paperType : DEFAULT_PAPER_TYPE
       );
+      // Gated on its own, later migration — see paperTypeSettings.ts. Resolves
+      // to null unless the paper is actually a PYQ.
+      const paperYearPatch = await paperYearInsertPatch(
+        canSetPaperType ? paperType : DEFAULT_PAPER_TYPE,
+        paperYear
+      );
 
       // Create exam first
       const { data: exam, error: examError } = await supabase
         .from("exams")
         .insert({
           ...paperTypePatch,
+          ...paperYearPatch,
           user_id: user.id,
           name: examName,
           description: examDescription || null,
@@ -259,6 +285,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       setExamName("");
       setExamCategory("");
       setPaperType(DEFAULT_PAPER_TYPE);
+      setPaperYear("");
       setExamDescription("");
       setGeneralInstruction("");
       setExamSpecificInstruction("");
@@ -293,6 +320,18 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
       toast({
         title: "Invalid exam",
         description: "Please select an exam category",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Mandatory, but only where it is visible: a creator without the grant has
+    // no PYQ to tag, and a database without the column has nowhere to put the
+    // answer. Both of those are folded into needsPaperYear.
+    if (needsPaperYear && normalizePaperYear(paperYear) === null) {
+      toast({
+        title: "Year required",
+        description: "Please pick the year this previous year paper is from.",
         variant: "destructive",
       });
       return;
@@ -341,11 +380,16 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
     const paperTypePatch = await paperTypeInsertPatch(
       canSetPaperType ? paperType : DEFAULT_PAPER_TYPE
     );
+    const paperYearPatch = await paperYearInsertPatch(
+      canSetPaperType ? paperType : DEFAULT_PAPER_TYPE,
+      paperYear
+    );
 
     const { data: exam, error: examError } = await supabase
       .from("exams")
       .insert({
         ...paperTypePatch,
+        ...paperYearPatch,
         user_id: user.id,
         name: examName,
         description: examDescription || null,
@@ -412,6 +456,7 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
     setExamName("");
     setExamCategory("");
     setPaperType(DEFAULT_PAPER_TYPE);
+    setPaperYear("");
     setExamDescription("");
     setGeneralInstruction("");
     setExamSpecificInstruction("");
@@ -475,6 +520,28 @@ const CreateExamDialog = ({ open, onOpenChange, onExamCreated }: Props) => {
                   <p className="text-xs text-muted-foreground">
                     Optional. Students can filter the library by this — leave it on Mock Exam if
                     the paper isn't a past year's.
+                  </p>
+                </div>
+              )}
+
+              {/* The year, and only for a previous-year paper. Required: a PYQ
+                  without a year cannot be found by the one filter students
+                  reach for, and "2024" is half of what they searched for. It
+                  appears and disappears with the picker above it, so nothing is
+                  asked of a creator writing a mock. */}
+              {needsPaperYear && (
+                <div className="space-y-2">
+                  <Label htmlFor="exam-paper-year" className="text-sm font-medium">
+                    Year <span className="text-destructive">*</span>
+                  </Label>
+                  <PaperYearSelect
+                    id="exam-paper-year"
+                    value={paperYear}
+                    onChange={setPaperYear}
+                    className="h-11"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Which year's paper is this? Students filter previous year papers by it.
                   </p>
                 </div>
               )}

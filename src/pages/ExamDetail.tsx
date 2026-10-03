@@ -88,12 +88,24 @@ import GenerateExamInstruction, { type ExamFacts } from "@/components/exam/Gener
 import { rowsForText } from "@/lib/instructionTemplates";
 import { navigationCopyPatch, readNavigationSettings, saveNavigationSettings } from "@/lib/examSettings";
 import PaperTypeSelect from "@/components/exam/PaperTypeSelect";
+import PaperYearSelect from "@/components/exam/PaperYearSelect";
 import { usePaperTypeAccess } from "@/hooks/use-paper-type-access";
-import { DEFAULT_PAPER_TYPE, readPaperType } from "@/lib/paperType.js";
+import {
+  DEFAULT_PAPER_TYPE,
+  normalizePaperYear,
+  paperYearPickerValue,
+  readPaperType,
+  readPaperYear,
+  requiresPaperYear,
+  storedPaperYearValue,
+} from "@/lib/paperType.js";
 import {
   PAPER_TYPE_MIGRATION,
+  PAPER_YEAR_MIGRATION,
   paperTypeCopyPatch,
   paperTypeUpdatePatch,
+  paperYearCopyPatch,
+  paperYearUpdatePatch,
 } from "@/lib/paperTypeSettings";
 import { sumSectionMinutes } from "@/lib/examNavigation.js";
 import { collectExamFacts as collectInstructionFacts } from "@/services/examInstructionFacts";
@@ -144,6 +156,7 @@ type Exam = {
   exam_category: string | null;
   /** Mock vs previous-year paper — absent means the migration has not been applied (reads as mock). */
   paper_type?: string | null;
+  paper_year?: number | null;
   user_id: string;
   is_published: boolean;
   supported_languages?: string[];
@@ -252,7 +265,16 @@ export default function ExamDetail() {
   // has granted it; for everyone else this holds whatever the row already says
   // (mock, for every exam made without the grant) and the save leaves it alone.
   const [paperType, setPaperType] = useState<string>(DEFAULT_PAPER_TYPE);
-  const { canSetPaperType } = usePaperTypeAccess();
+  // The year, as the picker's string ("" = nothing chosen). Held independently
+  // of the type so flipping to Mock and back does not lose it; what gets
+  // STORED is effectivePaperYear(type, year), which is null for a mock.
+  const [paperYear, setPaperYear] = useState<string>("");
+  const { canSetPaperType, canSetPaperYear } = usePaperTypeAccess();
+  // Shown, and therefore required, only for a granted creator on a PYQ with
+  // the column present. Papers tagged before this field existed have no year:
+  // the editor is where they get one, which is why this is enforced on save
+  // rather than only at creation.
+  const needsPaperYear = canSetPaperYear && requiresPaperYear(paperType);
   // Off for everyone until an admin grants it; the edge function re-checks the
   // same grant, so this only decides whether the menu item renders.
   const { canUseAiImport } = useAiImportAccess();
@@ -328,6 +350,10 @@ export default function ExamDetail() {
     name: "",
     category: "",
     paper_type: DEFAULT_PAPER_TYPE as string,
+    // Stored as the picker's string, and always the EFFECTIVE value (so a mock
+    // baselines as ""). Comparing effective-to-effective is what stops a
+    // flip to Mock and back from reading as an unsaved change.
+    paper_year: "" as string,
     description_translations: {} as Record<string, string>,
     instruction_translations: {} as Record<string, string>,
     exam_instruction_translations: {} as Record<string, string>
@@ -344,6 +370,7 @@ export default function ExamDetail() {
       examTitle !== initialExamDataRef.current.name ||
       examCategory !== initialExamDataRef.current.category ||
       paperType !== initialExamDataRef.current.paper_type ||
+      storedPaperYearValue(paperType, paperYear) !== initialExamDataRef.current.paper_year ||
       JSON.stringify(examDescriptionTrans) !== JSON.stringify(initialExamDataRef.current.description_translations) ||
       JSON.stringify(generalInstructionTrans) !== JSON.stringify(initialExamDataRef.current.instruction_translations) ||
       JSON.stringify(examSpecificInstructionTrans) !== JSON.stringify(initialExamDataRef.current.exam_instruction_translations);
@@ -362,7 +389,7 @@ export default function ExamDetail() {
     const isEditing = editingQuestionId !== null;
 
     setIsDirty(isExamChanged || isEditing || (isQuestionFormDirty && !editingQuestionId));
-  }, [examTitle, examCategory, paperType, examDescriptionTrans, generalInstructionTrans, examSpecificInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionOptionImages, newQuestionImages, newQuestionCorrect]);
+  }, [examTitle, examCategory, paperType, paperYear, examDescriptionTrans, generalInstructionTrans, examSpecificInstructionTrans, exam, editingQuestionId, newQuestionText, newQuestionOptions, newQuestionOptionImages, newQuestionImages, newQuestionCorrect]);
 
   // Section Switch Confirmation State
   const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
@@ -681,6 +708,9 @@ export default function ExamDetail() {
       setExamCategory((examData as any).exam_category || "");
       // Absent column (or a row written before the migration) reads as mock.
       setPaperType(readPaperType(examData));
+      // Absent, or a paper tagged before the year field existed, reads as no
+      // year — never guessed from the title.
+      setPaperYear(paperYearPickerValue(readPaperYear(examData)));
 
       // Navigation mode. An absent column (migration not applied yet) reads as
       // locked, which is exactly what such a database can serve.
@@ -720,6 +750,7 @@ export default function ExamDetail() {
         name: examData.name,
         category: (examData as any).exam_category || "",
         paper_type: readPaperType(examData),
+        paper_year: paperYearPickerValue(readPaperYear(examData)),
         description_translations: descTrans,
         instruction_translations: instTrans,
         exam_instruction_translations: examInstTrans
@@ -939,6 +970,20 @@ export default function ExamDetail() {
       return false;
     }
 
+    // A previous-year paper has to say which year. This also catches the papers
+    // tagged before the field existed, whose year is empty by design — the
+    // first save after opening one is where it gets filled in. It can only
+    // fire for a creator who can SEE the field (needsPaperYear folds in the
+    // grant and the column), so nobody is ever blocked by an invisible rule.
+    if (needsPaperYear && normalizePaperYear(paperYear) === null) {
+      toast({
+        title: "Validation Error",
+        description: "Please pick the year this previous year paper is from",
+        variant: "destructive",
+      });
+      return false;
+    }
+
     const currentDesc = examDescriptionTrans[activeLanguage] || "";
     const currentInst = generalInstructionTrans[activeLanguage] || "";
 
@@ -972,6 +1017,7 @@ export default function ExamDetail() {
 
     // Set below, read after the try block: did the paper type get left behind?
     let paperTypeDropped = false;
+    let paperYearDropped = false;
 
     setSaving(true);
     try {
@@ -986,11 +1032,25 @@ export default function ExamDetail() {
         Object.keys(paperTypePatch).length === 0 &&
         paperType !== initialExamDataRef.current.paper_type;
 
+      // The year rides on the same two conditions and one more of its own: its
+      // column arrives by a LATER migration, so it can be missing on a database
+      // where the type saves fine. Gated on canSetPaperType rather than
+      // needsPaperYear, because turning a PYQ back into a mock has to be able
+      // to clear the year it is leaving behind.
+      const paperYearPatch = canSetPaperType
+        ? await paperYearUpdatePatch(paperType, paperYear)
+        : {};
+      paperYearDropped =
+        canSetPaperType &&
+        Object.keys(paperYearPatch).length === 0 &&
+        storedPaperYearValue(paperType, paperYear) !== initialExamDataRef.current.paper_year;
+
       // Update Exam
       const { error: examError } = await supabase
         .from("exams")
         .update({
           ...paperTypePatch,
+          ...paperYearPatch,
           name: examTitle,
           exam_category: examCategory,
           description: examDescriptionTrans['en'] || currentDesc,
@@ -1016,6 +1076,13 @@ export default function ExamDetail() {
         toast({
           title: "Paper type not saved",
           description: `Every other change saved. Apply ${PAPER_TYPE_MIGRATION} to store the paper type.`,
+          variant: "destructive",
+        });
+      }
+      if (paperYearDropped) {
+        toast({
+          title: "Year not saved",
+          description: `Every other change saved. Apply ${PAPER_YEAR_MIGRATION} to store the paper year.`,
           variant: "destructive",
         });
       }
@@ -1046,6 +1113,9 @@ export default function ExamDetail() {
       // A dropped paper type keeps its OLD baseline, so the field reads as
       // still-unsaved rather than pretending the write landed.
       paper_type: paperTypeDropped ? initialExamDataRef.current.paper_type : paperType,
+      paper_year: paperYearDropped
+        ? initialExamDataRef.current.paper_year
+        : storedPaperYearValue(paperType, paperYear),
       description_translations: examDescriptionTrans,
       instruction_translations: generalInstructionTrans,
       exam_instruction_translations: examSpecificInstructionTrans
@@ -1109,15 +1179,17 @@ export default function ExamDetail() {
       // Paper type comes from the SOURCE row, not the picker: a copy is a copy,
       // including for a creator whose grant was revoked after the original was
       // tagged. Absent (so default 'mock') on an un-migrated database.
-      const [navPatch, paperPatch] = await Promise.all([
+      const [navPatch, paperPatch, paperYearPatch] = await Promise.all([
         navigationCopyPatch(exam),
         paperTypeCopyPatch(exam),
+        paperYearCopyPatch(exam),
       ]);
       const { data: newExam, error: examError } = await supabase
         .from("exams")
         .insert({
           ...navPatch,
           ...paperPatch,
+          ...paperYearPatch,
           name: `${exam.name} (Copy)`,
           description: exam.description,
           description_translations: exam.description_translations,
@@ -4208,6 +4280,24 @@ export default function ExamDetail() {
                     />
                     <p className="text-[11px] text-muted-foreground">
                       Optional — students can filter the library by this.
+                    </p>
+                  </div>
+                )}
+                {/* Required, and only for a previous-year paper. A paper tagged
+                    before this field existed has no year: this is where it
+                    gets one, and the save will not go through without it. */}
+                {needsPaperYear && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Year <span className="text-destructive">*</span>
+                    </Label>
+                    <PaperYearSelect
+                      value={paperYear}
+                      onChange={setPaperYear}
+                      className="rounded-lg"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Which year's paper is this? Students filter by it.
                     </p>
                   </div>
                 )}

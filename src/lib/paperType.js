@@ -124,3 +124,157 @@ export function parsePaperTypeParam(params) {
     .filter((v) => PAPER_TYPE_VALUES.includes(v));
   return Array.from(new Set(values));
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * THE YEAR — which year's paper is this?
+ *
+ * Lives in this module rather than its own because it is not an independent
+ * field: a year only means anything on a previous-year paper. Keeping the two
+ * together makes that pairing enforceable in one function
+ * (effectivePaperYear), which is what every write and every read goes through.
+ *
+ * Its column arrives by a SEPARATE hand-pasted migration
+ * (20260917000000_add_exam_paper_year.sql), so "absent" has to behave: a row
+ * with no paper_year reads as "no year", exactly like every paper that existed
+ * before the field did. Those are never backfilled from the title — a numeral
+ * in a title is a guess, and a guess behind a student's filter is worse than
+ * a blank.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/** The column on `exams`. Exported so the tests and the settings module agree. */
+export const PAPER_YEAR_COLUMN = "paper_year";
+
+/** The oldest year the picker offers. */
+export const PAPER_YEAR_MIN = 1990;
+
+/**
+ * The newest year a STORED value may hold — the CHECK constraint's bound, not
+ * the picker's. Reading is deliberately more generous than choosing: a reader
+ * whose clock is wrong (or who loads the page on New Year's Eve) must still see
+ * the year a creator legitimately picked.
+ */
+export const PAPER_YEAR_MAX = 2100;
+
+/** This year, as the picker's upper bound. Split out so tests can pin it. */
+export function currentPaperYear() {
+  return new Date().getFullYear();
+}
+
+/**
+ * The years a creator may choose, newest first — 2026, 2025, … 1990. Newest
+ * first because that is where nearly every paper being added actually sits;
+ * 1990 is reachable by scrolling, which is the right cost for a 35-year-old
+ * paper.
+ */
+export function paperYearOptions(now = currentPaperYear()) {
+  const newest = Math.max(now, PAPER_YEAR_MIN);
+  const years = [];
+  for (let year = newest; year >= PAPER_YEAR_MIN; year--) years.push(year);
+  return years;
+}
+
+/** `{ label, value }[]` for the dropdown components. Values are strings. */
+export function paperYearSelectOptions(now = currentPaperYear()) {
+  return paperYearOptions(now).map((year) => ({ label: String(year), value: String(year) }));
+}
+
+/**
+ * Coerce anything into a stored year, or null. Accepts the string form the
+ * picker and the URL both carry ("2024"), and rejects everything that is not a
+ * whole year inside the constraint's range — so a hand-edited ?year=, a float,
+ * or a value from a future release degrades to "no year" rather than to an
+ * error.
+ */
+export function normalizePaperYear(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const year = typeof value === "number" ? value : Number(String(value).trim());
+  if (!Number.isInteger(year)) return null;
+  return year >= PAPER_YEAR_MIN && year <= PAPER_YEAR_MAX ? year : null;
+}
+
+/** Does a paper of this type need a year? Only a previous-year paper does. */
+export function requiresPaperYear(paperType) {
+  return normalizePaperType(paperType) === PAPER_TYPE_PYQ;
+}
+
+/**
+ * The year to STORE for a (type, year) pair — null for a mock, whatever was
+ * picked for a PYQ.
+ *
+ * This is the pairing rule, and it is the only copy of it. Every write goes
+ * through it, so a mock can never carry a year; every read goes through it too
+ * (see readPaperYear), so even a row written by some other client cannot put a
+ * year on a mock in front of a student.
+ */
+export function effectivePaperYear(paperType, year) {
+  return requiresPaperYear(paperType) ? normalizePaperYear(year) : null;
+}
+
+/**
+ * Read the year off an already-fetched exam row, or null. An absent column
+ * (migration not applied, or the library's optional-column fallback dropped it)
+ * reads as no year — which is what such a database can serve.
+ */
+export function readPaperYear(examRow) {
+  const row = examRow ?? {};
+  return effectivePaperYear(row[PAPER_TYPE_COLUMN], row[PAPER_YEAR_COLUMN]);
+}
+
+/**
+ * Does this exam pass the library's year filter?
+ *
+ * An empty (or entirely unparseable) selection means "no filter". Otherwise it
+ * is an OR over the selected years, and a paper with no year — every mock, and
+ * every PYQ tagged before this field existed — does NOT pass. That is the
+ * honest answer: the reader asked for a specific year and the paper does not
+ * claim one.
+ */
+export function matchesPaperYearFilter(examRow, selected) {
+  if (!Array.isArray(selected) || selected.length === 0) return true;
+  const wanted = selected.map(normalizePaperYear).filter((year) => year !== null);
+  if (wanted.length === 0) return true;
+  const year = readPaperYear(examRow);
+  return year !== null && wanted.includes(year);
+}
+
+/**
+ * Parse the library's `?year=` parameter. Accepts repeated params and comma
+ * lists (`?year=2024&year=2023`, `?year=2024,2023`) — the same shape the
+ * category and type filters accept — and drops anything that is not a year the
+ * column could hold, so a hand-edited URL degrades to "no filter" instead of an
+ * empty library. Returns strings, because that is what the dropdown and the URL
+ * both speak.
+ */
+export function parsePaperYearParam(params) {
+  if (!params || typeof params.getAll !== "function") return [];
+  const values = params
+    .getAll("year")
+    .flatMap((v) => String(v).split(","))
+    .map((v) => normalizePaperYear(v))
+    .filter((year) => year !== null)
+    .map(String);
+  return Array.from(new Set(values));
+}
+
+/**
+ * The picker's string for a year value — "" when there is none.
+ *
+ * Shared because the create dialog, the editor and the editor's DIRTY CHECK
+ * all have to agree on it: a stray `String(null)` in any one of them would
+ * read as an unsaved change that no amount of saving could clear.
+ */
+export function paperYearPickerValue(year) {
+  const normalized = normalizePaperYear(year);
+  return normalized === null ? "" : String(normalized);
+}
+
+/**
+ * What a (type, year) pair would be STORED as, in the picker's own spelling.
+ * This is the value the dirty check compares, so that flipping the type to
+ * Mock and back — which changes nothing a save would write — does not leave
+ * the form looking unsaved.
+ */
+export function storedPaperYearValue(paperType, year) {
+  return paperYearPickerValue(effectivePaperYear(paperType, year));
+}

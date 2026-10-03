@@ -24,10 +24,13 @@ import LazyDialogHost from "@/components/LazyDialogHost";
 import {
     PAPER_TYPE_PYQ,
     matchesPaperTypeFilter,
+    matchesPaperYearFilter,
     paperTypeFilterOptions,
     paperTypeLabel,
     parsePaperTypeParam,
+    parsePaperYearParam,
     readPaperType,
+    readPaperYear,
 } from "@/lib/paperType.js";
 import {
     DropdownMenu,
@@ -203,6 +206,9 @@ const ExamCard = memo(({ exam, creator, creatorsPending, onShare }: ExamCardProp
         is_admin_gold: creator?.is_admin_gold,
         is_verified: creator?.is_verified,
     });
+    // Null for every mock, and for the previous-year papers tagged before the
+    // year field existed — the badge just says less in that case.
+    const paperYear = readPaperYear(exam);
     return (
         <div className="group flex flex-col justify-between rounded-xl border border-border/60 bg-card hover:shadow-lg hover:shadow-black/5 hover:-translate-y-0.5 transition-all duration-200 overflow-hidden">
             <div className="p-5">
@@ -218,7 +224,7 @@ const ExamCard = memo(({ exam, creator, creatorsPending, onShare }: ExamCardProp
                                 "Mock Exam" chip on every card would be noise. */}
                             {readPaperType(exam) === PAPER_TYPE_PYQ && (
                                 <Badge className="text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
-                                    Previous Year Paper
+                                    {paperYear ? `Previous Year Paper · ${paperYear}` : "Previous Year Paper"}
                                 </Badge>
                             )}
                         </div>
@@ -290,6 +296,15 @@ const Marketplace = () => {
     // ?type= value is simply dropped and the library shows everything.
     const [selectedPaperTypes, setSelectedPaperTypes] = useState<string[]>(() =>
         parsePaperTypeParam(searchParams)
+    );
+    // Which years of previous-year paper. This filter only EXISTS alongside the
+    // "Previous Year Paper" tick, so a ?year= that arrives without ?type=pyq is
+    // dropped on the way in: an active filter the reader cannot see is a
+    // library quietly hiding papers for no visible reason.
+    const [selectedYears, setSelectedYears] = useState<string[]>(() =>
+        parsePaperTypeParam(searchParams).includes(PAPER_TYPE_PYQ)
+            ? parsePaperYearParam(searchParams)
+            : []
     );
     const [showOnboardingModal, setShowOnboardingModal] = useState(false);
     const [activeTab, setActiveTab] = useState<"mock" | "live">("mock");
@@ -398,6 +413,29 @@ const Marketplace = () => {
 
     const paperTypeOptions = useMemo(() => paperTypeFilterOptions(), []);
 
+    // Unlike the two type options, years are NOT a fixed list: offering 1990
+    // through today would be 37 rows of which three have papers behind them.
+    // So this is derived from what is actually published, newest first — plus
+    // anything already selected, because an option you cannot see is an option
+    // you cannot switch back off.
+    const yearOptions = useMemo(() => {
+        const years = new Set<string>(selectedYears);
+        for (const exam of exams) {
+            const year = readPaperYear(exam);
+            if (year !== null) years.add(String(year));
+        }
+        return Array.from(years)
+            .sort((a, b) => Number(b) - Number(a))
+            .map((year) => ({ label: year, value: year }));
+    }, [exams, selectedYears]);
+
+    // The year dropdown is shown only next to the tick it belongs to, and only
+    // when it has something to offer — a database without the migration, or a
+    // library whose previous-year papers predate the field, has no years to
+    // choose from and gets no empty dropdown.
+    const showYearFilter =
+        selectedPaperTypes.includes(PAPER_TYPE_PYQ) && yearOptions.length > 0;
+
     // Keep the URL honest as the user edits filters, so the page they are looking
     // at is always the page they can copy out of the address bar. `replace` keeps
     // Back pointing at wherever they came from rather than at every filter tweak.
@@ -419,11 +457,31 @@ const Marketplace = () => {
     // every filter tweak.
     const handlePaperTypeChange = useCallback((next: string[]) => {
         setSelectedPaperTypes(next);
+        // Untick "Previous Year Paper" and the year goes with it. Leaving it
+        // armed would hide papers behind a control that is no longer on screen
+        // — and the URL has to forget it too, or a copied link resurrects it.
+        const keepYears = next.includes(PAPER_TYPE_PYQ);
+        if (!keepYears) setSelectedYears([]);
         setSearchParams(
             (prev) => {
                 const params = new URLSearchParams(prev);
                 params.delete("type");
                 next.forEach((t) => params.append("type", t));
+                if (!keepYears) params.delete("year");
+                return params;
+            },
+            { replace: true }
+        );
+    }, [setSearchParams]);
+
+    // Same contract again: the address bar always describes the list on screen.
+    const handleYearChange = useCallback((next: string[]) => {
+        setSelectedYears(next);
+        setSearchParams(
+            (prev) => {
+                const params = new URLSearchParams(prev);
+                params.delete("year");
+                next.forEach((y) => params.append("year", y));
                 return params;
             },
             { replace: true }
@@ -459,9 +517,13 @@ const Marketplace = () => {
             // An empty selection is "no filter", and an exam with no paper_type
             // (pre-migration row) counts as a mock — never as invisible.
             const paperTypeMatch = matchesPaperTypeFilter(exam, selectedPaperTypes);
-            return textMatch && filterMatch && paperTypeMatch;
+            // ANDed with the rest, like every other filter here. An empty
+            // selection passes everything; a chosen year excludes the papers
+            // that do not claim it, including the ones carrying no year at all.
+            const paperYearMatch = matchesPaperYearFilter(exam, selectedYears);
+            return textMatch && filterMatch && paperTypeMatch && paperYearMatch;
         });
-    }, [exams, searchQuery, selectedCategories, selectedPaperTypes]);
+    }, [exams, searchQuery, selectedCategories, selectedPaperTypes, selectedYears]);
 
     // Infinite scroll: cards materialise in batches as the reader comes down the
     // page. Filtering and search still run over the whole library above.
@@ -484,7 +546,8 @@ const Marketplace = () => {
         if (tab === "live") setLiveRequested(true);
     }, []);
 
-    const hasActiveFilters = selectedCategories.length > 0 || selectedPaperTypes.length > 0;
+    const hasActiveFilters =
+        selectedCategories.length > 0 || selectedPaperTypes.length > 0 || selectedYears.length > 0;
 
     return (
         <div className="min-h-screen bg-background">
@@ -603,6 +666,19 @@ const Marketplace = () => {
                             placeholder="Filter by paper type"
                         />
                     </div>
+                    {/* Appears only once "Previous Year Paper" is ticked — a
+                        year means nothing to a mock, and the control would be
+                        asking a question the library cannot answer. */}
+                    {showYearFilter && (
+                        <div className="w-full md:w-40">
+                            <MultiSelectDropdown
+                                options={yearOptions}
+                                selected={selectedYears}
+                                onChange={handleYearChange}
+                                placeholder="Filter by year"
+                            />
+                        </div>
+                    )}
                 </div>
 
                 {loading ? (
@@ -630,6 +706,7 @@ const Marketplace = () => {
                                     ? `Nothing published under ${[
                                           ...selectedCategories,
                                           ...selectedPaperTypes.map((t) => paperTypeLabel(t)),
+                                          ...selectedYears,
                                       ].join(", ")} yet. New papers get added regularly — try the full library in the meantime.`
                                     : "No exams match your search. Try a different title or category."}
                             </p>
@@ -638,6 +715,7 @@ const Marketplace = () => {
                                 onClick={() => {
                                     setSearchQuery("");
                                     handleCategoryChange([]);
+                                    handleYearChange([]);
                                     handlePaperTypeChange([]);
                                 }}
                             >

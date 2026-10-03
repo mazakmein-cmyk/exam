@@ -171,6 +171,7 @@ export type Database = {
           is_published: boolean
           name: string
           paper_type: string
+          paper_year: number | null
           primary_language: string
           published_languages: string[]
           supported_languages: string[]
@@ -192,6 +193,7 @@ export type Database = {
           is_published?: boolean
           name: string
           paper_type?: string
+          paper_year?: number | null
           primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]
@@ -213,6 +215,7 @@ export type Database = {
           is_published?: boolean
           name?: string
           paper_type?: string
+          paper_year?: number | null
           primary_language?: string
           published_languages?: string[]
           supported_languages?: string[]

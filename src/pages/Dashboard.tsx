@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCounts, type LiveExam, type LiveExamStatus } from "@/services/liveExamService";
 import { navigationCopyPatch } from "@/lib/examSettings";
-import { paperTypeCopyPatch } from "@/lib/paperTypeSettings";
+import { paperTypeCopyPatch, paperYearCopyPatch } from "@/lib/paperTypeSettings";
 import { copyTimingGroups } from "@/lib/timingGroupSettings";
 import { EXAM_LIST_BASE_COLUMNS } from "@/lib/examListQuery";
 import { isModifiedClick } from "@/lib/navigation";
@@ -393,15 +393,19 @@ const Dashboard = () => {
       // the migration applied.
       // Paper type travels the same way, read off the source row — a copy of a
       // previous-year paper is still a previous-year paper.
-      const [navPatch, paperPatch] = await Promise.all([
+      // The year travels with the type, off the same source row — a copy of
+      // the 2024 paper is still the 2024 paper.
+      const [navPatch, paperPatch, paperYearPatch] = await Promise.all([
         navigationCopyPatch(exam),
         paperTypeCopyPatch(exam),
+        paperYearCopyPatch(exam),
       ]);
       const { data: newExam, error: examError } = await supabase
         .from("exams")
         .insert({
           ...navPatch,
           ...paperPatch,
+          ...paperYearPatch,
           name: `${exam.name} (Copy)`,
           description: exam.description,
           description_translations: exam.description_translations,

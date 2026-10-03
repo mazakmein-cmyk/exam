@@ -76,23 +76,29 @@ function isColumnMissingError(error) {
 }
 
 const BASE = "id,name,description,created_at,is_published,exam_category,user_id";
-const WITH_OPTIONAL = `${BASE},paper_type`;
+/** Oldest migration first — the fallback drops from the END of this list. */
+const OPTIONAL = ["paper_type", "paper_year"];
+const WITH_OPTIONAL = `${BASE},${OPTIONAL.join(",")}`;
+/** What the helper asks for when only the first n optional columns exist. */
+const columnsFor = (n) => (n <= 0 ? BASE : `${BASE},${OPTIONAL.slice(0, n).join(",")}`);
 
-/** Mirror of queryExamList, with the session memo passed in so tests can reset it. */
+/** Mirror of queryExamList, with the session memo closed over so tests can reset it. */
 function makeQueryExamList() {
-  let optionalColumnsPresent = null;
+  let serveableOptionalColumns = null;
   return async function queryExamList(build) {
-    const askForOptional = optionalColumnsPresent !== false;
-    const result = await build(askForOptional ? WITH_OPTIONAL : BASE);
-    if (!result.error) {
-      if (askForOptional) optionalColumnsPresent = true;
+    let count = serveableOptionalColumns ?? OPTIONAL.length;
+    for (;;) {
+      const result = await build(columnsFor(count));
+      if (!result.error) {
+        serveableOptionalColumns = count;
+        return result;
+      }
+      if (count > 0 && isColumnMissingError(result.error)) {
+        count -= 1;
+        continue;
+      }
       return result;
     }
-    if (askForOptional && isColumnMissingError(result.error)) {
-      optionalColumnsPresent = false;
-      return build(BASE);
-    }
-    return result;
   };
 }
 
@@ -117,12 +123,12 @@ await test("42703 and the schema-cache wording are both treated as missing", () 
   );
 });
 
-await test("the optional list is exactly paper_type, and the base list names no gated column", () => {
+await test("the optional list is exactly the gated columns, newest LAST", () => {
   assert(
-    /EXAM_LIST_OPTIONAL_COLUMNS = \["paper_type"\]/.test(QUERY_SRC),
-    "if another gated column joins the list, this test should be the thing that notices"
+    /EXAM_LIST_OPTIONAL_COLUMNS = \["paper_type", "paper_year"\]/.test(QUERY_SRC),
+    "if another gated column joins the list, this test should be the thing that notices — and it must be appended, because the fallback drops from the end"
   );
-  for (const gated of ["paper_type", "allow_section_switching", "total_time_minutes"]) {
+  for (const gated of ["paper_type", "paper_year", "allow_section_switching", "total_time_minutes"]) {
     assert(
       !new RegExp(`EXAM_LIST_BASE_COLUMNS =\\s*\\n?\\s*"[^"]*${gated}`).test(QUERY_SRC),
       `${gated} arrives by migration and must never be in the unconditional list`
@@ -140,53 +146,87 @@ await test("asks once, with paper_type, and returns the rows", async () => {
     return Promise.resolve({ data: [{ id: "1", paper_type: "pyq" }], error: null });
   });
   assertEqual(asked.length, 1, "no retry should happen when the first attempt works");
-  assertEqual(asked[0], WITH_OPTIONAL, "the optional column must be requested optimistically");
+  assertEqual(asked[0], WITH_OPTIONAL, "the optional columns must be requested optimistically");
   assertEqual(result.data.length, 1, "rows come back untouched");
   assertEqual(result.data[0].paper_type, "pyq", "the paper type must survive the round trip");
 });
 
-console.log("\n[3] a database WITHOUT the migration");
+console.log("\n[3] a database WITHOUT the migrations");
 
 for (const [label, error] of [
-  ["a Postgres undefined_column error", { code: "42703", message: 'column exams.paper_type does not exist' }],
+  ["a Postgres undefined_column error", { code: "42703", message: "column exams.paper_type does not exist" }],
   [
     "a stale PostgREST schema cache",
     { code: "PGRST204", message: "Could not find the 'paper_type' column of 'exams' in the schema cache" },
   ],
 ]) {
-  await test(`${label} makes it retry WITHOUT the column and still return the library`, async () => {
+  await test(`${label} makes it retry WITHOUT the columns and still return the library`, async () => {
     const queryExamList = makeQueryExamList();
     const asked = [];
+    // Nothing gated exists here, so every attempt naming any optional column fails.
     const result = await queryExamList((columns) => {
       asked.push(columns);
       return Promise.resolve(
-        columns.includes("paper_type")
-          ? { data: null, error }
-          : { data: [{ id: "1" }, { id: "2" }], error: null }
+        columns === BASE ? { data: [{ id: "1" }, { id: "2" }], error: null } : { data: null, error }
       );
     });
-    assertEqual(asked.length, 2, "it must fall back rather than surface the error");
-    assertEqual(asked[1], BASE, "the retry must drop the optional columns");
+    assertEqual(
+      asked.length,
+      OPTIONAL.length + 1,
+      "it must step down one column at a time rather than surface the error"
+    );
+    assertEqual(asked[asked.length - 1], BASE, "the last retry must name no gated column at all");
     assertEqual(result.error, null, "the caller must not see a failure");
     assertEqual(result.data.length, 2, "THE LIBRARY MUST NOT BE EMPTY on a pre-migration database");
   });
 }
 
-await test("the fallback is remembered, so the failed attempt happens once per session", async () => {
+/**
+ * THE case this helper now exists for. paper_type shipped in 20260825000000 and
+ * paper_year in 20260917000000, and both are pasted by hand - so the live
+ * database spends real time holding the first and not the second.
+ *
+ * An all-or-nothing fallback answers that by dropping BOTH, silently
+ * un-shipping the paper-type badge and the library's type filter on a database
+ * where they work perfectly well. Stepping down one column at a time is the
+ * entire reason the memo counts instead of flipping a boolean.
+ */
+await test("a database with paper_type but not paper_year keeps paper_type", async () => {
+  const queryExamList = makeQueryExamList();
+  const asked = [];
+  const result = await queryExamList((columns) => {
+    asked.push(columns);
+    return Promise.resolve(
+      columns.includes("paper_year")
+        ? { data: null, error: { code: "42703", message: "column exams.paper_year does not exist" } }
+        : { data: [{ id: "1", paper_type: "pyq" }], error: null }
+    );
+  });
+  assertEqual(asked.length, 2, "one step down is enough, the older column is fine");
+  assertEqual(asked[1], `${BASE},paper_type`, "only the NEWEST column may be dropped");
+  assertEqual(result.data[0].paper_type, "pyq", "the half of the feature that IS migrated must survive");
+});
+
+await test("the fallback is remembered, so the failed attempts happen once per session", async () => {
   const queryExamList = makeQueryExamList();
   const asked = [];
   const build = (columns) => {
     asked.push(columns);
     return Promise.resolve(
-      columns.includes("paper_type")
-        ? { data: null, error: { code: "42703", message: "column exams.paper_type does not exist" } }
-        : { data: [], error: null }
+      columns === BASE
+        ? { data: [], error: null }
+        : { data: null, error: { code: "42703", message: "column exams.paper_type does not exist" } }
     );
   };
   await queryExamList(build);
+  const firstCallAttempts = asked.length;
   await queryExamList(build);
-  assertEqual(asked.length, 3, "first call probes then retries; the second must go straight to the base list");
-  assertEqual(asked[2], BASE, "the second call must not repeat the doomed request");
+  assertEqual(
+    asked.length,
+    firstCallAttempts + 1,
+    "the first call steps all the way down; the second must go straight to the base list"
+  );
+  assertEqual(asked[asked.length - 1], BASE, "the second call must not repeat the doomed requests");
 });
 
 console.log("\n[4] failures that are NOT about the column");
