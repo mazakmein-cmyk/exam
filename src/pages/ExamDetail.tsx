@@ -196,6 +196,20 @@ export default function ExamDetail() {
   const [sections, setSections] = useState<Section[]>([]); // Sections filtered by active language
   const [section, setSection] = useState<Section | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
+  /**
+   * Which section `questions` currently holds. Switching sections sets the
+   * section first and fetches after, so without this the Sections list would
+   * credit the newly selected row with the previous row's count for a frame.
+   */
+  const questionsSectionIdRef = useRef<string | null>(null);
+  /**
+   * How many questions each section holds — the number shown on every row of
+   * the Sections list. It cannot come from `questions` (that is only the open
+   * section), so it is counted in one query over the whole exam whenever the
+   * section list changes, and the open section's row reads straight off
+   * `questions` so adding or deleting a question moves it with no round trip.
+   */
+  const [questionCountsBySection, setQuestionCountsBySection] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -735,6 +749,7 @@ export default function ExamDetail() {
       if (currentSection) {
         fetchQuestions(currentSection.id);
       } else {
+        questionsSectionIdRef.current = null;
         setQuestions([]);
       }
 
@@ -761,8 +776,92 @@ export default function ExamDetail() {
       console.error("Error fetching questions:", questionsError);
       return;
     }
+    questionsSectionIdRef.current = sectionId;
     setQuestions(questionsData || []);
   };
+
+  /**
+   * Count every section's questions in one pass.
+   *
+   * One query for the whole exam rather than a count per section: the Sections
+   * list wants N numbers, and N head-requests to get them is N round trips on a
+   * free-tier project. Only `section_id` is selected, and it is paged because
+   * PostgREST caps a response at 1000 rows — a silently truncated page would
+   * undercount a big paper, the one failure mode a counting query must not
+   * have.
+   *
+   * A failed count leaves the last known numbers standing. The row renders no
+   * chip for a section it has no number for, which is the honest answer; it
+   * never shows a 0 it has not actually counted.
+   */
+  const refreshQuestionCounts = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) {
+      setQuestionCountsBySection({});
+      return;
+    }
+    const PAGE = 1000;
+    const counts: Record<string, number> = {};
+    for (const id of ids) counts[id] = 0;
+    try {
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("parsed_questions")
+          .select("section_id")
+          .in("section_id", ids)
+          .order("id")
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const rows = (data || []) as { section_id: string }[];
+        for (const row of rows) counts[row.section_id] = (counts[row.section_id] ?? 0) + 1;
+        if (rows.length < PAGE) break;
+      }
+      setQuestionCountsBySection(counts);
+    } catch (err) {
+      console.error("refreshQuestionCounts error:", err);
+    }
+  }, []);
+
+  /**
+   * Recount whenever the set of sections changes — first load, Add Section, a
+   * delete, a language tab appearing. Every language's sections are counted in
+   * the one pass, so switching tabs costs no query at all.
+   */
+  const allSectionIdsKey = useMemo(
+    () => allSections.map((s) => s.id).sort().join(","),
+    [allSections]
+  );
+  useEffect(() => {
+    refreshQuestionCounts(allSectionIdsKey ? allSectionIdsKey.split(",") : []);
+  }, [allSectionIdsKey, refreshQuestionCounts]);
+
+  /**
+   * The number for one row of the Sections list. The open section answers from
+   * `questions`, so adding or deleting a question moves its row at once; every
+   * other row answers from the counted map. `undefined` is "not counted yet" —
+   * the row then shows no chip rather than a 0 it is only guessing at.
+   */
+  const sectionQuestionCount = (sectionId: string): number | undefined =>
+    questionsSectionIdRef.current === sectionId
+      ? questions.length
+      : questionCountsBySection[sectionId];
+
+  /**
+   * The whole paper's question count for the header line, which sits next to
+   * "N sections" and so counts the same set: this language's sections, not the
+   * one that happens to be open. `undefined` while any section is still
+   * uncounted — the header then drops the segment rather than announce a total
+   * that is about to jump.
+   */
+  const totalQuestionCount = useMemo(() => {
+    let total = 0;
+    for (const s of sections) {
+      const n = sectionQuestionCount(s.id);
+      if (n === undefined) return undefined;
+      total += n;
+    }
+    return total;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections, questions, questionCountsBySection]);
 
   /**
    * Re-read sections from the DB and resync page state, keeping the active
@@ -796,6 +895,10 @@ export default function ExamDetail() {
     }
     setSections(currentSections);
 
+    // An import adds questions to sections that already existed, so the id
+    // list is unchanged and the effect above would not fire. Recount here.
+    refreshQuestionCounts(allSecs.map((s) => s.id));
+
     const stillActive = currentSections.find(s => s.id === section?.id) ?? null;
     if (stillActive) {
       setSection(stillActive); // fresh row — name/time may have changed in the dialog
@@ -805,6 +908,7 @@ export default function ExamDetail() {
       if (next) {
         fetchQuestions(next.id);
       } else {
+        questionsSectionIdRef.current = null;
         setQuestions([]);
       }
     }
@@ -3741,7 +3845,7 @@ export default function ExamDetail() {
               )}
             </div>
             <p className="hidden sm:block text-[11px] text-muted-foreground truncate">
-              {examCategory || "No category"} · {sections.length} section{sections.length === 1 ? "" : "s"} · {questions.length} question{questions.length === 1 ? "" : "s"}
+              {examCategory || "No category"} · {sections.length} section{sections.length === 1 ? "" : "s"}{totalQuestionCount === undefined ? "" : ` · ${totalQuestionCount} question${totalQuestionCount === 1 ? "" : "s"}`}
             </p>
           </div>
         </div>
@@ -4326,6 +4430,7 @@ export default function ExamDetail() {
                     {sectionRuns.map((run) => {
                       const renderSectionRow = (s: Section) => {
                         const index = sections.findIndex((x) => x.id === s.id);
+                        const qCount = sectionQuestionCount(s.id);
                         return (
                       <SortableSectionItem key={s.id} id={s.id} disabled={isMultiLang && !isPrimaryLanguage}>
                         <div
@@ -4405,6 +4510,12 @@ export default function ExamDetail() {
                             </Button>
                             </div>
                           </div>
+                          {/* The row's facts line: how long it runs and how
+                              much there is to do. A grouped member has no clock
+                              of its own, so the count is all this line carries —
+                              which is exactly why it is here and not inside the
+                              timing ternary. */}
+                          <div className="flex flex-wrap items-center gap-1.5">
                           {allowSectionSwitching ? (
                             // Switching on: the paper has one clock, so this
                             // section has no time of its own to show. The stored
@@ -4448,6 +4559,35 @@ export default function ExamDetail() {
                               onCommit={(time_minutes) => handleUpdateSection(s.id, { time_minutes })}
                             />
                           )}
+                          {/* No chip at all while the count is unknown — a
+                              section we have not counted yet must not be
+                              described as empty. */}
+                          {qCount !== undefined && (
+                            <span
+                              // Same height and pill shape as the clock beside
+                              // it, so the two read as one line of facts about
+                              // the section rather than two unrelated bits of UI.
+                              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-transparent bg-muted/60 px-2 text-[11px] font-medium text-muted-foreground"
+                              title={
+                                qCount === 0
+                                  ? "This section has no questions yet"
+                                  : `${qCount} question${qCount === 1 ? "" : "s"} in this section`
+                              }
+                            >
+                              <ListChecks className="h-3 w-3 shrink-0" />
+                              {qCount === 0 ? (
+                                "No questions"
+                              ) : (
+                                <>
+                                  <span className="font-bold tabular-nums text-foreground">
+                                    {qCount}
+                                  </span>
+                                  {qCount === 1 ? "question" : "questions"}
+                                </>
+                              )}
+                            </span>
+                          )}
+                          </div>
                         </div>
                       </SortableSectionItem>
                         );
