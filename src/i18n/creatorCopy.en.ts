@@ -71,11 +71,22 @@ export const CREATOR_COPY_EN: CreatorPageCopy = {
             to: "/blog/how-to-create-an-online-mock-test",
             linkLabel: "How to create an online mock test",
         },
+        /**
+         * Row three used to describe live classroom exams, which is the
+         * product's sharpest differentiator — but it linked to a buyer's
+         * checklist, because no guide covering live exams existed yet. Every
+         * row in this band has to hand the reader down to a spoke that
+         * genuinely proves it, so the row became the bilingual capability,
+         * which is equally hard for a general-purpose quiz tool to match and
+         * matters more to this audience than it does to most. Live exams are
+         * still told on this page by Act 3 of the journey, and this row should
+         * go back to them once the live-exam guide is written.
+         */
         {
-            title: "Live exams your class joins from their phones",
-            desc: "Put the question on the projector, students join with one code, answers land on your screen as they lock. Afterwards you get a report you can share by link.",
-            to: "/blog/best-online-test-maker-for-coaching-institutes",
-            linkLabel: "Choosing an online test maker",
+            title: "Hindi and English in one paper, the student chooses",
+            desc: "Most government exams are bilingual, so an English-only mock is not really a mock. One paper carries both languages, and the instructions page, the paper table and the question screen all follow the choice.",
+            to: "/blog/how-to-create-a-bilingual-hindi-english-online-test",
+            linkLabel: "How to build a bilingual paper",
         },
     ],
     guidesLabel: "Guides for educators",

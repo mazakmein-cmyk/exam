@@ -72,11 +72,15 @@ export const CREATOR_COPY_HI: CreatorPageCopy = {
             to: "/blog/how-to-create-an-online-mock-test",
             linkLabel: "ऑनलाइन मॉक टेस्ट कैसे बनाएं",
         },
+        // See the comment on the English twin: this row swapped from live
+        // exams to the bilingual capability so that it links to a guide that
+        // actually proves it. Both languages must name the same destination —
+        // src/__tests__/creator-cluster-tags.test.mjs asserts it.
         {
-            title: "लाइव एग्ज़ाम, जिसमें क्लास अपने-अपने फ़ोन से जुड़ती है",
-            desc: "प्रश्न प्रोजेक्टर पर जाता है, छात्र एक कोड से जुड़ते हैं, और उत्तर लॉक होते ही आपकी स्क्रीन पर आने लगते हैं। बाद में एक रिपोर्ट मिलती है जिसे आप लिंक से शेयर कर सकते हैं।",
-            to: "/blog/best-online-test-maker-for-coaching-institutes",
-            linkLabel: "ऑनलाइन टेस्ट मेकर कैसे चुनें",
+            title: "एक ही पेपर में हिंदी और अंग्रेज़ी, चुनाव छात्र का",
+            desc: "ज़्यादातर सरकारी परीक्षाएँ द्विभाषी होती हैं, इसलिए सिर्फ़ अंग्रेज़ी वाला मॉक असल में मॉक है ही नहीं। एक पेपर दोनों भाषाएँ रखता है, और निर्देशों का पेज, पेपर की टेबल और प्रश्न वाली स्क्रीन — सब उसी चुनाव के साथ चलते हैं।",
+            to: "/blog/how-to-create-a-bilingual-hindi-english-online-test",
+            linkLabel: "द्विभाषी पेपर कैसे बनाएं",
         },
     ],
     guidesLabel: "शिक्षकों के लिए गाइड",

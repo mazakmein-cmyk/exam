@@ -7,6 +7,182 @@
     <description>In-depth guides on mock test strategy, exam preparation, and study plans for JEE, NEET, CAT, GATE, UPSC, SSC, banking, and placement aspirants — from MockSetu (Mockset).</description>
     <language>en-in</language>
     <item>
+      <title>Bulk Upload Questions to an Online Test: JSON vs Excel, Honestly Compared</title>
+      <link>https://mocksetu.in/blog/bulk-upload-questions-to-an-online-test-json-vs-excel</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/bulk-upload-questions-to-an-online-test-json-vs-excel</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Excel upload is what paper-setters ask for. JSON is what actually survives an exam paper. Here is the real argument, the honest limitation, and the one-pass way out if your question bank already lives in a spreadsheet.</description>
+    </item>
+    <item>
+      <title>Competency-Based Questions for the CBSE Pattern: How to Write Them</title>
+      <link>https://mocksetu.in/blog/competency-based-questions-for-the-cbse-pattern</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/competency-based-questions-for-the-cbse-pattern</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A recall question asks what Ohm's law says. A competency-based question hands the student a household circuit and a fuse rating. Here is how to write the second kind, with worked examples in science and maths.</description>
+    </item>
+    <item>
+      <title>How School Teachers Can Create Online Unit Tests</title>
+      <link>https://mocksetu.in/blog/how-school-teachers-can-create-online-unit-tests</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-school-teachers-can-create-online-unit-tests</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A unit test is short, frequent and diagnostic - around twenty questions, twenty-five minutes, no negative marking. Here is how to build one online, run it on the phones your class actually owns, and use what comes back.</description>
+    </item>
+    <item>
+      <title>How to Add Math Equations (LaTeX) to Online Test Questions</title>
+      <link>https://mocksetu.in/blog/how-to-add-math-equations-to-online-test-questions</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-add-math-equations-to-online-test-questions</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Equations are the part of a physics or maths paper that stalls halfway. Type the LaTeX, double every backslash inside JSON exactly once, and snip the expressions that are not worth the markup.</description>
+    </item>
+    <item>
+      <title>How to Conduct an Online Exam for Students: Before, During and After</title>
+      <link>https://mocksetu.in/blog/how-to-conduct-an-online-exam-for-students</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-conduct-an-online-exam-for-students</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Conducting an online exam is three jobs, not one: finish the paper, survive the window, and do something useful with the results. Here is the operational detail of each, including what you genuinely cannot see while students are writing.</description>
+    </item>
+    <item>
+      <title>How to Reduce Cheating in Online Tests Without Proctoring Software</title>
+      <link>https://mocksetu.in/blog/how-to-reduce-cheating-in-online-tests-without-proctoring</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-reduce-cheating-in-online-tests-without-proctoring</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>MockSetu has no webcam monitoring, no lockdown browser and no tab-switch detection, and a published paper is public. For a practice test, that matters far less than vendors imply - here is what actually works instead.</description>
+    </item>
+    <item>
+      <title>How to Write Good Multiple-Choice Questions</title>
+      <link>https://mocksetu.in/blog/how-to-write-good-multiple-choice-questions</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-write-good-multiple-choice-questions</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A good multiple-choice question can be answered from the stem alone, has exactly one defensible key, and offers three wrong options that real students actually pick. Here is how to write one, and how to fix one that is already broken.</description>
+    </item>
+    <item>
+      <title>What Makes a Mock Test Realistic? A Fidelity Checklist for Creators</title>
+      <link>https://mocksetu.in/blog/what-makes-a-mock-test-realistic</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/what-makes-a-mock-test-realistic</guid>
+      <pubDate>Sat, 03 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A mock test is realistic when it forces the same decisions the real exam forces. That is the clock and the marking scheme first, the interface next, then difficulty, and looks last.</description>
+    </item>
+    <item>
+      <title>Mock Test Format for Competitive Exams: A Paper Setter's Reference</title>
+      <link>https://mocksetu.in/blog/mock-test-format-for-competitive-exams-reference</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/mock-test-format-for-competitive-exams-reference</guid>
+      <pubDate>Fri, 02 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A mock test format is seven decisions, not one number. Here is the checklist to fill before you build the paper, the three formats that can be stated with confidence, and what to do for every other exam.</description>
+    </item>
+    <item>
+      <title>Online Exam Instructions Template for Students (Copy, Adapt, Publish)</title>
+      <link>https://mocksetu.in/blog/online-exam-instructions-template-for-students</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/online-exam-instructions-template-for-students</guid>
+      <pubDate>Fri, 02 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A complete instructions block you can paste into your paper and adapt line by line, a shorter one for a school unit test with no negative marking, and the fix for the failure that ruins both - instructions that no longer describe the paper.</description>
+    </item>
+    <item>
+      <title>Online Test Platform for Hindi-Medium Coaching Institutes</title>
+      <link>https://mocksetu.in/blog/online-test-platform-for-hindi-medium-coaching-institutes</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/online-test-platform-for-hindi-medium-coaching-institutes</guid>
+      <pubDate>Thu, 01 Oct 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Four things decide whether an online test platform works for a Hindi-medium institute: Devanagari that renders, a readable instructions page, bilingual papers, and previous-year papers you did not retype. Here is how to check each one.</description>
+    </item>
+    <item>
+      <title>How to Create a Bilingual Hindi-English Online Test</title>
+      <link>https://mocksetu.in/blog/how-to-create-a-bilingual-hindi-english-online-test</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-create-a-bilingual-hindi-english-online-test</guid>
+      <pubDate>Wed, 30 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>SSC, railway and bank papers are set in Hindi and English, so an English-only mock is not a mock. Here is how to set the languages up front, import one language at a time, and publish a Hindi-English paper that does not break.</description>
+    </item>
+    <item>
+      <title>Negative Marking Schemes of Indian Exams: What to Set, What to Look Up</title>
+      <link>https://mocksetu.in/blog/negative-marking-schemes-of-indian-exams-for-paper-setters</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/negative-marking-schemes-of-indian-exams-for-paper-setters</guid>
+      <pubDate>Tue, 29 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>The penalty is the first number you set on a paper and the last one anybody checks. Here are the schemes worth stating with confidence, and the ones no blog should be giving you a number for.</description>
+    </item>
+    <item>
+      <title>How to Add Negative Marking to an Online Test (per Question, per Section)</title>
+      <link>https://mocksetu.in/blog/how-to-add-negative-marking-to-an-online-test</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-add-negative-marking-to-an-online-test</guid>
+      <pubDate>Sat, 26 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Negative marking is three numbers per question, not a switch. Here is how to set them, how to give one paper two different rules, and when a penalty is just cruelty.</description>
+    </item>
+    <item>
+      <title>How to Use ChatGPT to Convert a Question Paper Into Import-Ready JSON</title>
+      <link>https://mocksetu.in/blog/how-to-use-chatgpt-to-convert-a-question-paper-into-import-ready-json</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-use-chatgpt-to-convert-a-question-paper-into-import-ready-json</guid>
+      <pubDate>Thu, 24 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>If you already pay for ChatGPT, you already own the hardest part of digitising a question paper. Here is the exact workflow, and the three things that come back wrong.</description>
+    </item>
+    <item>
+      <title>PDF to CBT: How a Question Paper Becomes a Computer-Based Test</title>
+      <link>https://mocksetu.in/blog/pdf-to-cbt-how-a-question-paper-becomes-a-computer-based-test</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/pdf-to-cbt-how-a-question-paper-becomes-a-computer-based-test</guid>
+      <pubDate>Wed, 23 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Converting a PDF into a computer-based test is not a file conversion. It is a recovery job: six things have to come off the page before the clock, the palette and the scoring can exist at all.</description>
+    </item>
+    <item>
+      <title>How to Create a Chapter-Wise Test Online</title>
+      <link>https://mocksetu.in/blog/how-to-create-a-chapter-wise-test-online</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-create-a-chapter-wise-test-online</guid>
+      <pubDate>Tue, 22 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A chapter test is the workhorse of a coaching programme: 20 to 25 questions, timed at the real exam's per-question pace, on one chapter. Here is how to size one, mark it, section it, and sequence a year of them.</description>
+    </item>
+    <item>
+      <title>How to Create a Previous Year Paper Mock Test (and Why It Draws Students)</title>
+      <link>https://mocksetu.in/blog/how-to-create-a-previous-year-paper-mock-test</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-create-a-previous-year-paper-mock-test</guid>
+      <pubDate>Sat, 19 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A previous year paper is a reproduction, not an adaptation. Here is how to build one faithfully - paper type, shift code, original timing, the real marking scheme, and a key you transcribed rather than solved.</description>
+    </item>
+    <item>
+      <title>How to Share an Online Test With Students: Links, QR Codes and WhatsApp</title>
+      <link>https://mocksetu.in/blog/how-to-share-an-online-test-with-students</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-share-an-online-test-with-students</guid>
+      <pubDate>Fri, 18 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A published paper has a link, and that link is the entire distribution mechanism. Here is how to publish it, turn it into a QR code, post it to a WhatsApp group without it getting buried, and what a student actually sees when they tap it.</description>
+    </item>
+    <item>
+      <title>How to Create an Online Test Series: From One Paper to a Full Programme</title>
+      <link>https://mocksetu.in/blog/how-to-create-an-online-test-series</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-create-an-online-test-series</guid>
+      <pubDate>Thu, 17 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>One paper is a weekend's work. A series is a promise you have to keep for six months. Here is the shape, the realistic paper count, the backwards calendar, and the naming that stops students guessing.</description>
+    </item>
+    <item>
+      <title>How to Create an MCQ Test Online: Format, Marking and Delivery</title>
+      <link>https://mocksetu.in/blog/how-to-create-an-mcq-test-online</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-create-an-mcq-test-online</guid>
+      <pubDate>Wed, 16 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>Four decisions make an MCQ test honest: the answer type, the number of options, what correct and wrong are worth, and how the paper reaches students. Here is how to settle each one.</description>
+    </item>
+    <item>
+      <title>How to Create a Timed Online Test With Auto-Submit</title>
+      <link>https://mocksetu.in/blog/how-to-create-a-timed-online-test-with-auto-submit</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-create-a-timed-online-test-with-auto-submit</guid>
+      <pubDate>Tue, 15 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A timer is three decisions, not one: which clock the student sees, what happens at zero, and whether sections stay open. Here is how to set each one, and what a countdown cannot do for you.</description>
+    </item>
+    <item>
       <title>JEE Main Notes and Formula Sheets You Will Actually Reread</title>
       <link>https://mocksetu.in/blog/jee-main-revision-notes-and-formula-sheets</link>
       <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-revision-notes-and-formula-sheets</guid>
@@ -31,12 +207,28 @@
       <description>A preferred branch at a lesser institute, or a lesser branch at a better one. The fork is not a values question — it is a question about what each half of the trade actually buys.</description>
     </item>
     <item>
+      <title>How to Make a Question Paper Online (and Deliver It as a Real Exam)</title>
+      <link>https://mocksetu.in/blog/how-to-make-a-question-paper-online</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/how-to-make-a-question-paper-online</guid>
+      <pubDate>Fri, 11 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A question paper generator stops at a PDF you print. Building the paper and delivering it are two different jobs - and only the second one gives you data back.</description>
+    </item>
+    <item>
       <title>JEE Main Repeated Questions: The Templates That Come Back Every Year</title>
       <link>https://mocksetu.in/blog/jee-main-repeated-questions-and-patterns</link>
       <guid isPermaLink="true">https://mocksetu.in/blog/jee-main-repeated-questions-and-patterns</guid>
       <pubDate>Fri, 11 Sep 2026 03:30:00 GMT</pubDate>
       <category>Exam Strategy</category>
       <description>Candidates search for a list of questions that will reappear. What actually reappears is the configuration, with the numbers and the story changed. Recognising templates is a skill you can train deliberately.</description>
+    </item>
+    <item>
+      <title>Free Online Test Maker for School Teachers: Set Up Your First Class Test</title>
+      <link>https://mocksetu.in/blog/free-online-test-maker-for-school-teachers</link>
+      <guid isPermaLink="true">https://mocksetu.in/blog/free-online-test-maker-for-school-teachers</guid>
+      <pubDate>Thu, 10 Sep 2026 03:30:00 GMT</pubDate>
+      <category>For Educators</category>
+      <description>A timed class test, online, on a link any phone can open, in about twenty minutes. Here is the whole sequence - what to decide first, how to add questions three ways, and what free actually costs you.</description>
     </item>
     <item>
       <title>The JEE Main Exam Screen: Practising the Interface, Not Just the Syllabus</title>
