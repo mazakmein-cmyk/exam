@@ -36,7 +36,7 @@ const post: BlogPost = {
     },
     {
       type: "p",
-      text: "Doing the first and skipping the second is how a small keying slip turns into a batch that quietly stops trusting the test series. What follows covers both: confirm the error, correct it, decide whether the question should stand at all, tell the batch, and close the dispute. If the key came out of a PDF extraction rather than your own typing, look for a pattern before you fix anything: a misread set code, or a key column read off by one, produces wrong answers in groups rather than one at a time.",
+      text: "Doing the first and skipping the second is how a small keying slip turns into a batch that quietly stops trusting the test series. What follows covers both: confirm the error, correct it, decide whether the question should stand at all, tell the batch, and close the dispute. If the key came out of a PDF extraction rather than your own typing, look for a pattern before you fix anything: a misread set code, or a key column read off by one, produces wrong answers in groups rather than one at a time. [Fixing answer key errors after PDF extraction](/blog/fixing-answer-key-errors-after-pdf-extraction) covers how to tell which pattern you are looking at.",
     },
     {
       type: "h2",

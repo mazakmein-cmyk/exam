@@ -162,7 +162,7 @@ const post: BlogPost = {
     },
     {
       type: "p",
-      text: "Once a series has run its stated length the second one is a different job - scheduling rather than launching. Cadence is the whole of that second job: a fixed day, published dates, and a discussion class close enough behind each paper to still matter. [Free test series as a lead magnet for coaching institutes](/blog/free-test-series-as-a-lead-magnet-for-coaching-institutes) covers what the first paper has to do to earn a second visit.",
+      text: "Once a series has run its stated length the second one is a different job - scheduling rather than launching. Cadence is the whole of that second job, and the [weekly test schedule template for coaching batches](/blog/weekly-test-schedule-template-for-coaching-batches) covers it. [Free test series as a lead magnet for coaching institutes](/blog/free-test-series-as-a-lead-magnet-for-coaching-institutes) covers what the first paper has to do to earn a second visit.",
     },
     {
       type: "p",

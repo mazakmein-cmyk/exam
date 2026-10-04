@@ -36,7 +36,7 @@ const post: BlogPost = {
     },
     {
       type: "p",
-      text: "This is for the person who has to build that test every week, including the weeks with no time to build anything. Cadence matters more than polish here. A short test that goes out on Sunday is worth more than a full mock that slips to Thursday, because a trend needs evenly spaced points and a skipped week deletes the comparison a student was waiting for. Fix the day before the term starts and publish the dates, because a calendar the batch can see is itself part of the commitment.",
+      text: "This is for the person who has to build that test every week, including the weeks with no time to build anything. Cadence matters more than polish here. A short test that goes out on Sunday is worth more than a full mock that slips to Thursday, because a trend needs evenly spaced points and a skipped week deletes the comparison a student was waiting for. Fix the day before the term starts and publish the dates, because a calendar the batch can see is itself part of the commitment. The [weekly test schedule template for coaching batches](/blog/weekly-test-schedule-template-for-coaching-batches) has cycles to copy.",
     },
     {
       type: "h2",
