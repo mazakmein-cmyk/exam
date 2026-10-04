@@ -268,7 +268,7 @@ export function parseExamJson(rawText: string, ctx: ParseContext): ParseReport {
     return {
       ...baseReport,
       errorCode: "language_mismatch",
-      fatalReason: `JSON is for "${json.language}" but you clicked Upload on "${ctx.selectedLanguage}".`,
+      fatalReason: `JSON is for "${json.language}" but you picked the "${ctx.selectedLanguage}" language.`,
     };
   }
 

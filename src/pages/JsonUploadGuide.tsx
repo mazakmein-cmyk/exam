@@ -11,8 +11,8 @@ const tocSections = [
   { id: "before-you-start", label: "Before you start" },
   { id: "step-1-copy", label: "Step 1 — Copy the prompt" },
   { id: "step-2-run", label: "Step 2 — Run it in your AI" },
-  { id: "step-3-save", label: "Step 3 — Save the JSON" },
-  { id: "step-4-upload", label: "Step 4 — Upload to MockSetu" },
+  { id: "step-3-save", label: "Step 3 — Copy the JSON" },
+  { id: "step-4-upload", label: "Step 4 — Paste or upload" },
   { id: "step-5-review", label: "Step 5 — Review & confirm" },
   { id: "step-6-repeat", label: "Step 6 — Repeat per language" },
   { id: "step-7-publish", label: "Step 7 — Publish" },
@@ -24,7 +24,7 @@ const tocSections = [
   { id: "fix-schema-version", label: "→ Wrong schema version" },
   { id: "fix-language-mismatch", label: "→ Language mismatch" },
   { id: "fix-missing-sections", label: "→ No sections" },
-  { id: "fix-file-too-large", label: "→ File too large" },
+  { id: "fix-file-too-large", label: "→ JSON too large" },
   { id: "fix-file-read", label: "→ Couldn't read file" },
   { id: "troubleshooting", label: "Troubleshooting" },
 ];
@@ -399,7 +399,7 @@ const JsonUploadGuide = () => {
           JSON Upload Guide
         </h1>
         <p className="mt-3 text-white/40 text-[15px] max-w-xl mx-auto">
-          Convert your exam PDF into JSON using your own AI, then upload it to MockSetu. About 5 minutes per language.
+          Convert your exam PDF into JSON using your own AI, then paste it into MockSetu. About 5 minutes per language.
         </p>
       </div>
 
@@ -438,9 +438,10 @@ const JsonUploadGuide = () => {
             <UL
               items={[
                 <>
-                  <strong>An exam already created in MockSetu</strong>, with{" "}
-                  <strong>sections</strong> added. Write down each section's exact name — they
-                  must match the section names inside your JSON.
+                  <strong>An exam already created in MockSetu.</strong> Sections are optional: if
+                  the exam has none yet, the upload preview creates them from your JSON's section
+                  names (mock exams ask for a time per section). If it already has sections, note
+                  their exact names — the JSON must match them.
                 </>,
                 <>
                   <strong>A PDF</strong> of your exam paper (the source you want to convert).
@@ -479,7 +480,8 @@ const JsonUploadGuide = () => {
                     <span className="text-amber-900 dark:text-amber-200 font-semibold">
                       <strong>Before sending, don't skip this:</strong> fill in the placeholders at the
                       bottom of the prompt — the language code (<Code>en</Code> or <Code>hi</Code>) and
-                      your exam's section names in the order they appear in MockSetu.
+                      your exam's section names in the order they appear in MockSetu (or, if the exam
+                      has no sections yet, the names you want it to have).
                     </span>
                   </span>
                 </span>,
@@ -494,7 +496,24 @@ const JsonUploadGuide = () => {
             </P>
 
             {/* Step 3 */}
-            <SectionHeading id="step-3-save" title="Step 3 — Save the JSON" sub="Step 3 of 7" />
+            <SectionHeading id="step-3-save" title="Step 3 — Copy the JSON" sub="Step 3 of 7" />
+            <P>
+              There are two ways to get the JSON from your AI into MockSetu. Copying is the quick
+              one; a file is worth making only when you want to keep or share the JSON.
+            </P>
+            <P>
+              <strong>Option A — Copy it (recommended).</strong> Click the Copy button on the
+              AI's code block, or select everything between the delimiters and copy. That's it —
+              in Step 4 you paste it straight into MockSetu. Copying the whole reply is fine,
+              delimiters and all: the parser strips the{" "}
+              <Code>&lt;&lt;&lt;EXAM_JSON_START&gt;&gt;&gt;</Code> markers, markdown code fences
+              and any explanation around the JSON. No file, no text editor, no encoding
+              setting — which is also where the <Code>LozÃ¨re</Code>-style garbage usually
+              creeps in.
+            </P>
+            <P>
+              <strong>Option B — Save it as a file.</strong>
+            </P>
             <OL
               items={[
                 "Select everything between the delimiters in the AI's reply (including or excluding the delimiter lines — both work; the parser strips them).",
@@ -517,22 +536,41 @@ const JsonUploadGuide = () => {
             />
 
             {/* Step 4 */}
-            <SectionHeading id="step-4-upload" title="Step 4 — Upload to MockSetu" sub="Step 4 of 7" />
+            <SectionHeading
+              id="step-4-upload"
+              title="Step 4 — Paste or upload in MockSetu"
+              sub="Step 4 of 7"
+            />
             <OL
               items={[
                 "Open your exam's edit page.",
                 <>
-                  Click the <strong>⋮</strong> menu in the top-right corner.
+                  Click the <strong>⋮</strong> menu in the top-right corner, then{" "}
+                  <strong>Upload JSON</strong>.
                 </>,
                 <>
-                  Click <strong>Upload JSON</strong>.
+                  Find the row for the language you just generated. It has two buttons:{" "}
+                  <strong>Paste JSON</strong> and <strong>Upload file</strong>.
                 </>,
-                "In the modal, click the Upload JSON button next to the language you just generated.",
                 <>
-                  Pick your <Code>.json</Code> file.
+                  <strong>Paste JSON</strong> (the quick route): a text box opens — paste the
+                  AI's reply with Ctrl+V (⌘V on Mac). MockSetu checks it as you paste. A green{" "}
+                  <em>Readable</em> line means it parsed, and shows the section and question
+                  counts; a red line means it didn't, and the exact problem — line, column and a
+                  few lines of context — appears under the box so you can fix it right there.
+                  Click <strong>Continue to preview</strong>, or press Ctrl+Enter.
+                </>,
+                <>
+                  <strong>Upload file</strong>: pick the <Code>.json</Code> you saved. If it
+                  fails to parse, the error banner offers <strong>Edit &amp; retry here</strong>,
+                  which opens the file's text in the paste box with the same error under it.
                 </>,
               ]}
             />
+            <P>
+              Both routes land on the same preview, so everything in Step 5 applies to either.
+              The 10 MB limit applies to both as well.
+            </P>
 
             {/* Step 5 */}
             <SectionHeading id="step-5-review" title="Step 5 — Review & confirm" sub="Step 5 of 7" />
@@ -549,8 +587,17 @@ const JsonUploadGuide = () => {
             <P>
               <strong>If section names don't match</strong>: a guided-fix panel appears at the
               top of the preview, with a one-click Copy prompt. Paste it into your AI along
-              with the JSON — the AI returns a renamed version you can re-upload. Or rename your
-              exam's sections in MockSetu to match.
+              with the JSON — the AI returns a renamed version you can paste again. Or rename
+              your exam's sections in MockSetu to match, or create the missing sections right
+              from the preview.
+            </P>
+            <P>
+              <strong>If the exam has no sections yet</strong>: you don't need to add any first.
+              The preview opens with a <strong>Create N sections</strong> button that builds every
+              section from your JSON, with its name and its questions. Mock exams ask for a time
+              in minutes per section; live exams take timing from the JSON. Sections are created
+              in every language of the exam at once, so do this from the <strong>primary</strong>{" "}
+              language's JSON — then confirm the import as usual.
             </P>
             <P>
               <strong>If the language already has questions</strong>, you'll pick one of:
@@ -581,18 +628,18 @@ const JsonUploadGuide = () => {
             />
             <P>
               If your exam supports more than one language (for example, English + Hindi),
-              upload one JSON per language:
+              add one JSON per language — pasted or uploaded, it makes no difference:
             </P>
             <OL
               items={[
                 <>
-                  Upload the <strong>primary</strong> language first — the one marked with the
-                  PRIMARY badge in the modal.
+                  Add the <strong>primary</strong> language first — the one marked with the
+                  PRIMARY badge in the dialog.
                 </>,
-                "Then upload each secondary language. The system pairs its questions to primary by order.",
+                "Then add each secondary language. The system pairs its questions to primary by order.",
               ]}
             />
-            <P>For secondary-language uploads:</P>
+            <P>For secondary-language JSON:</P>
             <UL
               items={[
                 <>
@@ -694,8 +741,9 @@ const JsonUploadGuide = () => {
               originally extracted the JSON (so the AI still has the PDF context), paste the
               prompt, then paste your broken JSON below it. The AI returns a corrected version
               between <Code>&lt;&lt;&lt;EXAM_JSON_START&gt;&gt;&gt;</Code> and{" "}
-              <Code>&lt;&lt;&lt;EXAM_JSON_END&gt;&gt;&gt;</Code> — save it as <Code>.json</Code>{" "}
-              and re-upload.
+              <Code>&lt;&lt;&lt;EXAM_JSON_END&gt;&gt;&gt;</Code> — copy it and paste it into the{" "}
+              <strong>Paste JSON</strong> box (or save it as <Code>.json</Code> and upload it
+              again).
             </P>
 
             {/* Fix: Missing answers */}
@@ -739,13 +787,14 @@ const JsonUploadGuide = () => {
                 markdown code fences, smart quotes, Python <Code>True</Code> /{" "}
                 <Code>False</Code> / <Code>None</Code>, missing commas, and explanatory prose
                 around the JSON. If you're seeing this error, even auto-repair couldn't
-                recover the file — usually the AI's reply was truncated mid-output, or the
+                recover the text — usually the AI's reply was truncated mid-output, or the
                 content is genuinely corrupted. Either re-extract from the PDF or fix
                 manually using the steps below.
               </p>
             </div>
             <P>
-              <strong>What it looks like:</strong> a red toast or banner like{" "}
+              <strong>What it looks like:</strong> a red line under the paste box, or a red
+              toast and banner after a file upload, like{" "}
               <Code>{`"Couldn't parse JSON: Expected ',' or '}' after property value..."`}</Code>{" "}
               with a line-and-column reference and a few lines of context around the broken
               spot.
@@ -761,15 +810,23 @@ const JsonUploadGuide = () => {
             <OL
               items={[
                 <>
-                  Open the <Code>.json</Code> file in VS Code or Notepad++ (not Word — Word
-                  will introduce smart quotes that break JSON).
+                  Get the text into the paste box. If you pasted it, it's already there with
+                  the error underneath. If you uploaded a file, click{" "}
+                  <strong>Edit &amp; retry here</strong> on the error banner — the file's text
+                  opens in the same box, same error shown.
                 </>,
                 "Jump to the line and column shown in the error message.",
                 <>
                   Fix the issue: add the missing comma, escape the stray quote (
-                  <Code>\"</Code> inside strings), or remove the trailing comma.
+                  <Code>\"</Code> inside strings), or remove the trailing comma. The check
+                  re-runs as you type; when the line turns green, click{" "}
+                  <strong>Continue to preview</strong>.
                 </>,
-                "Save and re-upload.",
+                <>
+                  Prefer a real editor for a big file? Open the <Code>.json</Code> in VS Code or
+                  Notepad++ (not Word — Word introduces smart quotes that break JSON), fix,
+                  save, and upload it again.
+                </>,
               ]}
             />
             <P>
@@ -816,18 +873,18 @@ const JsonUploadGuide = () => {
                   <Code>"Language 'fr' is not supported by this exam"</Code>
                 </>,
                 <>
-                  <Code>"JSON is for 'hi' but you clicked Upload on 'en'"</Code>
+                  <Code>"JSON is for 'hi' but you picked the 'en' language"</Code>
                 </>,
               ]}
             />
             <P>
               <strong>What happened:</strong> the JSON declares a language that doesn't match
-              the row you clicked in the upload modal, or doesn't declare one at all.
+              the row whose <strong>Paste JSON</strong> or <strong>Upload file</strong> button you
+              clicked, or doesn't declare one at all.
             </P>
             <P>
-              <strong>Fix it (option 1):</strong> upload the file to the right language slot —
-              the modal shows one row per language; click the button next to the one whose code
-              matches the JSON.
+              <strong>Fix it (option 1):</strong> use the right language row — the dialog shows
+              one row per language; paste or upload into the one whose code matches the JSON.
             </P>
             <P>
               <strong>Fix it (option 2):</strong> ask your AI to change the language in the
@@ -861,23 +918,26 @@ const JsonUploadGuide = () => {
             />
             <P>
               If you don't remember your exam's section names, the upload dialog shows them at
-              the top — re-open ⋮ → Upload JSON to see the list.
+              the top, and the paste box repeats them above the text area — re-open ⋮ → Upload
+              JSON to see the list.
             </P>
 
             {/* Fix: File too large */}
             <SectionHeading
               id="fix-file-too-large"
-              title="File too large"
+              title="JSON too large"
               sub="Error type"
             />
             <P>
               <strong>What it looks like:</strong>{" "}
-              <Code>"File too large — Max 10 MB"</Code>.
+              <Code>"Too large — max 10 MB"</Code> under the paste box, or a{" "}
+              <Code>"File too large — Max 10 MB"</Code> toast after picking a file.
             </P>
             <P>
-              <strong>What happened:</strong> the JSON is over 10 MB. Most exams should be a
-              fraction of this; usually this means the AI duplicated long passages across
-              questions, or your exam is genuinely enormous (~5000+ questions).
+              <strong>What happened:</strong> the JSON is over 10 MB — the limit is the same
+              whether you paste or upload. Most exams should be a fraction of this; usually this
+              means the AI duplicated long passages across questions, or your exam is genuinely
+              enormous (~5000+ questions).
             </P>
             <P>
               <strong>Fix it</strong>:
@@ -885,7 +945,7 @@ const JsonUploadGuide = () => {
             <UL
               items={[
                 "Check for repeated passages. If you have a comprehension section where each question repeats the full passage in its text, ask your AI to factor the passage out and reference it once per group instead.",
-                "Split the JSON. Emit just some sections at a time, save each as a separate file, and upload them one after another. MockSetu's parser commits only the sections it finds in your exam — leaving the others untouched — so you can split safely.",
+                "Split the JSON. Emit just some sections at a time and paste (or upload) them one after another. MockSetu's parser commits only the sections it finds in your exam — leaving the others untouched — so you can split safely.",
                 "Re-extract on a leaner model setting (no verbose preambles, no explanations).",
               ]}
             />
@@ -907,13 +967,18 @@ const JsonUploadGuide = () => {
             <P>
               <strong>What happened:</strong> the browser failed to read the file off disk.
               Rare — usually a deleted file, a cloud-sync conflict (OneDrive/Dropbox writing
-              the file mid-read), or a permissions issue.
+              the file mid-read), or a permissions issue. Only the <strong>Upload file</strong>{" "}
+              route can hit this; pasting the text never touches the disk.
             </P>
             <P>
               <strong>Fix it</strong>:
             </P>
             <UL
               items={[
+                <>
+                  Skip the file: copy the AI's reply again and use <strong>Paste JSON</strong>{" "}
+                  instead.
+                </>,
                 <>
                   Re-save the file with a fresh name (e.g. <Code>my-exam-en-fixed.json</Code>).
                 </>,
@@ -937,10 +1002,11 @@ const JsonUploadGuide = () => {
                 </thead>
                 <tbody className="text-muted-foreground leading-[1.65]">
                   <tr className="border-b border-border/30 align-top">
-                    <td className="py-3 px-4">Toast: "Couldn't parse JSON"</td>
+                    <td className="py-3 px-4">Red line / toast: "Couldn't parse JSON"</td>
                     <td className="py-3 px-4">
-                      The file isn't valid JSON. Open it in VS Code; look for missing commas or
-                      stray characters.{" "}
+                      The text isn't valid JSON. Pasted it? The error and its context sit under
+                      the box — fix it there. Uploaded a file? Click{" "}
+                      <strong>Edit &amp; retry here</strong> to get the same box.{" "}
                       <a
                         href="#fix-invalid-json"
                         className="text-primary font-semibold hover:underline"
@@ -963,10 +1029,10 @@ const JsonUploadGuide = () => {
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">
-                    <td className="py-3 px-4">Toast: "JSON is for X but you clicked Upload on Y"</td>
+                    <td className="py-3 px-4">Toast: "JSON is for X but you picked the Y language"</td>
                     <td className="py-3 px-4">
-                      Wrong file for this language slot. Pick the right one for the row you
-                      clicked, or ask your AI to change the JSON's <Code>language</Code> field.{" "}
+                      Wrong JSON for this language row. Paste or upload it on the row whose code
+                      matches, or ask your AI to change the JSON's <Code>language</Code> field.{" "}
                       <a
                         href="#fix-language-mismatch"
                         className="text-primary font-semibold hover:underline"
@@ -988,9 +1054,9 @@ const JsonUploadGuide = () => {
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">
-                    <td className="py-3 px-4">Toast: "File too large"</td>
+                    <td className="py-3 px-4">"Too large" / "File too large"</td>
                     <td className="py-3 px-4">
-                      Max upload is 10 MB.{" "}
+                      The limit is 10 MB, pasted or uploaded.{" "}
                       <a
                         href="#fix-file-too-large"
                         className="text-primary font-semibold hover:underline"
@@ -1000,11 +1066,21 @@ const JsonUploadGuide = () => {
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">
+                    <td className="py-3 px-4">Preview says "This exam has no sections yet"</td>
+                    <td className="py-3 px-4">
+                      Not an error. Click <strong>Create N sections…</strong>, set a time per
+                      section if asked (mock exams), then confirm. This button appears for the
+                      primary language only — a secondary language's sections are mirrored from
+                      primary, so import primary first.
+                    </td>
+                  </tr>
+                  <tr className="border-b border-border/30 align-top">
                     <td className="py-3 px-4">Preview shows ✗ next to a section</td>
                     <td className="py-3 px-4">
                       The JSON's section name doesn't match your exam. Use the in-app rename
                       prompt that appears in the preview — click its Copy button, paste into
-                      your AI along with the JSON, then re-upload.
+                      your AI along with the JSON, then paste the result again — or create the
+                      missing sections straight from the preview.
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">
@@ -1051,10 +1127,13 @@ const JsonUploadGuide = () => {
                     </td>
                     <td className="py-3 px-4">
                       UTF-8 mojibake — the file was saved (or the AI emitted) in
-                      Windows-1252 instead of UTF-8. Open in VS Code, change the
-                      bottom-right encoding indicator to <Code>UTF-8</Code>, Save, re-upload.
-                      The parser also tries to auto-repair common mojibake; if it succeeded,
-                      you'll see <Code>mojibake_fixed</Code> in the preview's repair list.
+                      Windows-1252 instead of UTF-8. Pasting the text with{" "}
+                      <strong>Paste JSON</strong> skips the save-as step where this usually
+                      happens. If you need the file: open it in VS Code, change the
+                      bottom-right encoding indicator to <Code>UTF-8</Code>, Save, upload
+                      again. The parser also tries to auto-repair common mojibake; if it
+                      succeeded, you'll see <Code>mojibake_fixed</Code> in the preview's repair
+                      list.
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">
@@ -1065,7 +1144,7 @@ const JsonUploadGuide = () => {
                       LaTeX backslashes weren't doubled. The parser auto-fixes most cases
                       (look for <Code>latex_escapes_fixed</Code> in the preview); if some
                       slipped through, ask the AI to re-emit with every <Code>\</Code> in
-                      LaTeX replaced by <Code>\\</Code> and re-upload.
+                      LaTeX replaced by <Code>\\</Code> and paste it again.
                     </td>
                   </tr>
                   <tr className="border-b border-border/30 align-top">

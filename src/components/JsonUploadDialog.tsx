@@ -1,9 +1,15 @@
 /**
  * JsonUploadDialog.tsx — Modal for per-language JSON upload.
  *
- * Two views:
- *   1. Languages — one row per language with status + Upload button.
- *   2. Preview   — parse report + mismatch panel + Replace/Append + Confirm.
+ * Three views:
+ *   1. Languages — one row per language with status + Paste / Upload buttons.
+ *   2. Paste     — a textarea that runs the same parser as the file path on
+ *                  every edit (debounced), so a bad paste is diagnosed inline.
+ *   3. Preview   — parse report + mismatch panel + Replace/Append + Confirm.
+ *
+ * Both sources — a chosen .json file and pasted text — funnel through
+ * openPreview(), so the preview, the create-sections re-parse, auto-snip and
+ * the commit never know which one the user picked.
  *
  * The parent provides `commitJson` which does the DB writes, and a `dataSource`
  * adapter (see jsonUploadSources.ts) which owns every table-specific read/write
@@ -26,11 +32,15 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Upload,
   ArrowLeft,
+  ArrowRight,
   AlertTriangle,
   Check,
+  CheckCircle2,
+  ClipboardPaste,
   X,
   Copy,
   Info,
@@ -60,6 +70,21 @@ import {
 const PdfSnipper = lazy(() => import("@/components/PdfSnipper"));
 
 type DialogErrorCode = FatalErrorCode | "file_too_large" | "file_read_error";
+
+/**
+ * A failed load, as shown in the languages view. `text` is the raw JSON that
+ * failed, when there is any — it powers "Edit & retry here", which drops that
+ * text into the paste view with the same error underneath it, instead of
+ * sending the user back to a text editor and a second file-picker round-trip.
+ */
+type DialogError = {
+  code: DialogErrorCode;
+  message: string;
+  text?: string;
+  lang?: string;
+};
+
+type JsonSource = "file" | "paste";
 
 const errorCodeToAnchor: Record<DialogErrorCode, string> = {
   invalid_json: "fix-invalid-json",
@@ -110,6 +135,14 @@ function formatDuration(ms: number): string {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return sec === 0 ? `${min} min` : `${min}m ${sec}s`;
+}
+
+/** Compact size for the paste view's status line: "812 B", "48.2 KB", "1.3 MB". */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export type CommitResult = { ok: boolean };
@@ -166,7 +199,7 @@ export default function JsonUploadDialog({
 }: JsonUploadDialogProps) {
   const { toast } = useToast();
 
-  const [view, setView] = useState<"languages" | "preview">("languages");
+  const [view, setView] = useState<"languages" | "paste" | "preview">("languages");
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [langStatus, setLangStatus] = useState<Record<string, LangStatus>>({});
   const [sectionsByLang, setSectionsByLang] = useState<Record<string, SectionMeta[]>>({});
@@ -182,9 +215,17 @@ export default function JsonUploadDialog({
     total: number;
   } | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
-  const [lastError, setLastError] = useState<{ code: DialogErrorCode; message: string } | null>(
-    null
-  );
+  const [lastError, setLastError] = useState<DialogError | null>(null);
+
+  // ─── Paste-text state ───
+  // The textarea's contents live here, not in the paste view, so they survive
+  // Back / re-entering the view, and so a failed file load can seed them.
+  // Keyed by language: switching rows clears a paste meant for another one.
+  const [pasteText, setPasteText] = useState("");
+  const [pasteLang, setPasteLang] = useState<string | null>(null);
+  // Which route produced the current report — Back from the preview returns
+  // to the paste box (text intact) when that is where the user came from.
+  const [reportSource, setReportSource] = useState<JsonSource | null>(null);
 
   // ─── Auto-snip state (§12) ───
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -311,6 +352,9 @@ export default function JsonUploadDialog({
       setMode("append");
       setLastError(null);
       setRawJsonText(null);
+      setPasteText("");
+      setPasteLang(null);
+      setReportSource(null);
       setShowCreateSections(false);
       setSectionTimeDrafts({});
       setPdfFile(null);
@@ -382,6 +426,38 @@ export default function JsonUploadDialog({
     };
   }, [committing, toast]);
 
+  /**
+   * One ParseContext builder for every parse that works from current state —
+   * the file path, the paste view's live check and its Continue. The
+   * create-sections flow deliberately builds its own against the FRESH
+   * section list it just loaded (see handleCreateSections).
+   */
+  const buildParseContext = useCallback(
+    (lang: string): ParseContext => ({
+      language: lang,
+      selectedLanguage: lang,
+      isPrimary: lang === primaryLanguage,
+      supportedLanguages,
+      examSectionsForLanguage: sectionsByLang[lang] ?? [],
+    }),
+    [primaryLanguage, supportedLanguages, sectionsByLang]
+  );
+
+  /**
+   * The single hand-off into the preview. Whatever produced `text` — a .json
+   * file or the paste box — everything downstream (mismatch panel,
+   * create-sections re-parse, auto-snip, commit) runs from here unchanged.
+   */
+  const openPreview = (text: string, result: ParseReport, source: JsonSource) => {
+    setReport(result);
+    setRawJsonText(text);
+    setReportSource(source);
+    setSectionTimeDrafts({});
+    setMode("append");
+    setLastError(null);
+    setView("preview");
+  };
+
   const handleUploadClick = (lang: string) => {
     setSelectedLang(lang);
     // Defer click so React state lands before the file picker opens
@@ -394,11 +470,18 @@ export default function JsonUploadDialog({
     if (!file || !selectedLang) return;
 
     setLastError(null);
+    // The error banner lives in the languages view, but the picker can also
+    // be opened from the paste view ("Upload a .json file instead") — so every
+    // failure below returns there, where the banner is visible.
+    const fail = (error: DialogError) => {
+      setLastError(error);
+      setView("languages");
+    };
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
       const msg = `Max 10 MB. This file is ${(file.size / 1024 / 1024).toFixed(1)} MB.`;
       toast({ title: "File too large", description: msg, variant: "destructive" });
-      setLastError({ code: "file_too_large", message: msg });
+      fail({ code: "file_too_large", message: msg, lang: selectedLang });
       return;
     }
 
@@ -408,32 +491,58 @@ export default function JsonUploadDialog({
     } catch (err: any) {
       const msg = err?.message ?? "File read failed.";
       toast({ title: "Couldn't read file", description: msg, variant: "destructive" });
-      setLastError({ code: "file_read_error", message: msg });
+      fail({ code: "file_read_error", message: msg, lang: selectedLang });
       return;
     }
 
-    const ctx: ParseContext = {
-      language: selectedLang,
-      selectedLanguage: selectedLang,
-      isPrimary: selectedLang === primaryLanguage,
-      supportedLanguages,
-      examSectionsForLanguage: sectionsByLang[selectedLang] ?? [],
-    };
-
-    const result = parseExamJson(text, ctx);
+    const result = parseExamJson(text, buildParseContext(selectedLang));
     if (!result.ok) {
       const msg = result.fatalReason ?? "Unknown error.";
       toast({ title: "Couldn't load JSON", description: msg, variant: "destructive" });
-      // Always set an error even if the parser somehow forgot to set a code
-      setLastError({ code: result.errorCode ?? "invalid_json", message: msg });
+      // Always set an error even if the parser somehow forgot to set a code.
+      // The raw text rides along so the banner can offer "Edit & retry here".
+      fail({ code: result.errorCode ?? "invalid_json", message: msg, text, lang: selectedLang });
       return;
     }
 
-    setReport(result);
-    setRawJsonText(text);
-    setSectionTimeDrafts({});
-    setMode("append");
-    setView("preview");
+    openPreview(text, result, "file");
+  };
+
+  // ─── Paste-text flow ───
+  const handlePasteClick = (lang: string) => {
+    if (pasteLang !== lang) {
+      // A paste drafted for another language row could only ever produce a
+      // language_mismatch error here — start clean.
+      setPasteText("");
+      setPasteLang(lang);
+    }
+    setSelectedLang(lang);
+    setLastError(null);
+    setView("paste");
+  };
+
+  // Stable per language + section list: the paste view memoises its live
+  // check on this identity, so a fresh closure per render would re-parse the
+  // whole paste on every keystroke and defeat the debounce.
+  const parsePaste = useMemo(() => {
+    const lang = selectedLang;
+    if (!lang) return null;
+    return (text: string) => parseExamJson(text, buildParseContext(lang));
+  }, [selectedLang, buildParseContext]);
+
+  const handlePasteContinue = (text: string, result: ParseReport) => {
+    openPreview(text, result, "paste");
+  };
+
+  /** "Edit & retry here" on a failed file: same text, same error, now editable. */
+  const handleEditFailedText = () => {
+    if (!lastError?.text) return;
+    const lang = lastError.lang ?? selectedLang ?? primaryLanguage;
+    setPasteText(lastError.text);
+    setPasteLang(lang);
+    setSelectedLang(lang);
+    setLastError(null);
+    setView("paste");
   };
 
   // ─── PDF picker + auto-snip pipeline ───
@@ -662,6 +771,10 @@ export default function JsonUploadDialog({
         setView("languages");
         setReport(null);
         setRawJsonText(null);
+        setReportSource(null);
+        // The imported text has done its job — don't offer it again.
+        setPasteText("");
+        setPasteLang(null);
         setPdfFile(null);
         // Revoke blob URLs from this session.
         setPdfBlobUrl((prev) => {
@@ -844,7 +957,14 @@ export default function JsonUploadDialog({
     }
     const matchedCount = matchedSections.length;
     const unmatchedCount = report.unmatchedSections.length;
-    if (matchedCount === 0) return "No sections match — fix and re-upload";
+    if (matchedCount === 0) {
+      // An exam with no sections at all is the expected first-import state,
+      // not a mismatch — point at the create step instead.
+      if (report.examSectionNames.length === 0) {
+        return report.isPrimary ? "Create sections to continue" : "Add the primary language first";
+      }
+      return "No sections match — fix and re-upload";
+    }
     if (unmatchedCount > 0) {
       const total = matchedCount + unmatchedCount;
       return `Import ${matchedCount} of ${total} sections (${unmatchedCount} skipped)`;
@@ -854,7 +974,15 @@ export default function JsonUploadDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !committing && onOpenChange(o)}>
-      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+      <DialogContent
+        className="max-w-4xl max-h-[85vh] overflow-y-auto"
+        onEscapeKeyDown={(e) => {
+          // Esc is muscle memory while editing text. With a paste in progress
+          // it must not throw the whole thing away — Back and the X button
+          // still close as usual.
+          if (view === "paste" && pasteText.trim()) e.preventDefault();
+        }}
+      >
         <input
           ref={fileInputRef}
           type="file"
@@ -876,7 +1004,22 @@ export default function JsonUploadDialog({
             lastError={lastError}
             onDismissError={() => setLastError(null)}
             onUploadClick={handleUploadClick}
+            onPasteClick={handlePasteClick}
+            onEditFailedText={lastError?.text ? handleEditFailedText : undefined}
             onClose={() => onOpenChange(false)}
+          />
+        ) : view === "paste" && selectedLang && parsePaste ? (
+          <PasteJsonView
+            lang={selectedLang}
+            isPrimary={selectedLang === primaryLanguage}
+            sectionNames={(sectionsByLang[selectedLang] ?? []).map((s) => s.name)}
+            value={pasteText}
+            onChange={setPasteText}
+            parse={parsePaste}
+            docsUrl={docsUrl}
+            onBack={() => setView("languages")}
+            onChooseFile={() => handleUploadClick(selectedLang)}
+            onContinue={handlePasteContinue}
           />
         ) : report ? (
           <PreviewView
@@ -894,9 +1037,12 @@ export default function JsonUploadDialog({
             copyState={copyState}
             onCopyPrompt={handleCopyPrompt}
             onBack={() => {
-              setView("languages");
+              // Pasted text goes back to the box for fixing; a file goes back
+              // to the language list.
+              setView(reportSource === "paste" ? "paste" : "languages");
               setReport(null);
               setRawJsonText(null);
+              setReportSource(null);
             }}
             onCreateSectionsClick={() => setShowCreateSections(true)}
             onConfirm={handleConfirm}
@@ -915,6 +1061,7 @@ export default function JsonUploadDialog({
             snipStartTime={snipStartTimeRef.current}
             nowMs={nowMs}
             showMarks={dataSource.showMarks}
+            requiresSectionTime={dataSource.requiresSectionTime}
           />
         ) : null}
 
@@ -940,7 +1087,9 @@ export default function JsonUploadDialog({
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Plus className="h-5 w-5 text-primary" />
-                  Create missing sections
+                  {report.examSectionNames.length === 0
+                    ? "Create sections from your JSON"
+                    : "Create missing sections"}
                 </DialogTitle>
                 <DialogDescription>
                   {dataSource.requiresSectionTime
@@ -1269,6 +1418,8 @@ function LanguagePickerView({
   lastError,
   onDismissError,
   onUploadClick,
+  onPasteClick,
+  onEditFailedText,
   onClose,
 }: {
   loadingStatus: boolean;
@@ -1279,15 +1430,19 @@ function LanguagePickerView({
   savingSectionId: string | null;
   onRenameSection: (lang: string, sectionId: string, newName: string) => Promise<boolean>;
   docsUrl?: string;
-  lastError: { code: DialogErrorCode; message: string } | null;
+  lastError: DialogError | null;
   onDismissError: () => void;
   onUploadClick: (lang: string) => void;
+  onPasteClick: (lang: string) => void;
+  /** Present only when the failed load left text behind that can be edited. */
+  onEditFailedText?: () => void;
   onClose: () => void;
 }) {
   const errorFixUrl =
     lastError && docsUrl
       ? `${docsUrl}#${errorCodeToAnchor[lastError.code]}`
       : null;
+  const anySections = supportedLanguages.some((l) => (sectionsByLang[l]?.length ?? 0) > 0);
 
   return (
     <>
@@ -1297,8 +1452,8 @@ function LanguagePickerView({
           Upload JSON
         </DialogTitle>
         <DialogDescription>
-          Upload one JSON file per language. Section names in the JSON must match this exam's section
-          names exactly.
+          Paste the JSON your AI produced, or upload the .json file — one per language. Section
+          names in the JSON must match this exam's section names exactly.
         </DialogDescription>
       </DialogHeader>
 
@@ -1314,7 +1469,17 @@ function LanguagePickerView({
                 <p className="text-xs text-red-800 dark:text-red-300 mt-1 leading-relaxed break-words">
                   {lastError.message}
                 </p>
-                <div className="flex items-center gap-3 mt-3">
+                <div className="flex flex-wrap items-center gap-3 mt-3">
+                  {onEditFailedText && (
+                    <button
+                      type="button"
+                      onClick={onEditFailedText}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-background px-2.5 py-1 text-xs font-semibold text-red-800 hover:bg-red-100 dark:border-red-700 dark:text-red-200 dark:hover:bg-red-900/40"
+                    >
+                      <ClipboardPaste className="h-3.5 w-3.5" />
+                      Edit &amp; retry here
+                    </button>
+                  )}
                   {errorFixUrl && (
                     <a
                       href={errorFixUrl}
@@ -1345,7 +1510,9 @@ function LanguagePickerView({
             <div className="min-w-0">
               <h4 className="text-sm font-semibold">Exam sections</h4>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Your JSON's section names must match these. Click a name to rename it.
+                {anySections
+                  ? "Your JSON's section names must match these. Click a name to rename it."
+                  : "None yet — no need to add them first. Import your JSON and the preview creates every section it names."}
               </p>
             </div>
             {docsUrl && (
@@ -1389,11 +1556,10 @@ function LanguagePickerView({
               const hasContent = status.questionCount > 0;
               const isPrimary = lang === primaryLanguage;
               const sectionCount = sectionsByLang[lang]?.length ?? 0;
-              const canUpload = sectionCount > 0;
               return (
                 <div
                   key={lang}
-                  className="flex items-center justify-between gap-4 rounded-lg border p-4"
+                  className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -1405,10 +1571,8 @@ function LanguagePickerView({
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      {!canUpload ? (
-                        <span className="text-amber-600">
-                          No sections yet — add sections before uploading JSON.
-                        </span>
+                      {sectionCount === 0 ? (
+                        "No sections yet — importing creates them from your JSON."
                       ) : hasContent ? (
                         `${status.questionCount} question${status.questionCount === 1 ? "" : "s"} across ${status.sectionCount} section${status.sectionCount === 1 ? "" : "s"}`
                       ) : (
@@ -1416,16 +1580,32 @@ function LanguagePickerView({
                       )}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={hasContent ? "outline" : "default"}
-                    onClick={() => onUploadClick(lang)}
-                    disabled={!canUpload}
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    {hasContent ? "Replace" : "Upload JSON"}
-                  </Button>
+                  {/* Two ways in, one preview. Paste is the short path — no
+                      save-as, no encoding dropdown — so it carries the emphasis
+                      until the language has content; after that both step back
+                      and the preview's Replace/Append choice does the talking.
+                      Neither is gated on sections existing: an exam with none
+                      yet gets them created from the JSON on the preview. */}
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={hasContent ? "outline" : "default"}
+                      onClick={() => onPasteClick(lang)}
+                    >
+                      <ClipboardPaste className="h-4 w-4 mr-2" />
+                      Paste JSON
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onUploadClick(lang)}
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload file
+                    </Button>
+                  </div>
                 </div>
               );
             })
@@ -1435,8 +1615,8 @@ function LanguagePickerView({
         <div className="flex items-start gap-2 rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-300">
           <Info className="h-4 w-4 shrink-0 mt-0.5" />
           <span>
-            Upload <strong>primary</strong> first — secondary uploads pair questions back to primary
-            by position.
+            Add the <strong>primary</strong> language first — a secondary language's questions pair
+            back to primary by position.
           </span>
         </div>
       </div>
@@ -1445,6 +1625,273 @@ function LanguagePickerView({
         <Button type="button" variant="outline" onClick={onClose}>
           Close
         </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+// ─── Paste JSON View ───────────────────────────────────────────────────
+// A textarea that is checked as you go. The same parser the file path runs
+// re-runs (debounced) on every edit, so a bad paste is diagnosed inline —
+// with the offending text still in front of the user — instead of after a
+// save-as-UTF-8 round-trip through a text editor and a second file picker.
+
+const PASTE_CHECK_DEBOUNCE_MS = 350;
+
+function PasteJsonView({
+  lang,
+  isPrimary,
+  sectionNames,
+  value,
+  onChange,
+  parse,
+  docsUrl,
+  onBack,
+  onChooseFile,
+  onContinue,
+}: {
+  lang: string;
+  isPrimary: boolean;
+  sectionNames: string[];
+  value: string;
+  onChange: (next: string) => void;
+  /** The dialog's parser, already bound to this language's ParseContext. */
+  parse: (text: string) => ParseReport;
+  docsUrl?: string;
+  onBack: () => void;
+  onChooseFile: () => void;
+  onContinue: (text: string, report: ParseReport) => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Debounced copy of `value` — the check runs against this, not every keystroke.
+  const [checked, setChecked] = useState(value);
+
+  useEffect(() => {
+    if (checked === value) return;
+    const id = window.setTimeout(() => setChecked(value), PASTE_CHECK_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [value, checked]);
+
+  // Land focus in the box so Ctrl+V works the moment the view opens.
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  const isEmpty = value.trim() === "";
+  const checking = !isEmpty && checked !== value;
+  // Byte size is measured on the debounced text only — a Blob per keystroke
+  // over a multi-megabyte paste is wasted work.
+  const sizeBytes = useMemo(() => (checked ? new Blob([checked]).size : 0), [checked]);
+  const tooLarge = sizeBytes > MAX_FILE_SIZE_BYTES;
+  const report = useMemo<ParseReport | null>(
+    () => (checked.trim() && !tooLarge ? parse(checked) : null),
+    [checked, tooLarge, parse]
+  );
+
+  const canContinue = !checking && !isEmpty && !tooLarge && !!report?.ok;
+
+  // Gated on the LIVE text: after Clear, `checked` lags `value` by one
+  // debounce, and a stale error must not flash for that window.
+  const errorCode: DialogErrorCode | null = isEmpty
+    ? null
+    : tooLarge
+      ? "file_too_large"
+      : report && !report.ok
+        ? (report.errorCode ?? "invalid_json")
+        : null;
+  const fixUrl = errorCode && docsUrl ? `${docsUrl}#${errorCodeToAnchor[errorCode]}` : null;
+
+  const okSummary = useMemo(() => {
+    if (!report?.ok) return null;
+    const sections = report.perSection.length;
+    const questions = report.perSection.reduce((n, s) => n + s.questionCountInJson, 0);
+    const parts = [
+      `${sections} section${sections === 1 ? "" : "s"}`,
+      `${questions} question${questions === 1 ? "" : "s"}`,
+    ];
+    if (report.repairApplied) parts.push("syntax auto-repaired");
+    return parts.join(" · ");
+  }, [report]);
+  const unmatchedCount = report?.ok ? report.unmatchedSections.length : 0;
+
+  const handleContinue = () => {
+    if (canContinue && report) onContinue(value, report);
+  };
+
+  const handleClear = () => {
+    onChange("");
+    textareaRef.current?.focus();
+  };
+
+  const fixLink = fixUrl && (
+    <a
+      href={fixUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 hover:underline dark:text-red-300"
+    >
+      See how to fix this →
+    </a>
+  );
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <ClipboardPaste className="h-5 w-5 text-primary" />
+          <span>
+            Paste JSON{" "}
+            <span className="font-normal text-muted-foreground">· {langLabel(lang)}</span>
+          </span>
+          {isPrimary && (
+            <Badge variant="secondary" className="text-[10px] uppercase">
+              Primary
+            </Badge>
+          )}
+        </DialogTitle>
+        <DialogDescription>
+          Paste the whole reply from your AI. The{" "}
+          <span className="font-mono text-xs">&lt;&lt;&lt;EXAM_JSON_START&gt;&gt;&gt;</span>{" "}
+          markers, code fences and any explanation around the JSON are stripped automatically.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-3 mt-2">
+        {sectionNames.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Section names in this exam ({langLabel(lang)}):{" "}
+            {sectionNames.map((name, i) => (
+              <span key={`${name}-${i}`}>
+                <span className="font-medium text-foreground/80">{name}</span>
+                {i < sectionNames.length - 1 && (
+                  <span className="text-muted-foreground/50"> · </span>
+                )}
+              </span>
+            ))}
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {isPrimary
+              ? "This exam has no sections yet — the ones named in your JSON will be created on the next screen."
+              : `This exam has no sections yet — import the primary language first; its sections are mirrored to ${langLabel(lang)}.`}
+          </p>
+        )}
+
+        <Textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+              e.preventDefault();
+              handleContinue();
+            }
+          }}
+          placeholder={`Paste here — the reply starts like:\n{\n  "schema_version": "1.0",\n  "language": "${lang}",\n  "sections": [ … ]\n}`}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          aria-label={`JSON for ${langLabel(lang)}`}
+          aria-invalid={errorCode ? true : undefined}
+          className="min-h-[40vh] resize-y font-mono text-xs leading-relaxed"
+        />
+
+        {/* Status line — a polite live region so screen readers hear the verdict. */}
+        <div className="flex min-h-[1.5rem] items-start justify-between gap-3" aria-live="polite">
+          <div className="flex min-w-0 flex-1 items-start gap-2 text-xs">
+            {isEmpty ? (
+              <span className="text-muted-foreground">
+                Waiting for your paste — Ctrl+V (⌘V on Mac).
+              </span>
+            ) : checking ? (
+              <>
+                <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                <span className="text-muted-foreground">Checking…</span>
+              </>
+            ) : tooLarge ? (
+              <>
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
+                <span className="font-medium text-red-700 dark:text-red-300">
+                  Too large — max 10 MB. {fixLink}
+                </span>
+              </>
+            ) : report && !report.ok ? (
+              <>
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
+                <span className="font-medium text-red-700 dark:text-red-300">
+                  Couldn't read this JSON yet — details below.
+                </span>
+              </>
+            ) : report?.ok ? (
+              <>
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600 dark:text-green-400" />
+                <span className="min-w-0">
+                  <span className="font-medium text-green-700 dark:text-green-300">Readable</span>
+                  <span className="text-muted-foreground"> — {okSummary}</span>
+                  {unmatchedCount > 0 && sectionNames.length === 0 ? (
+                    // Nothing to match against is the expected first-import
+                    // state, so it reads as a next step, not a warning.
+                    <span className="block text-muted-foreground">
+                      {isPrimary
+                        ? `This exam has no sections yet — the next screen creates ${unmatchedCount === 1 ? "it" : `all ${unmatchedCount}`} from your JSON.`
+                        : "This exam has no sections yet — import the primary language first."}
+                    </span>
+                  ) : unmatchedCount > 0 ? (
+                    <span className="block text-amber-700 dark:text-amber-400">
+                      {unmatchedCount} section name{unmatchedCount === 1 ? " isn't" : "s aren't"}{" "}
+                      in this exam — you can rename or create{" "}
+                      {unmatchedCount === 1 ? "it" : "them"} on the next screen.
+                    </span>
+                  ) : null}
+                </span>
+              </>
+            ) : null}
+          </div>
+          {!isEmpty && (
+            <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+              <span className="tabular-nums">{formatBytes(sizeBytes)}</span>
+              <button
+                type="button"
+                onClick={handleClear}
+                className="hover:text-foreground hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+
+        {!isEmpty && !checking && report && !report.ok && (
+          <div
+            role="alert"
+            className="rounded-lg border border-red-300 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950/30"
+          >
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-red-900 dark:text-red-200">
+              {report.fatalReason ?? "Couldn't read this JSON."}
+            </pre>
+            {fixLink && <div className="mt-2">{fixLink}</div>}
+          </div>
+        )}
+      </div>
+
+      <DialogFooter className="mt-2 gap-2 sm:justify-between sm:space-x-0">
+        <Button type="button" variant="ghost" onClick={onChooseFile}>
+          <Upload className="h-4 w-4 mr-2" />
+          Upload a .json file instead
+        </Button>
+        <div className="flex gap-2 sm:justify-end">
+          <Button type="button" variant="outline" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <Button type="button" onClick={handleContinue} disabled={!canContinue}>
+            {checking ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : null}
+            Continue to preview
+            {!checking && <ArrowRight className="h-4 w-4 ml-2" />}
+          </Button>
+        </div>
       </DialogFooter>
     </>
   );
@@ -1484,6 +1931,7 @@ function PreviewView({
   snipStartTime,
   nowMs,
   showMarks,
+  requiresSectionTime,
 }: {
   report: ParseReport;
   mode: "replace" | "append";
@@ -1516,9 +1964,13 @@ function PreviewView({
   snipStartTime: number | null;
   nowMs: number;
   showMarks: boolean;
+  /** Mock exams need minutes per new section; live exams take timing from the JSON. */
+  requiresSectionTime: boolean;
 }) {
   const isSecondary = !report.isPrimary;
   const hasMismatch = report.unmatchedSections.length > 0;
+  // No sections at all is the expected first-import state, not a mismatch.
+  const examHasNoSections = report.examSectionNames.length === 0;
   const examOnly = report.examOnlySections;
   const summary = report.extractionSummary;
 
@@ -1604,8 +2056,66 @@ function PreviewView({
           )}
         </div>
 
+        {/* No sections yet — the first import of a fresh exam. The JSON's
+            sections become the exam's sections in one step. Primary only:
+            sections are mirrored to every language from the primary JSON, so
+            a secondary upload here is told to go via primary. */}
+        {hasMismatch && examHasNoSections && (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+            {report.isPrimary ? (
+              <>
+                <div className="mb-2 flex items-center gap-2">
+                  <Plus className="h-5 w-5 text-primary" />
+                  <h3 className="font-semibold">This exam has no sections yet</h3>
+                </div>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Create{" "}
+                  {report.unmatchedSections.length === 1
+                    ? "it"
+                    : `all ${report.unmatchedSections.length}`}{" "}
+                  from your JSON in one step — each keeps its name and its questions.
+                  {requiresSectionTime
+                    ? " You'll set a time for each."
+                    : " Question timers come from the JSON."}
+                </p>
+                <ul className="mb-4 flex flex-wrap gap-1.5">
+                  {report.perSection.map((s, i) => (
+                    <li
+                      key={`${s.jsonName}-${i}`}
+                      className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs"
+                    >
+                      <span className="font-medium">{s.jsonName}</span>
+                      <span className="text-muted-foreground">
+                        · {s.questionCountInJson} Q{s.questionCountInJson === 1 ? "" : "s"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <Button type="button" size="sm" onClick={onCreateSectionsClick}>
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Create {report.unmatchedSections.length} section
+                  {report.unmatchedSections.length === 1 ? "" : "s"}…
+                </Button>
+              </>
+            ) : (
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+                <div>
+                  <h3 className="font-semibold">Add the primary language first</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    This exam has no sections yet. They are created from the{" "}
+                    <strong>{langLabel(primaryLanguage)}</strong> JSON and mirrored to{" "}
+                    {langLabel(report.language)}, so import {langLabel(primaryLanguage)} before
+                    this one.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Section-name mismatch panel */}
-        {hasMismatch && (
+        {hasMismatch && !examHasNoSections && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
             <div className="flex items-center gap-2 mb-3">
               <AlertTriangle className="h-5 w-5 text-amber-600" />
@@ -1764,11 +2274,17 @@ function PreviewView({
                 <div className="text-xs text-muted-foreground ml-6">
                   {s.matchedSectionId
                     ? `${s.accepted.length} Q${s.accepted.length === 1 ? "" : "s"} valid${s.skipped.length > 0 ? ` · ${s.skipped.length} skipped` : ""}`
-                    : "Not in this exam — section will be skipped"}
+                    : examHasNoSections && report.isPrimary
+                      ? `${s.questionCountInJson} Q${s.questionCountInJson === 1 ? "" : "s"} — created with the section`
+                      : "Not in this exam — section will be skipped"}
                 </div>
               </div>
               <div className="text-xs text-muted-foreground shrink-0">
-                {s.matchedSectionId ? "✓ match" : "✗ no match"}
+                {s.matchedSectionId
+                  ? "✓ match"
+                  : examHasNoSections && report.isPrimary
+                    ? "+ new"
+                    : "✗ no match"}
               </div>
             </div>
           ))}

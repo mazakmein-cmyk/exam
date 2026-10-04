@@ -68,7 +68,7 @@ export const STATIC_PAGE_SEO = {
   jsonUploadGuide: {
     title: "JSON Upload Guide | MockSetu",
     description:
-      "Step-by-step guide for creators: convert your exam PDF into JSON using your own AI, then upload to MockSetu in a few minutes.",
+      "Step-by-step guide for creators: convert your exam PDF into JSON using your own AI, then paste or upload it to MockSetu in a few minutes.",
     path: "/json-upload-guide",
   },
 
