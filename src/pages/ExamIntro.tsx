@@ -553,7 +553,7 @@ const ExamIntro = () => {
     // real addresses a candidate might want in a second tab — keeping the exam
     // instructions open while they check the library — so the control that
     // reaches them renders as a link and lets the browser do that for free.
-    const backTo = fromPage === "marketplace" ? "/marketplace" : "/dashboard";
+    const backTo = isPreview ? `/exam/${examId}` : fromPage === "marketplace" ? "/marketplace" : "/dashboard";
 
     if (loading) {
         return (
@@ -787,7 +787,7 @@ const ExamIntro = () => {
                         className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                     >
                         <ArrowLeft className="h-4 w-4" />
-                        {fromPage === "marketplace" ? "Back to Exam Library" : "Back to Dashboard"}
+                        {isPreview ? "Back to Edit Exam" : fromPage === "marketplace" ? "Back to Exam Library" : "Back to Dashboard"}
                     </Link>
                     <Link to="/" className="flex items-center gap-2 cursor-pointer">
                         <svg width="18" height="18" viewBox="0 0 28 28" fill="none">
