@@ -11,6 +11,13 @@ import { fetchMyLiveExams, deleteLiveExam, duplicateLiveExam, getParticipantCoun
 import { navigationCopyPatch } from "@/lib/examSettings";
 import { paperTypeCopyPatch, paperYearCopyPatch } from "@/lib/paperTypeSettings";
 import { copyTimingGroups } from "@/lib/timingGroupSettings";
+import {
+  buildSectionCopyRow,
+  buildQuestionCopyRow,
+  remapGroupId,
+  pairInsertedQuestionIds,
+  copyScoringSettings,
+} from "@/lib/duplicateExamContent";
 import { EXAM_LIST_BASE_COLUMNS } from "@/lib/examListQuery";
 import { isModifiedClick } from "@/lib/navigation";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
@@ -436,29 +443,27 @@ const Dashboard = () => {
 
       if (sectionsError) throw sectionsError;
 
-      // Duplicate all sections and their questions. Carry sort_order, language
-      // and a remapped section_group_id — dropping them (as this flow used to)
-      // silently flattened multi-language exams and lost the paper's order.
+      // Duplicate all sections and their questions. EVERY column travels
+      // except the few that must change — see duplicateExamContent.ts, which
+      // holds that skip-list so this flow and ExamDetail's cannot drift again.
       const sectionGroupIdMap = new Map<string, string>();
       const sectionIdMap = new Map<string, string>();
+      // One question-group map for the WHOLE paper, not one per section: a
+      // question's English and Hindi rows live in DIFFERENT sections and must
+      // come out sharing a single new id. Dropping that id (as this flow used
+      // to) failed every question on the publish gate's "not linked to
+      // primary" check, so the secondary language could never be published
+      // while the primary published fine — shipping half a bilingual paper.
+      const questionGroupIdMap = new Map<string, string>();
+      const questionIdMap = new Map<string, string>();
       for (const section of sectionsData || []) {
-        let newGroupId: string | null = null;
-        if ((section as any).section_group_id) {
-          if (!sectionGroupIdMap.has((section as any).section_group_id)) {
-            sectionGroupIdMap.set((section as any).section_group_id, crypto.randomUUID());
-          }
-          newGroupId = sectionGroupIdMap.get((section as any).section_group_id)!;
-        }
+        const newGroupId = remapGroupId(
+          (section as any).section_group_id,
+          sectionGroupIdMap
+        );
         const { data: newSection, error: sectionError } = await supabase
           .from("sections")
-          .insert({
-            exam_id: newExam.id,
-            name: section.name,
-            time_minutes: section.time_minutes,
-            sort_order: (section as any).sort_order ?? 0,
-            language: (section as any).language || "en",
-            section_group_id: newGroupId,
-          })
+          .insert(buildSectionCopyRow(section as any, newExam.id, newGroupId) as any)
           .select()
           .single();
 
@@ -475,35 +480,35 @@ const Dashboard = () => {
 
         // Duplicate questions to the new section
         if (sectionQuestions && sectionQuestions.length > 0) {
-          const newQuestions = sectionQuestions.map((q: any) => ({
-            section_id: newSection.id,
-            q_no: q.q_no,
-            text: q.text,
-            options: q.options,
-            answer_type: q.answer_type,
-            image_url: q.image_url,
-            // Carry every image-bearing field — dropping them silently made
-            // duplicated figure questions lose their pictures and re-snip data.
-            image_urls: q.image_urls ?? null,
-            ...(q.option_image_urls !== undefined ? { option_image_urls: q.option_image_urls } : {}),
-            ...(q.image_region !== undefined ? { image_region: q.image_region } : {}),
-            correct_answer: q.correct_answer,
-            requires_review: q.requires_review || false,
-            is_excluded: q.is_excluded || false,
-            is_finalized: q.is_finalized || true,
-          }));
+          const newQuestions = sectionQuestions.map((q: any) =>
+            buildQuestionCopyRow(
+              q,
+              newSection.id,
+              remapGroupId(q.question_group_id, questionGroupIdMap)
+            )
+          );
 
-          const { error: insertError } = await supabase
+          const { data: insertedQuestions, error: insertError } = await supabase
             .from("parsed_questions")
-            .insert(newQuestions);
+            .insert(newQuestions as any)
+            .select("id, q_no");
 
           if (insertError) throw insertError;
+          pairInsertedQuestionIds(
+            sectionQuestions as any,
+            insertedQuestions as any,
+            questionIdMap
+          );
         }
       }
 
       // Timing groups travel with the copy (pool, names, membership) — a
       // silent no-op on a database without the migration.
       await copyTimingGroups(exam.id, newExam.id, sectionIdMap, (sectionsData || []) as any);
+
+      // The marks module travels too — exam default, per-section and
+      // per-question overrides. Fail-soft: the copy is already complete.
+      await copyScoringSettings(exam.id, newExam.id, sectionIdMap, questionIdMap);
 
       // Refresh the exams list
       fetchExams();

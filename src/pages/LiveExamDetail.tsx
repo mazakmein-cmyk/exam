@@ -155,8 +155,8 @@ export default function LiveExamDetail() {
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(null);
   // What a question row's Table / Image chip is currently showing, if anything.
   const [openAsset, setOpenAsset] = useState<QuestionAsset | null>(null);
-  // The row whose eye button is open — the whole question, assembled.
-  const [previewQuestion, setPreviewQuestion] = useState<{ q: PreviewQuestion; label: string } | null>(null);
+  // The index (into `questions`) whose eye button is open — the whole question, assembled.
+  const [previewQuestionIdx, setPreviewQuestionIdx] = useState<number | null>(null);
 
   // Delete states
   const [showDeleteQuestionDialog, setShowDeleteQuestionDialog] = useState(false);
@@ -2292,7 +2292,7 @@ export default function LiveExamDetail() {
                               className="h-8 w-8 rounded-lg text-muted-foreground hover:text-emerald-700 hover:bg-emerald-500/10"
                               title="Preview the whole question with its answer key"
                               aria-label={`Preview question ${q.q_no}`}
-                              onClick={() => setPreviewQuestion({ q: q as PreviewQuestion, label: `Question ${q.q_no}` })}
+                              onClick={() => setPreviewQuestionIdx(questions.indexOf(q))}
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -2826,9 +2826,12 @@ export default function LiveExamDetail() {
 
         {/* The eye button's full-question preview. Also one mount for the list. */}
         <QuestionPreviewDialog
-          question={previewQuestion?.q ?? null}
-          label={previewQuestion?.label ?? ""}
-          onClose={() => setPreviewQuestion(null)}
+          question={previewQuestionIdx != null ? (questions[previewQuestionIdx] as PreviewQuestion) ?? null : null}
+          label={previewQuestionIdx != null ? `Question ${questions[previewQuestionIdx]?.q_no ?? previewQuestionIdx + 1}` : ""}
+          onClose={() => setPreviewQuestionIdx(null)}
+          allQuestions={questions as unknown as PreviewQuestion[]}
+          currentIndex={previewQuestionIdx ?? undefined}
+          onNavigate={setPreviewQuestionIdx}
         />
 
         {/* Student Preview Dialog */}

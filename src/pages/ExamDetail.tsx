@@ -120,6 +120,13 @@ import {
   markInstructionsUnreviewed,
 } from "@/lib/instructionFreshness.js";
 import {
+  buildSectionCopyRow,
+  buildQuestionCopyRow,
+  remapGroupId,
+  pairInsertedQuestionIds,
+  copyScoringSettings,
+} from "@/lib/duplicateExamContent";
+import {
   copyTimingGroups,
   createTimingGroup,
   deleteTimingGroup,
@@ -289,8 +296,8 @@ export default function ExamDetail() {
 
   // What a question row's Table / Image chip is currently showing, if anything.
   const [openAsset, setOpenAsset] = useState<QuestionAsset | null>(null);
-  // The row whose eye button is open — the whole question, assembled.
-  const [previewQuestion, setPreviewQuestion] = useState<{ q: PreviewQuestion; label: string } | null>(null);
+  // The index (into `questions`) whose eye button is open — the whole question, assembled.
+  const [previewQuestionIdx, setPreviewQuestionIdx] = useState<number | null>(null);
 
   // JSON Upload Dialog State
   const [showJsonUploadDialog, setShowJsonUploadDialog] = useState(false);
@@ -1207,30 +1214,18 @@ export default function ExamDetail() {
 
       if (examError) throw examError;
 
-      // Duplicate ALL sections (all languages), maintaining section_group_id links
-      // Map old section_group_id → new section_group_id
+      // Duplicate ALL sections (all languages). EVERY column travels except
+      // the few that must change — see duplicateExamContent.ts, which holds
+      // that skip-list so this flow and Dashboard's cannot drift again.
       const groupIdMap = new Map<string, string>();
       const sectionIdMap = new Map<string, string>(); // old section id → new section id
 
       for (const sec of allSections) {
-        let newGroupId: string | null = null;
-        if (sec.section_group_id) {
-          if (!groupIdMap.has(sec.section_group_id)) {
-            groupIdMap.set(sec.section_group_id, crypto.randomUUID());
-          }
-          newGroupId = groupIdMap.get(sec.section_group_id)!;
-        }
+        const newGroupId = remapGroupId(sec.section_group_id, groupIdMap);
 
         const { data: newSection, error: sectionError } = await supabase
           .from("sections")
-          .insert({
-            exam_id: newExam.id,
-            name: sec.name,
-            time_minutes: sec.time_minutes,
-            sort_order: sec.sort_order,
-            language: sec.language || "en",
-            section_group_id: newGroupId,
-          })
+          .insert(buildSectionCopyRow(sec as any, newExam.id, newGroupId) as any)
           .select()
           .single();
 
@@ -1242,8 +1237,12 @@ export default function ExamDetail() {
       // silent no-op on a database without the migration.
       await copyTimingGroups(exam.id, newExam.id, sectionIdMap, allSections);
 
-      // Duplicate questions for all sections, maintaining question_group_id links
+      // Duplicate questions for all sections. One question-group map for the
+      // WHOLE paper, not one per section: a question's English and Hindi rows
+      // live in DIFFERENT sections and must come out sharing a single new id,
+      // or the publish gate fails every one of them as "not linked to primary".
       const questionGroupIdMap = new Map<string, string>();
+      const questionIdMap = new Map<string, string>();
 
       for (const sec of allSections) {
         const newSectionId = sectionIdMap.get(sec.id);
@@ -1257,37 +1256,31 @@ export default function ExamDetail() {
         if (questionsError) throw questionsError;
 
         if (sectionQuestions && sectionQuestions.length > 0) {
-          const newQuestions = sectionQuestions.map((q: any) => {
-            let newQuestionGroupId: string | null = null;
-            if (q.question_group_id) {
-              if (!questionGroupIdMap.has(q.question_group_id)) {
-                questionGroupIdMap.set(q.question_group_id, crypto.randomUUID());
-              }
-              newQuestionGroupId = questionGroupIdMap.get(q.question_group_id)!;
-            }
-            return {
-              section_id: newSectionId,
-              q_no: q.q_no,
-              text: q.text,
-              options: q.options,
-              answer_type: q.answer_type,
-              image_url: q.image_url,
-              image_urls: q.image_urls,
-              correct_answer: q.correct_answer,
-              requires_review: q.requires_review || false,
-              is_excluded: q.is_excluded || false,
-              is_finalized: q.is_finalized || true,
-              question_group_id: newQuestionGroupId,
-            };
-          });
+          const newQuestions = sectionQuestions.map((q: any) =>
+            buildQuestionCopyRow(
+              q,
+              newSectionId,
+              remapGroupId(q.question_group_id, questionGroupIdMap)
+            )
+          );
 
-          const { error: insertError } = await supabase
+          const { data: insertedQuestions, error: insertError } = await supabase
             .from("parsed_questions")
-            .insert(newQuestions);
+            .insert(newQuestions as any)
+            .select("id, q_no");
 
           if (insertError) throw insertError;
+          pairInsertedQuestionIds(
+            sectionQuestions as any,
+            insertedQuestions as any,
+            questionIdMap
+          );
         }
       }
+
+      // The marks module travels too — exam default, per-section and
+      // per-question overrides. Fail-soft: the copy is already complete.
+      await copyScoringSettings(exam.id, newExam.id, sectionIdMap, questionIdMap);
 
       toast({
         title: "Duplicated",
@@ -4987,7 +4980,7 @@ export default function ExamDetail() {
                                     className="h-8 w-8 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10"
                                     title="Preview the whole question with its answer key"
                                     aria-label={`Preview question ${idx + 1}`}
-                                    onClick={() => setPreviewQuestion({ q: q as PreviewQuestion, label: `Question ${idx + 1}` })}
+                                    onClick={() => setPreviewQuestionIdx(idx)}
                                   >
                                     <Eye className="h-4 w-4" />
                                   </Button>
@@ -5945,9 +5938,12 @@ export default function ExamDetail() {
 
       {/* The eye button's full-question preview. Also one mount for the list. */}
       <QuestionPreviewDialog
-        question={previewQuestion?.q ?? null}
-        label={previewQuestion?.label ?? ""}
-        onClose={() => setPreviewQuestion(null)}
+        question={previewQuestionIdx != null ? (questions[previewQuestionIdx] as PreviewQuestion) ?? null : null}
+        label={previewQuestionIdx != null ? `Question ${previewQuestionIdx + 1}` : ""}
+        onClose={() => setPreviewQuestionIdx(null)}
+        allQuestions={questions as PreviewQuestion[]}
+        currentIndex={previewQuestionIdx ?? undefined}
+        onNavigate={setPreviewQuestionIdx}
       />
 
       {/* Publish Dialog Component */}

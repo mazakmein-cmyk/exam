@@ -16,7 +16,12 @@
  * creator approves here is what a candidate sits; a second rendering path
  * would be free to drift from the real one, which is the whole failure this
  * dialog exists to prevent.
+ *
+ * Navigation: when `allQuestions` and `currentIndex` are provided, Previous /
+ * Next buttons (plus ← → keyboard shortcuts) let the creator leaf through
+ * the list without closing the dialog.
  */
+import { useCallback, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -24,7 +29,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Check, Eye, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Check, Eye, AlertCircle, ChevronLeft, ChevronRight } from "lucide-react";
 import { renderMathInHtml, renderMathInRichText } from "@/lib/renderMath";
 import { getQuestionTypeInfo, renderQuestionHtml, splitPassageContent } from "@/lib/questionContent";
 import { isOptionFilled } from "@/lib/richText";
@@ -46,11 +52,20 @@ export default function QuestionPreviewDialog({
   question,
   label,
   onClose,
+  allQuestions,
+  currentIndex,
+  onNavigate,
 }: {
   question: PreviewQuestion | null;
   /** How the row names itself — "Question 2". */
   label: string;
   onClose: () => void;
+  /** Full list of questions for prev/next navigation. Optional. */
+  allQuestions?: PreviewQuestion[];
+  /** Zero-based index of the currently shown question inside allQuestions. */
+  currentIndex?: number;
+  /** Called with the new index when the user clicks Previous / Next. */
+  onNavigate?: (index: number) => void;
 }) {
   const options: any[] = Array.isArray(question?.options) ? question!.options : [];
   const optionImages: (string | null)[] = Array.isArray(question?.option_image_urls)
@@ -73,13 +88,59 @@ export default function QuestionPreviewDialog({
   // key at all, and the creator has to be able to tell them apart.
   const keyIsDangling = keySet && hasOptions && correctIndexes.size === 0;
 
+  // ── Navigation helpers ──────────────────────────────────────────────
+  const canNavigate =
+    !!allQuestions && allQuestions.length > 1 && currentIndex != null && !!onNavigate;
+  const hasPrev = canNavigate && currentIndex! > 0;
+  const hasNext = canNavigate && currentIndex! < allQuestions!.length - 1;
+
+  const goPrev = useCallback(() => {
+    if (hasPrev) onNavigate!(currentIndex! - 1);
+  }, [hasPrev, onNavigate, currentIndex]);
+
+  const goNext = useCallback(() => {
+    if (hasNext) onNavigate!(currentIndex! + 1);
+  }, [hasNext, onNavigate, currentIndex]);
+
+  // Scroll to top when question changes
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (question && contentRef.current) {
+      contentRef.current.scrollTop = 0;
+    }
+  }, [question?.id]);
+
+  // Keyboard navigation: ← →
+  useEffect(() => {
+    if (!question || !canNavigate) return;
+    const handler = (e: KeyboardEvent) => {
+      // Don't hijack when focus is inside an input / textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goNext();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [question, canNavigate, goPrev, goNext]);
+
   return (
     <Dialog open={!!question} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent ref={contentRef} className="max-w-3xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Eye className="h-5 w-5 text-primary" />
             {label}
+            {canNavigate && (
+              <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">
+                {currentIndex! + 1} / {allQuestions!.length}
+              </span>
+            )}
           </DialogTitle>
           <DialogDescription>
             As a candidate sees it — plus the answer key, which they do not. {typeInfo.label}.
@@ -228,8 +289,38 @@ export default function QuestionPreviewDialog({
             )}
           </div>
 
+          {/* ── Previous / Next navigation ────────────────────────────── */}
+          {canNavigate && (
+            <div className="flex items-center justify-between pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasPrev}
+                onClick={goPrev}
+                className="gap-1.5"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              <span className="text-xs text-muted-foreground select-none">
+                Use ← → arrow keys
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasNext}
+                onClick={goNext}
+                className="gap-1.5"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+
         </div>
       </DialogContent>
     </Dialog>
   );
 }
+
